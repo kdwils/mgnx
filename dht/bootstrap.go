@@ -5,6 +5,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"hash/crc32"
 	"net"
 	"os"
@@ -282,6 +284,32 @@ func DeriveBEP42NodeID(ip net.IP) (NodeID, error) {
 	id[19] = (id[19] & 0xf8) | r
 
 	return id, nil
+}
+
+// ValidateBEP42NodeID verifies that id satisfies the BEP-42 invariant for the
+// given IPv4 address. Returns nil if valid, or an error describing the failure.
+func ValidateBEP42NodeID(ip net.IP, id NodeID) error {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return errors.New("not an IPv4 address")
+	}
+
+	r := id[19] & 0x07
+	seed := (binary.BigEndian.Uint32(ip4) & 0x030f3fff) | (uint32(r) << 29)
+	var seedBuf [4]byte
+	binary.BigEndian.PutUint32(seedBuf[:], seed)
+	crc := crc32.Checksum(seedBuf[:], crc32.MakeTable(crc32.Castagnoli))
+
+	if byte(crc>>24) != id[0] {
+		return fmt.Errorf("id[0] (%02x) does not match crc[0] (%02x)", id[0], byte(crc>>24))
+	}
+	if byte(crc>>16) != id[1] {
+		return fmt.Errorf("id[1] (%02x) does not match crc[1] (%02x)", id[1], byte(crc>>16))
+	}
+	if byte(crc>>8)&0xf8 != id[2]&0xf8 {
+		return fmt.Errorf("id[2] top 5 bits (%02x) do not match crc bits (%02x)", id[2]&0xf8, byte(crc>>8)&0xf8)
+	}
+	return nil
 }
 
 // saveNodeID writes id to path atomically (temp file + rename).

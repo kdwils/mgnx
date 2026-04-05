@@ -17,6 +17,7 @@ type Config struct {
 }
 
 type DHT struct {
+	NodeID              string        `mapstructure:"node_id"`
 	Port                int           `mapstructure:"port"`                  // default 6881
 	BootstrapNodes      []string      `mapstructure:"bootstrap_nodes"`       // override defaults
 	RateLimit           float64       `mapstructure:"rate_limit"`            // queries/sec, default 25
@@ -24,7 +25,6 @@ type DHT struct {
 	Workers             int           `mapstructure:"workers"`               // query handler goroutines, default 4
 	BEP51Workers        int           `mapstructure:"bep51_workers"`         // default 2
 	DiscoveryBuffer     int           `mapstructure:"discovery_buffer"`      // channel size, default 10000
-	NodeIDPath          string        `mapstructure:"node_id_path"`          // default $HOME/.mgnx/dht_id
 	NodesPath           string        `mapstructure:"nodes_path"`            // default $HOME/.mgnx/dht_nodes.dat
 	GoodNodeWindow      time.Duration `mapstructure:"good_node_window"`      // default 15m
 	BadFailureThreshold int           `mapstructure:"bad_failure_threshold"` // default 2
@@ -62,7 +62,7 @@ type Database struct {
 
 type Server struct {
 	Port     int    `mapstructure:"port"`
-	LogLevel string `mapstructure:"logLevel"`
+	LogLevel string `mapstructure:"log_level"`
 	APIKey   string `mapstructure:"apiKey"`
 }
 
