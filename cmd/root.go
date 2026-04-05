@@ -53,11 +53,7 @@ func initConfig() {
 		viper.SetConfigType("yaml")
 	}
 
-	viper.SetDefault("dht.bootstrap_nodes", []string{
-		"router.bittorrent.com:6881",
-		"router.utorrent.com:6881",
-		"dht.transmissionbt.com:6881",
-	})
+	viper.SetDefault("dht.bootstrap_nodes", []string{})
 	viper.SetDefault("database.uri", "")
 
 	viper.SetDefault("indexer.peer_retries", 3)
@@ -70,7 +66,6 @@ func initConfig() {
 	viper.SetDefault("dht.workers", 4)
 	viper.SetDefault("dht.bep51_workers", 2)
 	viper.SetDefault("dht.discovery_buffer", 10000)
-	viper.SetDefault("dht.nodes_path", filepath.Join(home, ".mgnx", "dht_nodes.dat"))
 	viper.SetDefault("dht.good_node_window", 15*time.Minute)
 	viper.SetDefault("dht.bad_failure_threshold", 2)
 	viper.SetDefault("dht.bucket_size", 8)
@@ -85,12 +80,7 @@ func initConfig() {
 	viper.SetDefault("scrape.read_timeout", 10*time.Second)
 	viper.SetDefault("scrape.dead_after", 90*24*time.Hour)
 	viper.SetDefault("scrape.prune_interval", 24*time.Hour)
-	viper.SetDefault("scrape.trackers", []string{
-		"udp://tracker.opentrackr.org:1337/announce",
-		"udp://open.tracker.cl:1337/announce",
-		"udp://tracker.openbittorrent.com:6969/announce",
-		"udp://exodus.desync.com:6969/announce",
-	})
+	viper.SetDefault("scrape.trackers", []string{})
 
 	viper.SetEnvPrefix("mgnx")
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", ""))
