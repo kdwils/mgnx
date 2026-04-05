@@ -254,7 +254,7 @@ func TestCrawler_processSamples(t *testing.T) {
 		item := &bep51Item{node: node}
 
 		for i := range cap(c.discovered) {
-			c.discovered <- DiscoveredPeer{Infohash: [20]byte{byte(i)}}
+			c.discovered <- DiscoveredPeers{Infohash: [20]byte{byte(i)}}
 		}
 
 		var h [20]byte

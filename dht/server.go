@@ -34,7 +34,7 @@ type Server struct {
 	table      *RoutingTable
 	txns       *TxnManager
 	outbound   chan *outMsg
-	discovered chan DiscoveredPeer
+	discovered chan DiscoveredPeers
 	token      *TokenManager
 	dedup      *BloomFilter
 	rate       *rate.Limiter
@@ -75,7 +75,7 @@ func NewServer(cfg config.DHT) (*Server, error) {
 		table:      table,
 		txns:       txns,
 		outbound:   make(chan *outMsg, 512),
-		discovered: make(chan DiscoveredPeer, cfg.DiscoveryBuffer),
+		discovered: make(chan DiscoveredPeers, cfg.DiscoveryBuffer),
 		token:      token,
 		rate:       rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateBurst),
 		cfg:        cfg,
@@ -122,7 +122,7 @@ func (s *Server) Stop() {
 }
 
 // Infohashes returns the channel of discovereded infohash events.
-func (s *Server) Infohashes() <-chan DiscoveredPeer {
+func (s *Server) Infohashes() <-chan DiscoveredPeers {
 	return s.discovered
 }
 
@@ -331,7 +331,7 @@ func (s *Server) handleAnnouncePeer(ctx context.Context, addr *net.UDPAddr, msg 
 	if msg.A.ImpliedPort != nil && *msg.A.ImpliedPort != 0 {
 		port = addr.Port
 	}
-	event := DiscoveredPeer{
+	event := DiscoveredPeers{
 		Infohash: h,
 		Peers:    []PeerAddr{{SourceIP: addr.IP, Port: port}},
 		SeenAt:   time.Now(),

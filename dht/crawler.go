@@ -15,9 +15,9 @@ import (
 	"github.com/kdwils/mgnx/logger"
 )
 
-// DiscoveredPeer is the only coupling point between the DHT layer (Section 3)
+// DiscoveredPeers is the only coupling point between the DHT layer (Section 3)
 // and the metadata fetch layer (Section 4).
-type DiscoveredPeer struct {
+type DiscoveredPeers struct {
 	Infohash [20]byte
 	Peers    []PeerAddr
 	SeenAt   time.Time
@@ -31,7 +31,7 @@ type PeerAddr struct {
 
 // Crawler is the public interface for the DHT crawler.
 type Crawler interface {
-	Infohashes() <-chan DiscoveredPeer
+	Infohashes() <-chan DiscoveredPeers
 	Start(ctx context.Context) error
 	Stop()
 }
@@ -41,7 +41,7 @@ type Crawler interface {
 //  2. Active:  BEP-51 sample_infohashes traversal driven here.
 type crawler struct {
 	server     *Server
-	discovered chan DiscoveredPeer
+	discovered chan DiscoveredPeers
 	dedup      *BloomFilter
 	cfg        config.DHT
 	cancel     context.CancelFunc
@@ -67,7 +67,7 @@ func NewCrawler(cfg config.DHT) (Crawler, error) {
 }
 
 // Infohashes returns the channel of discovereded infohash events.
-func (c *crawler) Infohashes() <-chan DiscoveredPeer {
+func (c *crawler) Infohashes() <-chan DiscoveredPeers {
 	return c.discovered
 }
 
@@ -248,7 +248,7 @@ func (c *crawler) nextEligible(pq *bep51PQ, seen map[NodeID]time.Time) *bep51Ite
 // processSamples decodes the raw 20-byte infohash samples from a BEP-51
 // response. For each new infohash, it launches a goroutine that does a
 // get_peers query to the source node to find actual swarm peers, then emits
-// DiscoveredPeers with those peer addresses. Using the DHT node's address
+// DiscoveredPeerss with those peer addresses. Using the DHT node's address
 // directly would fail — DHT nodes are UDP-only and don't serve BEP-09 metadata.
 func (c *crawler) processSamples(ctx context.Context, samples string, item *bep51Item) {
 	total := len(samples) / 20
@@ -274,7 +274,7 @@ func (c *crawler) processSamples(ctx context.Context, samples string, item *bep5
 
 // discoverPeers performs a get_peers query for infohash against node. If the
 // node returns peer values (compact 6-byte peer records), each peer is emitted
-// as a DiscoveredPeer. If the node only returns closer nodes (no values), the
+// as a DiscoveredPeers. If the node only returns closer nodes (no values), the
 // infohash is silently dropped — a full iterative get_peers lookup would be
 // needed to find peers, which is too expensive to do inline.
 func (c *crawler) discoverPeers(ctx context.Context, h [20]byte, node *Node) {
@@ -317,7 +317,7 @@ func (c *crawler) discoverPeers(ctx context.Context, h [20]byte, node *Node) {
 		return
 	}
 
-	event := DiscoveredPeer{
+	event := DiscoveredPeers{
 		Infohash: h,
 		Peers:    peerAddrs,
 		SeenAt:   time.Now(),

@@ -35,6 +35,9 @@ func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg
 		denied[ext] = struct{}{}
 	}
 	peerRetries := cfg.PeerRetries
+	if peerRetries <= 0 {
+		peerRetries = 3
+	}
 	peerTimeout := cfg.PeerTimeout
 	return &Worker{
 		crawler:     crawler,
@@ -64,7 +67,7 @@ func (w *Worker) Run(ctx context.Context) {
 			}
 			sem <- struct{}{}
 			wg.Add(1)
-			go func(e dht.DiscoveredPeer) {
+			go func(e dht.DiscoveredPeers) {
 				defer wg.Done()
 				defer func() { <-sem }()
 				w.process(ctx, e)
@@ -76,7 +79,7 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeer) {
+func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 	log := logger.FromContext(ctx)
 	infohashHex := hex.EncodeToString(ev.Infohash[:])
 
