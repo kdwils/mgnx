@@ -17,6 +17,7 @@ var migrations embed.FS
 
 func RunMigrations(pool *pgxpool.Pool) error {
 	db := stdlib.OpenDBFromPool(pool)
+	defer db.Close()
 
 	src, err := iofs.New(migrations, "schema/migrations")
 	if err != nil {

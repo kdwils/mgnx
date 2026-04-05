@@ -1,6 +1,6 @@
 # golang-migrate skill
 
-Write and manage PostgreSQL migrations for magnetite using golang-migrate v4.
+Write and manage PostgreSQL migrations for mgnx using golang-migrate v4.
 Migrations run automatically on server start via embedded SQL files.
 
 ## File naming

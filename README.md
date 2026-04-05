@@ -1,1 +1,1 @@
-# magnetite
+# mgnx

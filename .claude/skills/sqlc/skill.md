@@ -1,6 +1,6 @@
 # sqlc skill
 
-Write type-safe PostgreSQL queries for magnetite using sqlc v2 with pgx/v5.
+Write type-safe PostgreSQL queries for mgnx using sqlc v2 with pgx/v5.
 
 ## Config (`sqlc.yaml`)
 

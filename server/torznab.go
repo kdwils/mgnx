@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kdwils/magnetite/logger"
-	"github.com/kdwils/magnetite/service"
+	"github.com/kdwils/mgnx/logger"
+	"github.com/kdwils/mgnx/service"
 )
 
 func (s *Server) handleAPI() http.HandlerFunc {

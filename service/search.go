@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/kdwils/magnetite/db/queries"
+	"github.com/kdwils/mgnx/db/gen"
 )
 
 func (s *Service) Search(ctx context.Context, req SearchRequest) (XMLRSS, error) {
@@ -13,7 +13,7 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (XMLRSS, error)
 		limit = 100
 	}
 
-	rows, err := s.q.SearchAll(ctx, queries.SearchAllParams{
+	rows, err := s.q.SearchAll(ctx, gen.SearchAllParams{
 		Query:      pgtype.Text{String: req.Query, Valid: req.Query != ""},
 		PageOffset: int32(req.Offset),
 		PageSize:   int32(limit),
@@ -79,7 +79,7 @@ func (s *Service) SearchMovies(ctx context.Context, req MovieSearchRequest) (XML
 		return newXMLRSS(items), nil
 	}
 
-	rows, err := s.q.SearchMovies(ctx, queries.SearchMoviesParams{
+	rows, err := s.q.SearchMovies(ctx, gen.SearchMoviesParams{
 		Query:      pgtype.Text{String: req.Query, Valid: req.Query != ""},
 		PageOffset: int32(req.Offset),
 		PageSize:   int32(limit),
@@ -119,7 +119,7 @@ func (s *Service) SearchTV(ctx context.Context, req TVSearchRequest) (XMLRSS, er
 	}
 
 	if req.ImdbID != "" {
-		params := queries.GetTVByIMDBParams{
+		params := gen.GetTVByIMDBParams{
 			ImdbID: pgtype.Text{String: req.ImdbID, Valid: true},
 		}
 		if req.Season != nil {
@@ -159,7 +159,7 @@ func (s *Service) SearchTV(ctx context.Context, req TVSearchRequest) (XMLRSS, er
 		return newXMLRSS(items), nil
 	}
 
-	params := queries.SearchTVParams{
+	params := gen.SearchTVParams{
 		Query:      pgtype.Text{String: req.Query, Valid: req.Query != ""},
 		PageOffset: int32(req.Offset),
 		PageSize:   int32(limit),

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Magnetite** is a self-hosted BitTorrent indexer for movies and TV content. It crawls the DHT network, classifies torrents, enriches metadata via the TMDB API, and exposes a Torznab-compatible API (compatible with Prowlarr/Jackett).
+**mgnx** is a self-hosted BitTorrent indexer for movies and TV content. It crawls the DHT network, classifies torrents, enriches metadata via the TMDB API, and exposes a Torznab-compatible API (compatible with Prowlarr/Jackett).
 
 ## Common Commands
 
@@ -29,10 +29,10 @@ sqlc generate
 
 ## Configuration
 
-Viper-based configuration with env prefix `MAGNETITE`. Key environment variables:
-- `MAGNETITE_DATABASE_URL` — PostgreSQL connection string (required)
+Viper-based configuration with env prefix `mgnx`. Key environment variables:
+- `mgnx_DATABASE_URL` — PostgreSQL connection string (required)
 
-Config file support via `--config` flag or `$HOME/.magnetite.yaml`.
+Config file support via `--config` flag or `$HOME/.mgnx.yaml`.
 
 ## Architecture
 
