@@ -2,26 +2,38 @@
 // versions:
 //   sqlc v1.30.0
 
-package queries
+package gen
 
 import (
 	"context"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
+	GetDeadCandidates(ctx context.Context, arg GetDeadCandidatesParams) ([]string, error)
 	// Fetch all active encodes of a specific movie by IMDB ID. Used for t=movie&imdbid=.
 	GetMoviesByIMDB(ctx context.Context, imdbID pgtype.Text) ([]GetMoviesByIMDBRow, error)
 	// Fetch TV torrents by IMDB ID, optionally filtered to season/episode. Used for t=tvsearch&imdbid=.
 	GetTVByIMDB(ctx context.Context, arg GetTVByIMDBParams) ([]GetTVByIMDBRow, error)
 	GetTorrentByInfohash(ctx context.Context, infohash string) (GetTorrentByInfohashRow, error)
+	GetTorrentsToScrape(ctx context.Context, limit int32) ([]GetTorrentsToScrapeRow, error)
+	InsertScrapeHistory(ctx context.Context, arg InsertScrapeHistoryParams) error
+	InsertTorrentFile(ctx context.Context, arg InsertTorrentFileParams) error
+	PruneScrapeHistory(ctx context.Context, cutoff pgtype.Timestamptz) error
 	// General search across all active torrents. Used for t=search.
 	SearchAll(ctx context.Context, arg SearchAllParams) ([]SearchAllRow, error)
 	// Search active movie torrents with enrichment data. Used for t=movie.
 	SearchMovies(ctx context.Context, arg SearchMoviesParams) ([]SearchMoviesRow, error)
 	// Search active TV torrents with enrichment data. Used for t=tvsearch.
 	SearchTV(ctx context.Context, arg SearchTVParams) ([]SearchTVRow, error)
+	UpdateTorrentClassified(ctx context.Context, arg UpdateTorrentClassifiedParams) error
+	UpdateTorrentDead(ctx context.Context, infohash string) error
+	UpdateTorrentScrape(ctx context.Context, arg UpdateTorrentScrapeParams) error
+	UpsertTorrentPending(ctx context.Context, arg UpsertTorrentPendingParams) (pgconn.CommandTag, error)
+	UpsertTorrentTracker(ctx context.Context, arg UpsertTorrentTrackerParams) error
+	UpsertTracker(ctx context.Context, url string) (Tracker, error)
 }
 
 var _ Querier = (*Queries)(nil)

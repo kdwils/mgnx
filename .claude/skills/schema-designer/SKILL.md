@@ -1,6 +1,6 @@
 # schema-designer skill
 
-Design normalized PostgreSQL schemas for magnetite. Eliminate duplication first, index for the queries you actually have.
+Design normalized PostgreSQL schemas for mgnx. Eliminate duplication first, index for the queries you actually have.
 
 ## Normalization targets
 

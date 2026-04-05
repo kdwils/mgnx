@@ -1,0 +1,211 @@
+package classify
+
+import (
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+
+	"github.com/kdwils/mgnx/db/gen"
+)
+
+const (
+	minSizeBytes int64 = 50 * 1024 * 1024         // 50 MB
+	maxSizeBytes int64 = 150 * 1024 * 1024 * 1024 // 150 GB
+)
+
+// File is a file entry from torrent metadata.
+type File struct {
+	Path string
+	Size int64
+}
+
+// Result is the output of classifying a torrent.
+type Result struct {
+	State        gen.TorrentState
+	ContentType  gen.ContentType
+	Title        string
+	Year         int
+	Season       int
+	Episode      int
+	Quality      string
+	Encoding     string
+	DynamicRange string
+	Source       string
+	ReleaseGroup string
+	SceneName    string
+}
+
+var (
+	// TV markers
+	reSxE      = regexp.MustCompile(`(?i)\bS(\d{1,2})E(\d{1,2})\b`)
+	reSeason   = regexp.MustCompile(`(?i)\bSeason\s+(\d{1,2})\b`)
+	reNxM      = regexp.MustCompile(`(?i)\b(\d{1,2})x(\d{2,3})\b`)
+	reComplete = regexp.MustCompile(`(?i)\b(?:Complete\s+(?:Series|Season)|Full\s+Series|The\s+Complete\s+Series)\b`)
+
+	// Movie: 4-digit year (1900–2039)
+	reYear = regexp.MustCompile(`\b(19\d{2}|20[0-3]\d)\b`)
+
+	// Quality tags — all run against the normalized (dot-replaced) name
+	reResolution   = regexp.MustCompile(`(?i)\b(2160p|4K(?:\s*UHD)?|1080[pi]|720p|576p|480p)\b`)
+	reEncoding     = regexp.MustCompile(`(?i)\b(x265|x264|HEVC|AVC|AV1|XviD|DivX|H\.?265|H\.?264)\b`)
+	reDynamicRange = regexp.MustCompile(`(?i)\b(HDR10\+|HDR10|Dolby\.?Vision|DV|HDR|SDR)\b`)
+	reSource       = regexp.MustCompile(`(?i)\b(BluRay|Blu-Ray|BDRip|BDRemux|REMUX|WEB-DL|WEBRip|WEBDL|WEB|HDTV|DVDRip|DVD|PDVD|HDCAM|PDTV)\b`)
+
+	// Release group: last hyphen-prefixed token at end of name (before any extension)
+	reReleaseGroup = regexp.MustCompile(`-([A-Za-z0-9]{2,15})$`)
+
+	// Patterns used to find where the title ends in a normalized name
+	titleCutPatterns = []*regexp.Regexp{
+		reSxE, reSeason, reNxM, reComplete,
+		reYear, reResolution, reEncoding, reDynamicRange, reSource,
+	}
+)
+
+// normalize replaces dots and underscores with spaces and collapses whitespace.
+// This converts scene-style "Show.Name.S01E01" into "Show Name S01E01".
+func normalize(name string) string {
+	s := strings.ReplaceAll(name, ".", " ")
+	s = strings.ReplaceAll(s, "_", " ")
+	return strings.Join(strings.Fields(s), " ")
+}
+
+type tvInfo struct {
+	isTV    bool
+	season  int
+	episode int
+}
+
+func detectTV(normalized string) tvInfo {
+	if m := reSxE.FindStringSubmatch(normalized); m != nil {
+		season, _ := strconv.Atoi(m[1])
+		episode, _ := strconv.Atoi(m[2])
+		return tvInfo{true, season, episode}
+	}
+	if m := reSeason.FindStringSubmatch(normalized); m != nil {
+		season, _ := strconv.Atoi(m[1])
+		return tvInfo{true, season, 0}
+	}
+	if m := reNxM.FindStringSubmatch(normalized); m != nil {
+		season, _ := strconv.Atoi(m[1])
+		episode, _ := strconv.Atoi(m[2])
+		return tvInfo{true, season, episode}
+	}
+	if reComplete.MatchString(normalized) {
+		return tvInfo{isTV: true}
+	}
+	return tvInfo{}
+}
+
+// extractTitle returns the title portion of a normalized name by finding
+// the earliest position where technical tags (year, quality, episode markers) begin.
+func extractTitle(normalized string) string {
+	cut := len(normalized)
+	for _, p := range titleCutPatterns {
+		loc := p.FindStringIndex(normalized)
+		if loc == nil {
+			continue
+		}
+		if loc[0] < cut {
+			cut = loc[0]
+		}
+	}
+	return strings.TrimSpace(normalized[:cut])
+}
+
+func firstMatch(re *regexp.Regexp, s string) string {
+	return re.FindString(s)
+}
+
+// analyzeFiles returns the count of video files and the count of files whose
+// extension appears in the denylist.
+func analyzeFiles(files []File, denied map[string]struct{}) (videoCount, badCount int) {
+	for _, f := range files {
+		ext := strings.ToLower(filepath.Ext(f.Path))
+		if isVideoExt(ext) {
+			videoCount++
+			continue
+		}
+		if _, ok := denied[ext]; ok {
+			badCount++
+		}
+	}
+	return
+}
+
+func isVideoExt(ext string) bool {
+	switch ext {
+	case ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".ts", ".m2ts", ".vob", ".flv", ".webm":
+		return true
+	}
+	return false
+}
+
+func shouldReject(ct gen.ContentType, files []File, totalSize int64, denied map[string]struct{}) bool {
+	if totalSize < minSizeBytes || totalSize > maxSizeBytes {
+		return true
+	}
+	if ct == gen.ContentTypeUnknown {
+		return true
+	}
+	videoCount, badCount := analyzeFiles(files, denied)
+	if videoCount == 0 {
+		return true
+	}
+	if badCount > 0 {
+		return true
+	}
+	return false
+}
+
+// stripVideoExt removes a trailing video file extension from name so that
+// release group detection works correctly for single-file torrents.
+func stripVideoExt(name string) string {
+	ext := strings.ToLower(filepath.Ext(name))
+	if isVideoExt(ext) {
+		return name[:len(name)-len(ext)]
+	}
+	return name
+}
+
+// Classify analyzes a torrent name and file list to produce a classification result.
+// denied is a pre-built set of excluded file extensions (built once at startup from config).
+func Classify(name string, files []File, totalSize int64, denied map[string]struct{}) Result {
+	result := Result{
+		SceneName:   name,
+		ContentType: gen.ContentTypeUnknown,
+	}
+
+	normalized := normalize(name)
+	tv := detectTV(normalized)
+
+	if tv.isTV {
+		result.ContentType = gen.ContentTypeTv
+		result.Season = tv.season
+		result.Episode = tv.episode
+	}
+
+	if result.ContentType == gen.ContentTypeUnknown {
+		if m := reYear.FindStringSubmatch(normalized); m != nil {
+			result.ContentType = gen.ContentTypeMovie
+			result.Year, _ = strconv.Atoi(m[1])
+		}
+	}
+
+	result.Title = extractTitle(normalized)
+	result.Quality = firstMatch(reResolution, normalized)
+	result.Encoding = firstMatch(reEncoding, normalized)
+	result.DynamicRange = firstMatch(reDynamicRange, normalized)
+	result.Source = firstMatch(reSource, normalized)
+
+	if m := reReleaseGroup.FindStringSubmatch(stripVideoExt(name)); m != nil {
+		result.ReleaseGroup = m[1]
+	}
+
+	if shouldReject(result.ContentType, files, totalSize, denied) {
+		result.State = gen.TorrentStateRejected
+		return result
+	}
+	result.State = gen.TorrentStateClassified
+	return result
+}

@@ -6,16 +6,16 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/kdwils/magnetite/config"
-	"github.com/kdwils/magnetite/db/queries"
+	"github.com/kdwils/mgnx/config"
+	"github.com/kdwils/mgnx/db/gen"
 )
 
 type Service struct {
-	q   queries.Querier
+	q   gen.Querier
 	cfg config.Config
 }
 
-func New(q queries.Querier, cfg config.Config) *Service {
+func New(q gen.Querier, cfg config.Config) *Service {
 	return &Service{q: q, cfg: cfg}
 }
 

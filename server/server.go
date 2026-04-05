@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
-	"github.com/kdwils/magnetite/service"
+	"github.com/kdwils/mgnx/service"
 )
 
 type Service interface {
@@ -49,26 +50,48 @@ func (s *Server) Serve(ctx context.Context) error {
 		Handler: corsHandler,
 	}
 
-	return s.gracefullyListenAndServe(ctx, srv, "HTTP server")
+	return s.gracefullyListenAndServe(ctx, srv, nil)
 }
 
-func (s *Server) gracefullyListenAndServe(ctx context.Context, srv *http.Server, name string) error {
-	go func(ctx context.Context) {
+// ServeListener starts the server on an already-bound listener.
+// Tests use net.Listen("tcp", ":0") to get an ephemeral port without a port-reuse race.
+func (s *Server) ServeListener(ctx context.Context, l net.Listener) error {
+	r := mux.NewRouter()
+	r.Use(WithLogger(s.logger))
+	r.HandleFunc("/api", s.handleAPI()).Methods(http.MethodGet)
+
+	corsHandler := handlers.CORS(
+		handlers.AllowedOrigins([]string{"*"}),
+		handlers.AllowedMethods([]string{"GET", "POST", "OPTIONS"}),
+		handlers.AllowedHeaders([]string{"Content-Type"}),
+	)(r)
+
+	srv := &http.Server{Handler: corsHandler}
+	return s.gracefullyListenAndServe(ctx, srv, l)
+}
+
+func (s *Server) gracefullyListenAndServe(ctx context.Context, srv *http.Server, l net.Listener) error {
+	go func() {
 		<-ctx.Done()
-		s.logger.Info("shutting down", "name", name)
+		s.logger.Info("shutting down HTTP server")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
-			s.logger.Error("error shutting down", "name", name, "error", err)
-			return
+			s.logger.Error("error shutting down HTTP server", "error", err)
 		}
-		s.logger.Info("shutdown complete", "name", name)
-	}(ctx)
+	}()
 
-	s.logger.Info("server listening", "name", name, "addr", srv.Addr)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("%s failed: %w", name, err)
+	s.logger.Info("HTTP server listening", "addr", srv.Addr)
+
+	if l != nil {
+		if err := srv.Serve(l); err != nil && err != http.ErrServerClosed {
+			return fmt.Errorf("HTTP server failed: %w", err)
+		}
+		return nil
 	}
 
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		return fmt.Errorf("HTTP server failed: %w", err)
+	}
 	return nil
 }

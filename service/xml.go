@@ -87,7 +87,7 @@ func newXMLCaps(caps CapsResponse) XMLCaps {
 	}
 
 	return XMLCaps{
-		Server:     XMLCapsServer{Title: "Magnetite"},
+		Server:     XMLCapsServer{Title: "mgnx"},
 		Limits:     XMLCapsLimits{Max: caps.MaxLimit, Default: caps.DefaultLimit},
 		Searching:  searching,
 		Categories: XMLCapsCategories{Categories: categories},
@@ -109,11 +109,11 @@ type XMLChannel struct {
 }
 
 type XMLItem struct {
-	Title   string        `xml:"title"`
-	GUID    XMLGUID       `xml:"guid"`
-	Link    string        `xml:"link"`
-	Size    int64         `xml:"size"`
-	PubDate string        `xml:"pubDate"`
+	Title   string  `xml:"title"`
+	GUID    XMLGUID `xml:"guid"`
+	Link    string  `xml:"link"`
+	Size    int64   `xml:"size"`
+	PubDate string  `xml:"pubDate"`
 	Attrs   []XMLTorznabAttr
 }
 
@@ -137,8 +137,8 @@ func newXMLRSS(items []TorrentItem) XMLRSS {
 	return XMLRSS{
 		Version: "2.0",
 		Channel: XMLChannel{
-			Title:       "Magnetite",
-			Description: "Magnetite Torznab indexer",
+			Title:       "mgnx",
+			Description: "mgnx Torznab indexer",
 			Items:       xmlItems,
 		},
 	}

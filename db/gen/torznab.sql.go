@@ -3,7 +3,7 @@
 //   sqlc v1.30.0
 // source: torznab.sql
 
-package queries
+package gen
 
 import (
 	"context"
