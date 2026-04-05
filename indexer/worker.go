@@ -38,10 +38,6 @@ func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg
 	for _, ext := range cfg.AllowedExtensions {
 		allowed[ext] = struct{}{}
 	}
-	peerRetries := cfg.PeerRetries
-	if peerRetries <= 0 {
-		peerRetries = 3
-	}
 	return &Worker{
 		crawler:     crawler,
 		fetcher:     fetcher,
@@ -49,7 +45,7 @@ func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg
 		cfg:         cfg,
 		allowedExts: allowed,
 		peerTimeout: cfg.PeerTimeout,
-		peerRetries: peerRetries,
+		peerRetries: cfg.PeerRetries,
 		minSize:     cfg.MinSize,
 		maxSize:     cfg.MaxSize,
 	}

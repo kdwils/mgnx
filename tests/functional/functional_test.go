@@ -111,6 +111,8 @@ func TestEndToEnd(t *testing.T) {
 			Workers:           4,
 			PeerTimeout:       5 * time.Second,
 			PeerRetries:       1,
+			MinSize:           50 * 1024 * 1024,
+			MaxSize:           150 * 1024 * 1024 * 1024,
 			AllowedExtensions: []string{".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".ts", ".m2ts", ".vob", ".flv", ".webm", ".srt", ".ass", ".ssa"},
 		},
 		Scrape: config.Scrape{
