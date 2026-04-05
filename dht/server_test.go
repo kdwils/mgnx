@@ -132,7 +132,8 @@ func TestServer_processQuery(t *testing.T) {
 		select {
 		case event := <-s.discovered:
 			assert.Equal(t, ih, event.Infohash)
-			assert.Equal(t, port, event.Port)
+			assert.Equal(t, 1, len(event.Peers))
+			assert.Equal(t, port, event.Peers[0].Port)
 		case <-time.After(time.Second):
 			t.Fatal("no discovery event received")
 		}

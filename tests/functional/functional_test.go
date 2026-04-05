@@ -133,9 +133,18 @@ func TestEndToEnd(t *testing.T) {
 
 	serverURL := "http://127.0.0.1:" + strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
 
-	discoveredCh <- dht.DiscoveredPeer{Infohash: movieHash, SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}
-	discoveredCh <- dht.DiscoveredPeer{Infohash: tvHash, SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}
-	discoveredCh <- dht.DiscoveredPeer{Infohash: rejHash, SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}
+	discoveredCh <- dht.DiscoveredPeer{
+		Infohash: movieHash,
+		Peers:    []dht.PeerAddr{{SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}},
+	}
+	discoveredCh <- dht.DiscoveredPeer{
+		Infohash: tvHash,
+		Peers:    []dht.PeerAddr{{SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}},
+	}
+	discoveredCh <- dht.DiscoveredPeer{
+		Infohash: rejHash,
+		Peers:    []dht.PeerAddr{{SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}},
+	}
 
 	if !t.Run("IndexMovie", func(t *testing.T) {
 		waitForState(t, ctx, queries, movieHex, gen.TorrentStateActive, 30*time.Second)

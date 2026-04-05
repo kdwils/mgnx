@@ -26,12 +26,17 @@ type Worker struct {
 	cfg          config.Indexer
 	deniedExts   map[string]struct{}
 	fetchTimeout time.Duration
+	peerRetries  int
 }
 
 func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg config.Indexer) *Worker {
 	denied := make(map[string]struct{}, len(cfg.ExcludedExtensions))
 	for _, ext := range cfg.ExcludedExtensions {
 		denied[ext] = struct{}{}
+	}
+	peerRetries := cfg.PeerRetries
+	if peerRetries <= 0 {
+		peerRetries = 1
 	}
 	return &Worker{
 		crawler:      crawler,
@@ -40,6 +45,7 @@ func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg
 		cfg:          cfg,
 		deniedExts:   denied,
 		fetchTimeout: cfg.FetchTimeout,
+		peerRetries:  peerRetries,
 	}
 }
 
@@ -85,14 +91,26 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeer) {
 		return
 	}
 
-	fetchCtx, cancel := context.WithTimeout(ctx, w.fetchTimeout)
-	defer cancel()
+	retries := w.peerRetries
+	if len(ev.Peers) < retries {
+		retries = len(ev.Peers)
+	}
 
-	addr := net.TCPAddr{IP: ev.SourceIP, Port: ev.Port}
+	var info *metadata.TorrentInfo
+	for i := 0; i < retries; i++ {
+		peer := ev.Peers[i]
+		addr := net.TCPAddr{IP: peer.SourceIP, Port: peer.Port}
 
-	info, err := w.fetcher.Fetch(fetchCtx, ev.Infohash, addr)
-	if err != nil {
+		fetchCtx, cancel := context.WithTimeout(ctx, w.fetchTimeout)
+		info, err = w.fetcher.Fetch(fetchCtx, ev.Infohash, addr)
+		cancel()
+		if err == nil {
+			break
+		}
 		log.DebugContext(ctx, "metadata fetch failed", "infohash", infohashHex, "addr", addr.String(), "err", err)
+	}
+
+	if info == nil {
 		return
 	}
 

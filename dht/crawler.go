@@ -19,9 +19,14 @@ import (
 // and the metadata fetch layer (Section 4).
 type DiscoveredPeer struct {
 	Infohash [20]byte
+	Peers    []PeerAddr
+	SeenAt   time.Time
+}
+
+// PeerAddr represents a TCP peer address for metadata fetching.
+type PeerAddr struct {
 	SourceIP net.IP
 	Port     int
-	SeenAt   time.Time
 }
 
 // Crawler is the public interface for the DHT crawler.
@@ -35,12 +40,12 @@ type Crawler interface {
 //  1. Passive: announce_peer queries already wired in the server (Step 6).
 //  2. Active:  BEP-51 sample_infohashes traversal driven here.
 type crawler struct {
-	server  *Server
+	server     *Server
 	discovered chan DiscoveredPeer
-	dedup   *BloomFilter
-	cfg     config.DHT
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
+	dedup      *BloomFilter
+	cfg        config.DHT
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
 }
 
 // NewCrawler creates a Crawler backed by a new UDP Server. The BloomFilter is
@@ -54,10 +59,10 @@ func NewCrawler(cfg config.DHT) (Crawler, error) {
 	dedup := NewBloomFilter()
 	server.dedup = dedup
 	return &crawler{
-		server:  server,
+		server:     server,
 		discovered: server.discovered,
-		dedup:   dedup,
-		cfg:     cfg,
+		dedup:      dedup,
+		cfg:        cfg,
 	}, nil
 }
 
@@ -299,21 +304,27 @@ func (c *crawler) discoverPeers(ctx context.Context, h [20]byte, node *Node) {
 		return
 	}
 
+	var peerAddrs []PeerAddr
 	for _, peer := range peers {
 		udpAddr, ok := peer.(*net.UDPAddr)
 		if !ok {
 			continue
 		}
-		event := DiscoveredPeer{
-			Infohash: h,
-			SourceIP: udpAddr.IP,
-			Port:     udpAddr.Port,
-			SeenAt:   time.Now(),
-		}
-		select {
-		case c.discovered <- event:
-		default: // channel full — drop
-		}
+		peerAddrs = append(peerAddrs, PeerAddr{SourceIP: udpAddr.IP, Port: udpAddr.Port})
+	}
+
+	if len(peerAddrs) == 0 {
+		return
+	}
+
+	event := DiscoveredPeer{
+		Infohash: h,
+		Peers:    peerAddrs,
+		SeenAt:   time.Now(),
+	}
+	select {
+	case c.discovered <- event:
+	default: // channel full — drop
 	}
 }
 

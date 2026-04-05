@@ -36,6 +36,7 @@ type DHT struct {
 type Indexer struct {
 	Workers            int           `mapstructure:"workers"`
 	FetchTimeout       time.Duration `mapstructure:"fetch_timeout"`
+	PeerRetries        int           `mapstructure:"peer_retries"` // max peers to try per infohash, default 1
 	ExcludedExtensions []string      `mapstructure:"excluded_extensions"`
 }
 

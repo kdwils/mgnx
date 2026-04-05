@@ -333,8 +333,7 @@ func (s *Server) handleAnnouncePeer(ctx context.Context, addr *net.UDPAddr, msg 
 	}
 	event := DiscoveredPeer{
 		Infohash: h,
-		SourceIP: addr.IP,
-		Port:     port,
+		Peers:    []PeerAddr{{SourceIP: addr.IP, Port: port}},
 		SeenAt:   time.Now(),
 	}
 	log := logger.FromContext(ctx)
