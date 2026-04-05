@@ -192,6 +192,10 @@ func Classify(name string, files []File, totalSize int64, minSize, maxSize int64
 		}
 	}
 
+	if m := reYear.FindStringSubmatch(normalized); m != nil {
+		result.Year, _ = strconv.Atoi(m[1])
+	}
+
 	result.Title = extractTitle(normalized)
 	result.Quality = firstMatch(reResolution, normalized)
 	result.Encoding = firstMatch(reEncoding, normalized)
