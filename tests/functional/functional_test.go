@@ -59,12 +59,12 @@ func TestEndToEnd(t *testing.T) {
 	queries := gen.New(pool)
 
 	ctrl := gomock.NewController(t)
-	discoveredCh := make(chan dht.DiscoveredPeer, 50)
+	discoveredCh := make(chan dht.DiscoveredPeers, 50)
 
 	crawler := mocks.NewMockCrawler(ctrl)
 	crawler.EXPECT().Start(gomock.Any()).Return(nil)
 	crawler.EXPECT().Stop()
-	crawler.EXPECT().Infohashes().Return((<-chan dht.DiscoveredPeer)(discoveredCh)).AnyTimes()
+	crawler.EXPECT().Infohashes().Return((<-chan dht.DiscoveredPeers)(discoveredCh)).AnyTimes()
 
 	fetcher := mocks.NewMockFetcher(ctrl)
 	scraper := mocks.NewMockScraper(ctrl)
@@ -107,7 +107,7 @@ func TestEndToEnd(t *testing.T) {
 	}).AnyTimes()
 
 	cfg := config.Config{
-		Indexer: config.Indexer{Workers: 4, FetchTimeout: 5 * time.Second},
+		Indexer: config.Indexer{Workers: 4, PeerTimeout: 5 * time.Second, PeerRetries: 1},
 		Scrape: config.Scrape{
 			PollInterval: 200 * time.Millisecond,
 			BatchSize:    74,
@@ -133,9 +133,18 @@ func TestEndToEnd(t *testing.T) {
 
 	serverURL := "http://127.0.0.1:" + strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
 
-	discoveredCh <- dht.DiscoveredPeer{Infohash: movieHash, SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}
-	discoveredCh <- dht.DiscoveredPeer{Infohash: tvHash, SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}
-	discoveredCh <- dht.DiscoveredPeer{Infohash: rejHash, SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}
+	discoveredCh <- dht.DiscoveredPeers{
+		Infohash: movieHash,
+		Peers:    []dht.PeerAddr{{SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}},
+	}
+	discoveredCh <- dht.DiscoveredPeers{
+		Infohash: tvHash,
+		Peers:    []dht.PeerAddr{{SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}},
+	}
+	discoveredCh <- dht.DiscoveredPeers{
+		Infohash: rejHash,
+		Peers:    []dht.PeerAddr{{SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}},
+	}
 
 	if !t.Run("IndexMovie", func(t *testing.T) {
 		waitForState(t, ctx, queries, movieHex, gen.TorrentStateActive, 30*time.Second)

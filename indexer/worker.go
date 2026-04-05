@@ -20,12 +20,13 @@ import (
 )
 
 type Worker struct {
-	crawler      dht.Crawler
-	fetcher      metadata.Fetcher
-	queries      gen.Querier
-	cfg          config.Indexer
-	deniedExts   map[string]struct{}
-	fetchTimeout time.Duration
+	crawler     dht.Crawler
+	fetcher     metadata.Fetcher
+	queries     gen.Querier
+	cfg         config.Indexer
+	deniedExts  map[string]struct{}
+	peerTimeout time.Duration
+	peerRetries int
 }
 
 func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg config.Indexer) *Worker {
@@ -33,13 +34,19 @@ func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg
 	for _, ext := range cfg.ExcludedExtensions {
 		denied[ext] = struct{}{}
 	}
+	peerRetries := cfg.PeerRetries
+	if peerRetries <= 0 {
+		peerRetries = 3
+	}
+	peerTimeout := cfg.PeerTimeout
 	return &Worker{
-		crawler:      crawler,
-		fetcher:      fetcher,
-		queries:      queries,
-		cfg:          cfg,
-		deniedExts:   denied,
-		fetchTimeout: cfg.FetchTimeout,
+		crawler:     crawler,
+		fetcher:     fetcher,
+		queries:     queries,
+		cfg:         cfg,
+		deniedExts:  denied,
+		peerTimeout: peerTimeout,
+		peerRetries: peerRetries,
 	}
 }
 
@@ -60,7 +67,7 @@ func (w *Worker) Run(ctx context.Context) {
 			}
 			sem <- struct{}{}
 			wg.Add(1)
-			go func(e dht.DiscoveredPeer) {
+			go func(e dht.DiscoveredPeers) {
 				defer wg.Done()
 				defer func() { <-sem }()
 				w.process(ctx, e)
@@ -72,7 +79,7 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeer) {
+func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 	log := logger.FromContext(ctx)
 	infohashHex := hex.EncodeToString(ev.Infohash[:])
 
@@ -85,14 +92,26 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeer) {
 		return
 	}
 
-	fetchCtx, cancel := context.WithTimeout(ctx, w.fetchTimeout)
-	defer cancel()
+	retries := w.peerRetries
+	if len(ev.Peers) < retries {
+		retries = len(ev.Peers)
+	}
 
-	addr := net.TCPAddr{IP: ev.SourceIP, Port: ev.Port}
+	var info *metadata.TorrentInfo
+	for i := 0; i < retries; i++ {
+		peer := ev.Peers[i]
+		addr := net.TCPAddr{IP: peer.SourceIP, Port: peer.Port}
 
-	info, err := w.fetcher.Fetch(fetchCtx, ev.Infohash, addr)
-	if err != nil {
+		fetchCtx, cancel := context.WithTimeout(ctx, w.peerTimeout)
+		info, err = w.fetcher.Fetch(fetchCtx, ev.Infohash, addr)
+		cancel()
+		if err == nil {
+			break
+		}
 		log.DebugContext(ctx, "metadata fetch failed", "infohash", infohashHex, "addr", addr.String(), "err", err)
+	}
+
+	if info == nil {
 		return
 	}
 

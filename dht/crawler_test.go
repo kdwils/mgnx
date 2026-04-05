@@ -198,7 +198,8 @@ func TestCrawler_processSamples(t *testing.T) {
 		select {
 		case event := <-c.discovered:
 			assert.Equal(t, h, event.Infohash)
-			assert.Equal(t, peerAddr.Port, event.Port)
+			assert.Equal(t, 1, len(event.Peers))
+			assert.Equal(t, peerAddr.Port, event.Peers[0].Port)
 		case <-time.After(2 * time.Second):
 			t.Fatal("expected discovery event")
 		}
@@ -253,7 +254,7 @@ func TestCrawler_processSamples(t *testing.T) {
 		item := &bep51Item{node: node}
 
 		for i := range cap(c.discovered) {
-			c.discovered <- DiscoveredPeer{Infohash: [20]byte{byte(i)}}
+			c.discovered <- DiscoveredPeers{Infohash: [20]byte{byte(i)}}
 		}
 
 		var h [20]byte

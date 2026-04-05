@@ -60,6 +60,9 @@ func initConfig() {
 	})
 	viper.SetDefault("database.uri", "")
 
+	viper.SetDefault("indexer.peer_retries", 3)
+	viper.SetDefault("indexer.peer_timeout", 5*time.Second)
+
 	viper.SetDefault("dht.node_id", "")
 	viper.SetDefault("dht.port", 6881)
 	viper.SetDefault("dht.rate_limit", 25.0)
