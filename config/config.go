@@ -34,10 +34,10 @@ type DHT struct {
 }
 
 type Indexer struct {
-	Workers            int           `mapstructure:"workers"`
-	PeerTimeout        time.Duration `mapstructure:"peer_timeout"` // timeout per peer, default 5s
-	PeerRetries        int           `mapstructure:"peer_retries"` // max peers to try per infohash, default 3
-	ExcludedExtensions []string      `mapstructure:"excluded_extensions"`
+	Workers           int           `mapstructure:"workers"`
+	PeerTimeout       time.Duration `mapstructure:"peer_timeout"` // timeout per peer, default 5s
+	PeerRetries       int           `mapstructure:"peer_retries"` // max peers to try per infohash, default 3
+	AllowedExtensions []string      `mapstructure:"allowed_extensions"`
 }
 
 type Scrape struct {

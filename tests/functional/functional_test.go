@@ -107,7 +107,12 @@ func TestEndToEnd(t *testing.T) {
 	}).AnyTimes()
 
 	cfg := config.Config{
-		Indexer: config.Indexer{Workers: 4, PeerTimeout: 5 * time.Second, PeerRetries: 1},
+		Indexer: config.Indexer{
+			Workers:           4,
+			PeerTimeout:       5 * time.Second,
+			PeerRetries:       1,
+			AllowedExtensions: []string{".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".ts", ".m2ts", ".vob", ".flv", ".webm", ".srt", ".ass", ".ssa"},
+		},
 		Scrape: config.Scrape{
 			PollInterval: 200 * time.Millisecond,
 			BatchSize:    74,
