@@ -31,31 +31,68 @@ type Result struct {
 	SceneName    string
 }
 
+type tvInfo struct {
+	isTV    bool
+	season  int
+	episode int
+}
+
 var (
-	// TV markers
-	reSxE      = regexp.MustCompile(`(?i)\bS(\d{1,2})E(\d{1,2})\b`)
-	reSeason   = regexp.MustCompile(`(?i)\bSeason\s+(\d{1,2})\b`)
-	reNxM      = regexp.MustCompile(`(?i)\b(\d{1,2})x(\d{2,3})\b`)
-	reComplete = regexp.MustCompile(`(?i)\b(?:Complete\s+(?:Series|Season)|Full\s+Series|The\s+Complete\s+Series)\b`)
+	// TV/Season patterns
+	seasonPackPattern    = regexp.MustCompile(`(?i)(?:\bS(?:eason)?[\s._-]?\d{1,2}\b|\bComplete\b)`)
+	episodePattern       = regexp.MustCompile(`(?i)\b(S\d{1,2}E\d{2,})|\b(\d{1,2}x\d{2,})`)
+	episodeNumberPattern = regexp.MustCompile(`(?i)\b(?:S(\d{1,2})(?:E|x)(\d{1,2})|(\d{1,2})x(\d{1,2})|Ep\.?(\d{1,2}))\b`)
+	seasonNumberPattern  = regexp.MustCompile(`(?i)\bS(?:eason)?[\s._-]?(\d{1,2})\b`)
 
 	// Movie: 4-digit year (1900–2039)
 	reYear = regexp.MustCompile(`\b(19\d{2}|20[0-3]\d)\b`)
 
 	// Quality tags — all run against the normalized (dot-replaced) name
 	reResolution   = regexp.MustCompile(`(?i)\b(2160p|4K(?:\s*UHD)?|1080[pi]|720p|576p|480p)\b`)
-	reEncoding     = regexp.MustCompile(`(?i)\b(x265|x264|HEVC|AVC|AV1|XviD|DivX|H\.?265|H\.?264)\b`)
+	reEncoding     = regexp.MustCompile(`(?i)\b(x265|x264|HEVC|AVC|AV1|XviD|DivX|H\.?265|H\.?264|H\.264)\b`)
 	reDynamicRange = regexp.MustCompile(`(?i)\b(HDR10\+|HDR10|Dolby\.?Vision|DV|HDR|SDR)\b`)
-	reSource       = regexp.MustCompile(`(?i)\b(BluRay|Blu-Ray|BDRip|BDRemux|REMUX|WEB-DL|WEBRip|WEBDL|WEB|HDTV|DVDRip|DVD|PDVD|HDCAM|PDTV)\b`)
+	reSource       = regexp.MustCompile(`(?i)\b(BluRay|Blu-Ray|BDRip|BDRemux|BDREMUX|REMUX|WEB-DL|WEBRip|WEBDL|WEB|HDTV|DVDRip|DVD|PDVD|HDCAM|PDTV)\b`)
 
 	// Release group: last hyphen-prefixed token at end of name (before any extension)
 	reReleaseGroup = regexp.MustCompile(`-([A-Za-z0-9]{2,15})$`)
 
 	// Patterns used to find where the title ends in a normalized name
 	titleCutPatterns = []*regexp.Regexp{
-		reSxE, reSeason, reNxM, reComplete,
+		episodePattern, seasonNumberPattern, seasonPackPattern,
 		reYear, reResolution, reEncoding, reDynamicRange, reSource,
 	}
 )
+
+func detectTV(normalized string) tvInfo {
+	if m := episodeNumberPattern.FindStringSubmatch(normalized); m != nil {
+		var season, episode int
+		if m[1] != "" {
+			season, _ = strconv.Atoi(m[1])
+			episode, _ = strconv.Atoi(m[2])
+		}
+		if m[3] != "" {
+			season, _ = strconv.Atoi(m[3])
+			episode, _ = strconv.Atoi(m[4])
+		}
+		if m[5] != "" {
+			episode, _ = strconv.Atoi(m[5])
+		}
+		return tvInfo{true, season, episode}
+	}
+
+	if m := seasonNumberPattern.FindStringSubmatch(normalized); m != nil {
+		season, _ := strconv.Atoi(m[1])
+		if season > 0 && season <= 99 && seasonPackPattern.MatchString(normalized) {
+			return tvInfo{true, season, 0}
+		}
+	}
+
+	if seasonPackPattern.MatchString(normalized) {
+		return tvInfo{isTV: true}
+	}
+
+	return tvInfo{}
+}
 
 // normalize replaces dots and underscores with spaces and collapses whitespace.
 // This converts scene-style "Show.Name.S01E01" into "Show Name S01E01".
@@ -63,33 +100,6 @@ func normalize(name string) string {
 	s := strings.ReplaceAll(name, ".", " ")
 	s = strings.ReplaceAll(s, "_", " ")
 	return strings.Join(strings.Fields(s), " ")
-}
-
-type tvInfo struct {
-	isTV    bool
-	season  int
-	episode int
-}
-
-func detectTV(normalized string) tvInfo {
-	if m := reSxE.FindStringSubmatch(normalized); m != nil {
-		season, _ := strconv.Atoi(m[1])
-		episode, _ := strconv.Atoi(m[2])
-		return tvInfo{true, season, episode}
-	}
-	if m := reSeason.FindStringSubmatch(normalized); m != nil {
-		season, _ := strconv.Atoi(m[1])
-		return tvInfo{true, season, 0}
-	}
-	if m := reNxM.FindStringSubmatch(normalized); m != nil {
-		season, _ := strconv.Atoi(m[1])
-		episode, _ := strconv.Atoi(m[2])
-		return tvInfo{true, season, episode}
-	}
-	if reComplete.MatchString(normalized) {
-		return tvInfo{isTV: true}
-	}
-	return tvInfo{}
 }
 
 // extractTitle returns the title portion of a normalized name by finding
@@ -140,6 +150,9 @@ func shouldReject(ct gen.ContentType, files []File, totalSize int64, minSize, ma
 	if totalSize < minSize || totalSize > maxSize {
 		return true
 	}
+	if ct == gen.ContentTypeUnknown {
+		return true
+	}
 	videoCount, badCount := analyzeFiles(files, allowed)
 	if videoCount == 0 {
 		return true
@@ -182,6 +195,10 @@ func Classify(name string, files []File, totalSize int64, minSize, maxSize int64
 			result.ContentType = gen.ContentTypeMovie
 			result.Year, _ = strconv.Atoi(m[1])
 		}
+	}
+
+	if m := reYear.FindStringSubmatch(normalized); m != nil {
+		result.Year, _ = strconv.Atoi(m[1])
 	}
 
 	result.Title = extractTitle(normalized)
