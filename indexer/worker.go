@@ -35,9 +35,6 @@ func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg
 		denied[ext] = struct{}{}
 	}
 	peerRetries := cfg.PeerRetries
-	if peerRetries <= 0 {
-		peerRetries = 1
-	}
 	return &Worker{
 		crawler:      crawler,
 		fetcher:      fetcher,
