@@ -24,15 +24,15 @@ type Worker struct {
 	fetcher     metadata.Fetcher
 	queries     gen.Querier
 	cfg         config.Indexer
-	deniedExts  map[string]struct{}
+	allowedExts map[string]struct{}
 	peerTimeout time.Duration
 	peerRetries int
 }
 
 func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg config.Indexer) *Worker {
-	denied := make(map[string]struct{}, len(cfg.ExcludedExtensions))
-	for _, ext := range cfg.ExcludedExtensions {
-		denied[ext] = struct{}{}
+	allowed := make(map[string]struct{}, len(cfg.AllowedExtensions))
+	for _, ext := range cfg.AllowedExtensions {
+		allowed[ext] = struct{}{}
 	}
 	peerRetries := cfg.PeerRetries
 	if peerRetries <= 0 {
@@ -44,7 +44,7 @@ func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg
 		fetcher:     fetcher,
 		queries:     queries,
 		cfg:         cfg,
-		deniedExts:  denied,
+		allowedExts: allowed,
 		peerTimeout: peerTimeout,
 		peerRetries: peerRetries,
 	}
@@ -52,10 +52,6 @@ func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg
 
 func (w *Worker) Run(ctx context.Context) {
 	workers := w.cfg.Workers
-	if workers <= 0 {
-		workers = 50
-	}
-
 	sem := make(chan struct{}, workers)
 	var wg sync.WaitGroup
 	for {
@@ -151,7 +147,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		classifyFiles[i] = classify.File{Path: f.Path, Size: f.Size}
 	}
 
-	result := classify.Classify(info.Name, classifyFiles, info.TotalSize, w.deniedExts)
+	result := classify.Classify(info.Name, classifyFiles, info.TotalSize, w.allowedExts)
 	if err := w.queries.UpdateTorrentClassified(ctx, gen.UpdateTorrentClassifiedParams{
 		Infohash:     infohashHex,
 		State:        result.State,

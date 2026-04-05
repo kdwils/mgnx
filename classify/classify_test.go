@@ -11,13 +11,11 @@ import (
 const mb = 1024 * 1024
 const gb = 1024 * mb
 
-// testDenied mirrors the default production denylist used in tests.
-var testDenied = map[string]struct{}{
-	".exe": {}, ".bat": {}, ".cmd": {}, ".scr": {}, ".vbs": {}, ".ps1": {},
-	".sh": {}, ".py": {}, ".js": {}, ".jar": {}, ".apk": {},
-	".zip": {}, ".rar": {}, ".7z": {}, ".tar": {}, ".gz": {}, ".bz2": {},
-	".pdf": {}, ".doc": {}, ".docx": {}, ".xls": {}, ".xlsx": {},
-	".iso": {}, ".img": {}, ".dmg": {}, ".bin": {}, ".cue": {},
+// testAllowed mirrors the default production allowlist used in tests.
+var testAllowed = map[string]struct{}{
+	".mkv": {}, ".mp4": {}, ".avi": {}, ".mov": {}, ".wmv": {}, ".m4v": {},
+	".ts": {}, ".m2ts": {}, ".vob": {}, ".flv": {}, ".webm": {},
+	".srt": {}, ".ass": {}, ".ssa": {}, ".sub": {},
 }
 
 func video(n int, sizeEach int64) []classify.File {
@@ -298,7 +296,7 @@ func TestClassify(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := classify.Classify(tc.torrent, tc.files, tc.totalSize, testDenied)
+			got := classify.Classify(tc.torrent, tc.files, tc.totalSize, testAllowed)
 			assert.Equal(t, tc.want, got)
 		})
 	}

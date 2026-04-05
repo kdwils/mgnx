@@ -118,15 +118,15 @@ func firstMatch(re *regexp.Regexp, s string) string {
 }
 
 // analyzeFiles returns the count of video files and the count of files whose
-// extension appears in the denylist.
-func analyzeFiles(files []File, denied map[string]struct{}) (videoCount, badCount int) {
+// extension is NOT in the allowlist.
+func analyzeFiles(files []File, allowed map[string]struct{}) (videoCount, badCount int) {
 	for _, f := range files {
 		ext := strings.ToLower(filepath.Ext(f.Path))
 		if isVideoExt(ext) {
 			videoCount++
 			continue
 		}
-		if _, ok := denied[ext]; ok {
+		if _, ok := allowed[ext]; !ok {
 			badCount++
 		}
 	}
@@ -141,14 +141,14 @@ func isVideoExt(ext string) bool {
 	return false
 }
 
-func shouldReject(ct gen.ContentType, files []File, totalSize int64, denied map[string]struct{}) bool {
+func shouldReject(ct gen.ContentType, files []File, totalSize int64, allowed map[string]struct{}) bool {
 	if totalSize < minSizeBytes || totalSize > maxSizeBytes {
 		return true
 	}
 	if ct == gen.ContentTypeUnknown {
 		return true
 	}
-	videoCount, badCount := analyzeFiles(files, denied)
+	videoCount, badCount := analyzeFiles(files, allowed)
 	if videoCount == 0 {
 		return true
 	}
@@ -169,8 +169,8 @@ func stripVideoExt(name string) string {
 }
 
 // Classify analyzes a torrent name and file list to produce a classification result.
-// denied is a pre-built set of excluded file extensions (built once at startup from config).
-func Classify(name string, files []File, totalSize int64, denied map[string]struct{}) Result {
+// allowed is a pre-built set of allowed file extensions (built once at startup from config).
+func Classify(name string, files []File, totalSize int64, allowed map[string]struct{}) Result {
 	result := Result{
 		SceneName:   name,
 		ContentType: gen.ContentTypeUnknown,
@@ -202,7 +202,7 @@ func Classify(name string, files []File, totalSize int64, denied map[string]stru
 		result.ReleaseGroup = m[1]
 	}
 
-	if shouldReject(result.ContentType, files, totalSize, denied) {
+	if shouldReject(result.ContentType, files, totalSize, allowed) {
 		result.State = gen.TorrentStateRejected
 		return result
 	}
