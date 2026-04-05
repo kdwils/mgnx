@@ -25,7 +25,7 @@ func testServerCfg(t *testing.T) config.DHT {
 		GoodNodeWindow:      15 * time.Minute,
 		BadFailureThreshold: 2,
 		StaleThreshold:      15 * time.Minute,
-		NodeIDPath:          t.TempDir() + "/dht_id",
+		NodeID:              "a25e62fa2ffcc041d3ff12045b73c86e4ff95ff1",
 		NodesPath:           t.TempDir() + "/dht_nodes.dat",
 	}
 }

@@ -38,14 +38,14 @@ func checkBEP42(t *testing.T, ip net.IP, id NodeID) {
 func TestDeriveBEP42NodeID(t *testing.T) {
 	t.Run("satisfies crc32c invariant", func(t *testing.T) {
 		ip := net.IP{1, 2, 3, 4}
-		id, err := deriveBEP42NodeID(ip)
+		id, err := DeriveBEP42NodeID(ip)
 		require.NoError(t, err)
 		checkBEP42(t, ip, id)
 	})
 
 	t.Run("last 3 bits of id[19] equal r in seed", func(t *testing.T) {
 		ip := net.IP{203, 0, 113, 1}
-		id, err := deriveBEP42NodeID(ip)
+		id, err := DeriveBEP42NodeID(ip)
 		require.NoError(t, err)
 		// checkBEP42 derives r from id[19]&0x07 and verifies the full CRC round-trip.
 		checkBEP42(t, ip, id)
@@ -53,9 +53,9 @@ func TestDeriveBEP42NodeID(t *testing.T) {
 
 	t.Run("two calls produce different random middle bytes", func(t *testing.T) {
 		ip := net.IP{10, 0, 0, 1}
-		id1, err := deriveBEP42NodeID(ip)
+		id1, err := DeriveBEP42NodeID(ip)
 		require.NoError(t, err)
-		id2, err := deriveBEP42NodeID(ip)
+		id2, err := DeriveBEP42NodeID(ip)
 		require.NoError(t, err)
 		checkBEP42(t, ip, id1)
 		checkBEP42(t, ip, id2)
@@ -63,13 +63,13 @@ func TestDeriveBEP42NodeID(t *testing.T) {
 	})
 
 	t.Run("different IPs produce different CRC prefix", func(t *testing.T) {
-		id1, _ := deriveBEP42NodeID(net.IP{1, 2, 3, 4})
-		id2, _ := deriveBEP42NodeID(net.IP{5, 6, 7, 8})
+		id1, _ := DeriveBEP42NodeID(net.IP{1, 2, 3, 4})
+		id2, _ := DeriveBEP42NodeID(net.IP{5, 6, 7, 8})
 		assert.NotEqual(t, [2]byte{id1[0], id1[1]}, [2]byte{id2[0], id2[1]})
 	})
 
 	t.Run("non-IPv4 returns zero ID without error", func(t *testing.T) {
-		id, err := deriveBEP42NodeID(net.ParseIP("::1"))
+		id, err := DeriveBEP42NodeID(net.ParseIP("::1"))
 		require.NoError(t, err)
 		assert.Equal(t, NodeID{}, id)
 	})
@@ -220,7 +220,9 @@ func TestServer_Bootstrap_bep42(t *testing.T) {
 		seed := newIPEchoServer(t, externalIP)
 		defer seed.Close()
 
-		client, err := NewServer(testServerCfg(t))
+		cfg := testServerCfg(t)
+		cfg.NodeID = "" // force random ID so BEP-42 derivation runs
+		client, err := NewServer(cfg)
 		require.NoError(t, err)
 		defer client.Stop()
 		require.NoError(t, client.Start(ctx))
@@ -258,7 +260,7 @@ func newIPEchoServer(t *testing.T, externalIP net.IP) *net.UDPConn {
 			if err := bencode.Unmarshal(buf[:n], &req); err != nil {
 				continue
 			}
-			resp := Msg{	
+			resp := Msg{
 				T:  req.T,
 				Y:  "r",
 				IP: string(externalIP.To4()),

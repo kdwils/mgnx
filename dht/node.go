@@ -2,6 +2,8 @@ package dht
 
 import (
 	"bytes"
+	"encoding/hex"
+	"errors"
 	"math/bits"
 	"net"
 	"time"
@@ -9,6 +11,25 @@ import (
 
 // NodeID is a 160-bit DHT node identifier.
 type NodeID [20]byte
+
+func (id NodeID) String() string {
+	return hex.EncodeToString(id[:])
+}
+
+var ErrInvalidNodeID = errors.New("invalid node ID: must be 40 hex characters")
+
+func ParseNodeIDHex(s string) (NodeID, error) {
+	if len(s) != 40 {
+		return NodeID{}, ErrInvalidNodeID
+	}
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		return NodeID{}, ErrInvalidNodeID
+	}
+	var id NodeID
+	copy(id[:], b)
+	return id, nil
+}
 
 // XOR returns the XOR distance between two node IDs.
 func (id NodeID) XOR(other NodeID) NodeID {

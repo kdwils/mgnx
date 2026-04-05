@@ -29,9 +29,9 @@ type Resolver interface {
 // starting from addrs. It inserts discovered nodes into the routing table and
 // triggers a bucket refresh for any stale buckets after convergence.
 //
-// On first run, the BEP-42 node ID is derived from the external IP returned by
-// the first successful bootstrap response and saved to cfg.DHT.NodeIDPath.
-// Subsequent starts load the saved BEP-42 ID directly via loadOrGenerateNodeID.
+// If dht.node_id is configured, that ID is used directly (user-managed, must be
+// BEP-42 compliant). Otherwise, the BEP-42 node ID is derived from the external IP
+// returned by the first successful bootstrap response.
 func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
 	resolved := s.resolveBootstrapAddrs(ctx, addrs)
 	log := logger.FromContext(ctx)
@@ -127,11 +127,11 @@ func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
 	}
 	log.Info("DHT bootstrap phase 1 complete", "contacted", contacted, "shortlist", len(shortlistMap))
 
-	// BEP-42: derive a compliant node ID from our external IP and update the server.
-	if externalIP != nil {
-		if newID, err := deriveBEP42NodeID(externalIP); err == nil {
+	// BEP-42: derive a compliant node ID from our external IP if not already set via config.
+	// Skip if dht.node_id was provided (user-managed, already BEP-42 compliant).
+	if s.cfg.NodeID == "" && externalIP != nil {
+		if newID, err := DeriveBEP42NodeID(externalIP); err == nil {
 			s.SetNodeID(newID)
-			saveNodeID(s.cfg.NodeIDPath, newID)
 			// Recompute distances with the new ID.
 			for _, e := range shortlistMap {
 				e.dist = s.ourID.XOR(e.node.ID)
@@ -239,7 +239,7 @@ func (s *Server) resolveBootstrapAddrs(ctx context.Context, addrs []string) []*n
 	return result
 }
 
-// deriveBEP42NodeID generates a BEP-42 compliant node ID for the given IPv4
+// DeriveBEP42NodeID generates a BEP-42 compliant node ID for the given IPv4
 // address. See https://www.bittorrent.org/beps/bep_0042.html
 //
 // Derivation (IPv4):
@@ -252,7 +252,7 @@ func (s *Server) resolveBootstrapAddrs(ctx context.Context, addrs []string) []*n
 //	id[2]      = (crc >> 8) & 0xf8 | random_3_bits
 //	id[3..18]  = random
 //	id[19]     = random_5_bits | r
-func deriveBEP42NodeID(ip net.IP) (NodeID, error) {
+func DeriveBEP42NodeID(ip net.IP) (NodeID, error) {
 	ip4 := ip.To4()
 	if ip4 == nil {
 		return NodeID{}, nil // IPv6 out of scope per project charter

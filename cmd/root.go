@@ -63,13 +63,13 @@ func initConfig() {
 		"router.utorrent.com:6881",
 		"dht.transmissionbt.com:6881",
 	})
+	viper.SetDefault("dht.node_id", "")
 	viper.SetDefault("dht.port", 6881)
 	viper.SetDefault("dht.rate_limit", 25.0)
 	viper.SetDefault("dht.rate_burst", 25)
 	viper.SetDefault("dht.workers", 4)
 	viper.SetDefault("dht.bep51_workers", 2)
 	viper.SetDefault("dht.discovery_buffer", 10000)
-	viper.SetDefault("dht.node_id_path", filepath.Join(home, ".mgnx", "dht_id"))
 	viper.SetDefault("dht.nodes_path", filepath.Join(home, ".mgnx", "dht_nodes.dat"))
 	viper.SetDefault("dht.good_node_window", 15*time.Minute)
 	viper.SetDefault("dht.bad_failure_threshold", 2)

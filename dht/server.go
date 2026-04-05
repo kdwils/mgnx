@@ -6,8 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
-	"os"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -56,10 +54,15 @@ func NewServer(cfg config.DHT) (*Server, error) {
 	conn := pc.(*net.UDPConn)
 	setReceiveBuffer(conn)
 
-	ourID, err := loadOrGenerateNodeID(cfg.NodeIDPath)
-	if err != nil {
-		conn.Close()
-		return nil, err
+	var ourID NodeID
+	if cfg.NodeID != "" {
+		ourID, err = ParseNodeIDHex(cfg.NodeID)
+		if err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("invalid node_id: %w", err)
+		}
+	} else {
+		rand.Read(ourID[:]) //nolint:errcheck — random bytes, no error possible
 	}
 
 	table := NewRoutingTable(ourID, cfg, nil)
@@ -426,24 +429,6 @@ func setReceiveBuffer(conn *net.UDPConn) {
 	raw.Control(func(fd uintptr) {
 		syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, 4<<20)
 	})
-}
-
-// loadOrGenerateNodeID loads a saved 20-byte node ID from path, or generates
-// a random one and saves it. BEP-42 refinement happens in bootstrap (step 7).
-func loadOrGenerateNodeID(path string) (NodeID, error) {
-	data, err := os.ReadFile(path)
-	if err == nil && len(data) == 20 {
-		var id NodeID
-		copy(id[:], data)
-		return id, nil
-	}
-	var id NodeID
-	rand.Read(id[:])
-	if mkErr := os.MkdirAll(filepath.Dir(path), 0o755); mkErr != nil {
-		return id, nil // non-fatal; ID is still valid, just not persisted
-	}
-	os.WriteFile(path, id[:], 0o600) //nolint:errcheck — non-fatal
-	return id, nil
 }
 
 // randomIDInBucket returns a random NodeID within the bucket's [Min, Max) range.
