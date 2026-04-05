@@ -12,7 +12,7 @@ type Config struct {
 	Database Database `mapstructure:"database"`
 	Server   Server   `mapstructure:"server"`
 	DHT      DHT      `mapstructure:"dht"`
-	Ingest   Ingest   `mapstructure:"ingest"`
+	Indexer  Indexer  `mapstructure:"indexer"`
 	Scrape   Scrape   `mapstructure:"scrape"`
 }
 
@@ -23,7 +23,7 @@ type DHT struct {
 	RateBurst           int           `mapstructure:"rate_burst"`            // default 25
 	Workers             int           `mapstructure:"workers"`               // query handler goroutines, default 4
 	BEP51Workers        int           `mapstructure:"bep51_workers"`         // default 2
-	HarvestBuffer       int           `mapstructure:"harvest_buffer"`        // channel size, default 10000
+	DiscoveryBuffer     int           `mapstructure:"discovery_buffer"`      // channel size, default 10000
 	NodeIDPath          string        `mapstructure:"node_id_path"`          // default $HOME/.mgnx/dht_id
 	NodesPath           string        `mapstructure:"nodes_path"`            // default $HOME/.mgnx/dht_nodes.dat
 	GoodNodeWindow      time.Duration `mapstructure:"good_node_window"`      // default 15m
@@ -34,7 +34,7 @@ type DHT struct {
 	TokenRotation       time.Duration `mapstructure:"token_rotation"`        // default 5m
 }
 
-type Ingest struct {
+type Indexer struct {
 	Workers            int           `mapstructure:"workers"`
 	FetchTimeout       time.Duration `mapstructure:"fetch_timeout"`
 	ExcludedExtensions []string      `mapstructure:"excluded_extensions"`

@@ -42,10 +42,10 @@ func (m *MockCrawler) EXPECT() *MockCrawlerMockRecorder {
 }
 
 // Infohashes mocks base method.
-func (m *MockCrawler) Infohashes() <-chan dht.HarvestEvent {
+func (m *MockCrawler) Infohashes() <-chan dht.DiscoveredPeer {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Infohashes")
-	ret0, _ := ret[0].(<-chan dht.HarvestEvent)
+	ret0, _ := ret[0].(<-chan dht.DiscoveredPeer)
 	return ret0
 }
 

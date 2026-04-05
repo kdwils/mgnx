@@ -20,7 +20,7 @@ func makeCrawler(t *testing.T) *crawler {
 	return c.(*crawler)
 }
 
-func makeHarvestNode(id byte, port int) *Node {
+func makeDiscoveredNode(id byte, port int) *Node {
 	var nodeID NodeID
 	nodeID[0] = id
 	return &Node{
@@ -79,9 +79,9 @@ func TestNewCrawler(t *testing.T) {
 		assert.Same(t, c.dedup, c.server.dedup)
 	})
 
-	t.Run("harvest channel is shared with server", func(t *testing.T) {
+	t.Run("discovery channel is shared with server", func(t *testing.T) {
 		c := makeCrawler(t)
-		assert.Equal(t, c.harvest, c.server.harvest)
+		assert.Equal(t, c.discovered, c.server.discovered)
 	})
 }
 
@@ -91,11 +91,11 @@ func TestBep51PQ_ordering(t *testing.T) {
 
 		var nearID NodeID
 		nearID[0] = 0x01
-		near := &bep51Item{node: makeHarvestNode(0x01, 1001), target: target, dist: target.XOR(nearID)}
+		near := &bep51Item{node: makeDiscoveredNode(0x01, 1001), target: target, dist: target.XOR(nearID)}
 
 		var farID NodeID
 		farID[0] = 0xff
-		far := &bep51Item{node: makeHarvestNode(0xff, 1002), target: target, dist: target.XOR(farID)}
+		far := &bep51Item{node: makeDiscoveredNode(0xff, 1002), target: target, dist: target.XOR(farID)}
 
 		pq := &bep51PQ{}
 		heap.Init(pq)
@@ -115,7 +115,7 @@ func TestBep51PQ_ordering(t *testing.T) {
 			var id NodeID
 			id[0] = b
 			heap.Push(pq, &bep51Item{
-				node:   makeHarvestNode(b, int(b)+1000),
+				node:   makeDiscoveredNode(b, int(b)+1000),
 				target: target,
 				dist:   target.XOR(id),
 			})
@@ -141,7 +141,7 @@ func TestCrawler_nextEligible(t *testing.T) {
 	t.Run("skips nodes within cooldown", func(t *testing.T) {
 		c := makeCrawler(t)
 		var target NodeID
-		node := makeHarvestNode(0x01, 1001)
+		node := makeDiscoveredNode(0x01, 1001)
 		pq := &bep51PQ{}
 		heap.Init(pq)
 		heap.Push(pq, &bep51Item{node: node, target: target, dist: target.XOR(node.ID)})
@@ -153,7 +153,7 @@ func TestCrawler_nextEligible(t *testing.T) {
 	t.Run("returns node whose cooldown has expired", func(t *testing.T) {
 		c := makeCrawler(t)
 		var target NodeID
-		node := makeHarvestNode(0x01, 1001)
+		node := makeDiscoveredNode(0x01, 1001)
 		pq := &bep51PQ{}
 		heap.Init(pq)
 		heap.Push(pq, &bep51Item{node: node, target: target, dist: target.XOR(node.ID)})
@@ -167,7 +167,7 @@ func TestCrawler_nextEligible(t *testing.T) {
 	t.Run("returns unseen node immediately", func(t *testing.T) {
 		c := makeCrawler(t)
 		var target NodeID
-		node := makeHarvestNode(0x02, 1002)
+		node := makeDiscoveredNode(0x02, 1002)
 		pq := &bep51PQ{}
 		heap.Init(pq)
 		heap.Push(pq, &bep51Item{node: node, target: target, dist: target.XOR(node.ID)})
@@ -179,7 +179,7 @@ func TestCrawler_nextEligible(t *testing.T) {
 }
 
 func TestCrawler_processSamples(t *testing.T) {
-	t.Run("forwards new infohashes to harvest channel", func(t *testing.T) {
+	t.Run("forwards new infohashes to discovery channel", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
@@ -188,7 +188,7 @@ func TestCrawler_processSamples(t *testing.T) {
 
 		peerAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9876}
 		responder := newGetPeersValueServer(t, peerAddr)
-		node := makeHarvestNode(0x01, responder.LocalAddr().(*net.UDPAddr).Port)
+		node := makeDiscoveredNode(0x01, responder.LocalAddr().(*net.UDPAddr).Port)
 		item := &bep51Item{node: node}
 
 		var h [20]byte
@@ -196,11 +196,11 @@ func TestCrawler_processSamples(t *testing.T) {
 		c.processSamples(ctx, string(h[:]), item)
 
 		select {
-		case event := <-c.harvest:
+		case event := <-c.discovered:
 			assert.Equal(t, h, event.Infohash)
 			assert.Equal(t, peerAddr.Port, event.Port)
 		case <-time.After(2 * time.Second):
-			t.Fatal("expected harvest event")
+			t.Fatal("expected discovery event")
 		}
 	})
 
@@ -213,7 +213,7 @@ func TestCrawler_processSamples(t *testing.T) {
 
 		peerAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9877}
 		responder := newGetPeersValueServer(t, peerAddr)
-		node := makeHarvestNode(0x01, responder.LocalAddr().(*net.UDPAddr).Port)
+		node := makeDiscoveredNode(0x01, responder.LocalAddr().(*net.UDPAddr).Port)
 		item := &bep51Item{node: node}
 
 		var h [20]byte
@@ -222,12 +222,12 @@ func TestCrawler_processSamples(t *testing.T) {
 		c.processSamples(ctx, string(h[:]), item)
 
 		select {
-		case <-c.harvest:
+		case <-c.discovered:
 		case <-time.After(2 * time.Second):
-			t.Fatal("expected first harvest event")
+			t.Fatal("expected first discovery event")
 		}
 		select {
-		case <-c.harvest:
+		case <-c.discovered:
 			t.Fatal("duplicate should be filtered by dedup")
 		case <-time.After(50 * time.Millisecond):
 		}
@@ -235,25 +235,25 @@ func TestCrawler_processSamples(t *testing.T) {
 
 	t.Run("ignores partial trailing bytes", func(t *testing.T) {
 		c := makeCrawler(t)
-		node := makeHarvestNode(0x01, 1001)
+		node := makeDiscoveredNode(0x01, 1001)
 		item := &bep51Item{node: node}
 
 		c.processSamples(context.Background(), string(make([]byte, 19)), item)
 
 		select {
-		case <-c.harvest:
-			t.Fatal("partial bytes should not produce a harvest event")
+		case <-c.discovered:
+			t.Fatal("partial bytes should not produce a discovery event")
 		case <-time.After(50 * time.Millisecond):
 		}
 	})
 
-	t.Run("drops silently when harvest channel is full", func(t *testing.T) {
+	t.Run("drops silently when discovery channel is full", func(t *testing.T) {
 		c := makeCrawler(t)
-		node := makeHarvestNode(0x01, 1001)
+		node := makeDiscoveredNode(0x01, 1001)
 		item := &bep51Item{node: node}
 
-		for i := range cap(c.harvest) {
-			c.harvest <- HarvestEvent{Infohash: [20]byte{byte(i)}}
+		for i := range cap(c.discovered) {
+			c.discovered <- DiscoveredPeer{Infohash: [20]byte{byte(i)}}
 		}
 
 		var h [20]byte
@@ -271,7 +271,7 @@ func TestCrawler_processSamples(t *testing.T) {
 
 		peerAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9878}
 		responder := newGetPeersValueServer(t, peerAddr)
-		node := makeHarvestNode(0x01, responder.LocalAddr().(*net.UDPAddr).Port)
+		node := makeDiscoveredNode(0x01, responder.LocalAddr().(*net.UDPAddr).Port)
 		item := &bep51Item{node: node}
 
 		var buf [60]byte
@@ -284,7 +284,7 @@ func TestCrawler_processSamples(t *testing.T) {
 		timeout := time.After(2 * time.Second)
 		for count < 3 {
 			select {
-			case <-c.harvest:
+			case <-c.discovered:
 				count++
 			case <-timeout:
 				t.Fatalf("expected 3 events, got %d", count)
@@ -298,7 +298,7 @@ func TestCrawler_processNodes(t *testing.T) {
 		c := makeCrawler(t)
 		var target NodeID
 
-		node := makeHarvestNode(0x10, 2000)
+		node := makeDiscoveredNode(0x10, 2000)
 		encoded := EncodeNodes([]*Node{node})
 
 		pq := &bep51PQ{}
@@ -327,7 +327,7 @@ func TestCrawler_seedQueue(t *testing.T) {
 		c := makeCrawler(t)
 
 		for i := range 5 {
-			c.server.table.Insert(makeHarvestNode(byte(i+1), 3000+i))
+			c.server.table.Insert(makeDiscoveredNode(byte(i+1), 3000+i))
 		}
 
 		var target NodeID

@@ -15,9 +15,9 @@ import (
 	"github.com/kdwils/mgnx/logger"
 )
 
-// HarvestEvent is the only coupling point between the DHT layer (Section 3)
+// DiscoveredPeer is the only coupling point between the DHT layer (Section 3)
 // and the metadata fetch layer (Section 4).
-type HarvestEvent struct {
+type DiscoveredPeer struct {
 	Infohash [20]byte
 	SourceIP net.IP
 	Port     int
@@ -26,17 +26,17 @@ type HarvestEvent struct {
 
 // Crawler is the public interface for the DHT crawler.
 type Crawler interface {
-	Infohashes() <-chan HarvestEvent
+	Infohashes() <-chan DiscoveredPeer
 	Start(ctx context.Context) error
 	Stop()
 }
 
-// crawler wraps Server and drives two harvest modes:
+// crawler wraps Server and drives two discovered modes:
 //  1. Passive: announce_peer queries already wired in the server (Step 6).
 //  2. Active:  BEP-51 sample_infohashes traversal driven here.
 type crawler struct {
 	server  *Server
-	harvest chan HarvestEvent
+	discovered chan DiscoveredPeer
 	dedup   *BloomFilter
 	cfg     config.DHT
 	cancel  context.CancelFunc
@@ -55,15 +55,15 @@ func NewCrawler(cfg config.DHT) (Crawler, error) {
 	server.dedup = dedup
 	return &crawler{
 		server:  server,
-		harvest: server.harvest,
+		discovered: server.discovered,
 		dedup:   dedup,
 		cfg:     cfg,
 	}, nil
 }
 
-// Infohashes returns the channel of harvested infohash events.
-func (c *crawler) Infohashes() <-chan HarvestEvent {
-	return c.harvest
+// Infohashes returns the channel of discovereded infohash events.
+func (c *crawler) Infohashes() <-chan DiscoveredPeer {
+	return c.discovered
 }
 
 // Start launches the server, runs bootstrap convergence, and starts the
@@ -243,7 +243,7 @@ func (c *crawler) nextEligible(pq *bep51PQ, seen map[NodeID]time.Time) *bep51Ite
 // processSamples decodes the raw 20-byte infohash samples from a BEP-51
 // response. For each new infohash, it launches a goroutine that does a
 // get_peers query to the source node to find actual swarm peers, then emits
-// HarvestEvents with those peer addresses. Using the DHT node's address
+// DiscoveredPeers with those peer addresses. Using the DHT node's address
 // directly would fail — DHT nodes are UDP-only and don't serve BEP-09 metadata.
 func (c *crawler) processSamples(ctx context.Context, samples string, item *bep51Item) {
 	total := len(samples) / 20
@@ -258,7 +258,7 @@ func (c *crawler) processSamples(ctx context.Context, samples string, item *bep5
 			continue
 		}
 		new++
-		go c.findAndHarvest(ctx, h, item.node)
+		go c.discoverPeers(ctx, h, item.node)
 	}
 	logger.FromContext(ctx).Debug("samples processed",
 		"node", item.node.Addr,
@@ -267,12 +267,12 @@ func (c *crawler) processSamples(ctx context.Context, samples string, item *bep5
 	)
 }
 
-// findAndHarvest performs a get_peers query for infohash against node. If the
+// discoverPeers performs a get_peers query for infohash against node. If the
 // node returns peer values (compact 6-byte peer records), each peer is emitted
-// as a HarvestEvent. If the node only returns closer nodes (no values), the
+// as a DiscoveredPeer. If the node only returns closer nodes (no values), the
 // infohash is silently dropped — a full iterative get_peers lookup would be
 // needed to find peers, which is too expensive to do inline.
-func (c *crawler) findAndHarvest(ctx context.Context, h [20]byte, node *Node) {
+func (c *crawler) discoverPeers(ctx context.Context, h [20]byte, node *Node) {
 	qCtx, cancel := context.WithTimeout(ctx, c.cfg.TransactionTimeout)
 	defer cancel()
 
@@ -304,14 +304,14 @@ func (c *crawler) findAndHarvest(ctx context.Context, h [20]byte, node *Node) {
 		if !ok {
 			continue
 		}
-		event := HarvestEvent{
+		event := DiscoveredPeer{
 			Infohash: h,
 			SourceIP: udpAddr.IP,
 			Port:     udpAddr.Port,
 			SeenAt:   time.Now(),
 		}
 		select {
-		case c.harvest <- event:
+		case c.discovered <- event:
 		default: // channel full — drop
 		}
 	}

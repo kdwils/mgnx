@@ -10,7 +10,7 @@ import (
 	"github.com/kdwils/mgnx/db"
 	"github.com/kdwils/mgnx/db/gen"
 	"github.com/kdwils/mgnx/dht"
-	"github.com/kdwils/mgnx/ingest"
+	"github.com/kdwils/mgnx/indexer"
 	"github.com/kdwils/mgnx/logger"
 	"github.com/kdwils/mgnx/metadata"
 	"github.com/kdwils/mgnx/scrape"
@@ -56,8 +56,8 @@ var serveCmd = &cobra.Command{
 		defer crawler.Stop()
 
 		metaClient := metadata.NewClient(&net.Dialer{})
-		ingestWorker := ingest.New(crawler, metaClient, queries, cfg.Ingest)
-		go ingestWorker.Run(ctx)
+		idxWorker := indexer.New(crawler, metaClient, queries, cfg.Indexer)
+		go idxWorker.Run(ctx)
 
 		scrapeClient, err := scrape.NewClient(cfg.Scrape.Trackers[0], cfg.Scrape.DialTimeout, cfg.Scrape.ReadTimeout)
 		if err != nil {

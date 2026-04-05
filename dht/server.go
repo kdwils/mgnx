@@ -29,21 +29,21 @@ type inMsg struct {
 }
 
 // Server is the UDP DHT node. It owns the socket, routing table, transaction
-// manager, token manager, and the harvest output channel.
+// manager, token manager, and the discovered output channel.
 type Server struct {
-	conn     *net.UDPConn
-	ourID    NodeID
-	table    *RoutingTable
-	txns     *TxnManager
-	outbound chan *outMsg
-	harvest  chan HarvestEvent
-	token    *TokenManager
-	dedup    *BloomFilter
-	rate     *rate.Limiter
-	cfg      config.DHT
-	handlers chan inMsg
-	bufPool  sync.Pool
-	Resolver Resolver
+	conn       *net.UDPConn
+	ourID      NodeID
+	table      *RoutingTable
+	txns       *TxnManager
+	outbound   chan *outMsg
+	discovered chan DiscoveredPeer
+	token      *TokenManager
+	dedup      *BloomFilter
+	rate       *rate.Limiter
+	cfg        config.DHT
+	handlers   chan inMsg
+	bufPool    sync.Pool
+	Resolver   Resolver
 }
 
 // NewServer binds the UDP socket and initialises all subsystems.
@@ -67,16 +67,16 @@ func NewServer(cfg config.DHT) (*Server, error) {
 	token := NewTokenManager(cfg.TokenRotation)
 
 	s := &Server{
-		conn:     conn,
-		ourID:    ourID,
-		table:    table,
-		txns:     txns,
-		outbound: make(chan *outMsg, 512),
-		harvest:  make(chan HarvestEvent, cfg.HarvestBuffer),
-		token:    token,
-		rate:     rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateBurst),
-		cfg:      cfg,
-		handlers: make(chan inMsg, 512),
+		conn:       conn,
+		ourID:      ourID,
+		table:      table,
+		txns:       txns,
+		outbound:   make(chan *outMsg, 512),
+		discovered: make(chan DiscoveredPeer, cfg.DiscoveryBuffer),
+		token:      token,
+		rate:       rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateBurst),
+		cfg:        cfg,
+		handlers:   make(chan inMsg, 512),
 		bufPool: sync.Pool{
 			New: func() any { return make([]byte, 2048) },
 		},
@@ -118,9 +118,9 @@ func (s *Server) Stop() {
 	s.table.Save() //nolint:errcheck — best-effort on shutdown
 }
 
-// Infohashes returns the channel of harvested infohash events.
-func (s *Server) Infohashes() <-chan HarvestEvent {
-	return s.harvest
+// Infohashes returns the channel of discovereded infohash events.
+func (s *Server) Infohashes() <-chan DiscoveredPeer {
+	return s.discovered
 }
 
 // SetNodeID updates the server's node ID. Called once during bootstrap when the
@@ -328,7 +328,7 @@ func (s *Server) handleAnnouncePeer(ctx context.Context, addr *net.UDPAddr, msg 
 	if msg.A.ImpliedPort != nil && *msg.A.ImpliedPort != 0 {
 		port = addr.Port
 	}
-	event := HarvestEvent{
+	event := DiscoveredPeer{
 		Infohash: h,
 		SourceIP: addr.IP,
 		Port:     port,
@@ -336,10 +336,10 @@ func (s *Server) handleAnnouncePeer(ctx context.Context, addr *net.UDPAddr, msg 
 	}
 	log := logger.FromContext(ctx)
 	select {
-	case s.harvest <- event:
-		log.Debug("announce_peer harvested", "infohash", hex.EncodeToString(h[:]), "from", addr)
+	case s.discovered <- event:
+		log.Debug("announce_peer discovereded", "infohash", hex.EncodeToString(h[:]), "from", addr)
 	default:
-		log.Debug("announce_peer dropped: harvest channel full", "infohash", hex.EncodeToString(h[:]))
+		log.Debug("announce_peer dropped: discovered channel full", "infohash", hex.EncodeToString(h[:]))
 	}
 	s.respond(addr, msg.T, &Return{ID: string(s.ourID[:])})
 }

@@ -1,4 +1,4 @@
-package ingest
+package indexer
 
 import (
 	"context"
@@ -20,24 +20,26 @@ import (
 )
 
 type Worker struct {
-	crawler    dht.Crawler
-	fetcher    metadata.Fetcher
-	queries    gen.Querier
-	cfg        config.Ingest
-	deniedExts map[string]struct{}
+	crawler      dht.Crawler
+	fetcher      metadata.Fetcher
+	queries      gen.Querier
+	cfg          config.Indexer
+	deniedExts   map[string]struct{}
+	fetchTimeout time.Duration
 }
 
-func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg config.Ingest) *Worker {
+func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg config.Indexer) *Worker {
 	denied := make(map[string]struct{}, len(cfg.ExcludedExtensions))
 	for _, ext := range cfg.ExcludedExtensions {
 		denied[ext] = struct{}{}
 	}
 	return &Worker{
-		crawler:    crawler,
-		fetcher:    fetcher,
-		queries:    queries,
-		cfg:        cfg,
-		deniedExts: denied,
+		crawler:      crawler,
+		fetcher:      fetcher,
+		queries:      queries,
+		cfg:          cfg,
+		deniedExts:   denied,
+		fetchTimeout: cfg.FetchTimeout,
 	}
 }
 
@@ -58,7 +60,7 @@ func (w *Worker) Run(ctx context.Context) {
 			}
 			sem <- struct{}{}
 			wg.Add(1)
-			go func(e dht.HarvestEvent) {
+			go func(e dht.DiscoveredPeer) {
 				defer wg.Done()
 				defer func() { <-sem }()
 				w.process(ctx, e)
@@ -70,7 +72,7 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-func (w *Worker) process(ctx context.Context, ev dht.HarvestEvent) {
+func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeer) {
 	log := logger.FromContext(ctx)
 	infohashHex := hex.EncodeToString(ev.Infohash[:])
 
@@ -83,12 +85,7 @@ func (w *Worker) process(ctx context.Context, ev dht.HarvestEvent) {
 		return
 	}
 
-	fetchTimeout := w.cfg.FetchTimeout
-	if fetchTimeout <= 0 {
-		fetchTimeout = 15 * time.Second
-	}
-
-	fetchCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
+	fetchCtx, cancel := context.WithTimeout(ctx, w.fetchTimeout)
 	defer cancel()
 
 	addr := net.TCPAddr{IP: ev.SourceIP, Port: ev.Port}

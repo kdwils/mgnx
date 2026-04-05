@@ -16,7 +16,7 @@ import (
 	"github.com/kdwils/mgnx/db"
 	"github.com/kdwils/mgnx/db/gen"
 	"github.com/kdwils/mgnx/dht"
-	"github.com/kdwils/mgnx/ingest"
+	"github.com/kdwils/mgnx/indexer"
 	"github.com/kdwils/mgnx/logger"
 	"github.com/kdwils/mgnx/metadata"
 	"github.com/kdwils/mgnx/mocks"
@@ -59,12 +59,12 @@ func TestEndToEnd(t *testing.T) {
 	queries := gen.New(pool)
 
 	ctrl := gomock.NewController(t)
-	harvestCh := make(chan dht.HarvestEvent, 50)
+	discoveredCh := make(chan dht.DiscoveredPeer, 50)
 
 	crawler := mocks.NewMockCrawler(ctrl)
 	crawler.EXPECT().Start(gomock.Any()).Return(nil)
 	crawler.EXPECT().Stop()
-	crawler.EXPECT().Infohashes().Return((<-chan dht.HarvestEvent)(harvestCh)).AnyTimes()
+	crawler.EXPECT().Infohashes().Return((<-chan dht.DiscoveredPeer)(discoveredCh)).AnyTimes()
 
 	fetcher := mocks.NewMockFetcher(ctrl)
 	scraper := mocks.NewMockScraper(ctrl)
@@ -107,7 +107,7 @@ func TestEndToEnd(t *testing.T) {
 	}).AnyTimes()
 
 	cfg := config.Config{
-		Ingest: config.Ingest{Workers: 4, FetchTimeout: 5 * time.Second},
+		Indexer: config.Indexer{Workers: 4, FetchTimeout: 5 * time.Second},
 		Scrape: config.Scrape{
 			PollInterval: 200 * time.Millisecond,
 			BatchSize:    74,
@@ -116,10 +116,10 @@ func TestEndToEnd(t *testing.T) {
 		Server: config.Server{LogLevel: "error"},
 	}
 
-	ingestWorker := ingest.New(crawler, fetcher, queries, cfg.Ingest)
+	idxWorker := indexer.New(crawler, fetcher, queries, cfg.Indexer)
 	require.NoError(t, crawler.Start(ctx))
 	t.Cleanup(crawler.Stop)
-	go ingestWorker.Run(ctx)
+	go idxWorker.Run(ctx)
 
 	scrapeWorker := scrape.New(queries, scraper, cfg.Scrape)
 	go scrapeWorker.Run(ctx)
@@ -133,23 +133,23 @@ func TestEndToEnd(t *testing.T) {
 
 	serverURL := "http://127.0.0.1:" + strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
 
-	harvestCh <- dht.HarvestEvent{Infohash: movieHash, SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}
-	harvestCh <- dht.HarvestEvent{Infohash: tvHash, SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}
-	harvestCh <- dht.HarvestEvent{Infohash: rejHash, SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}
+	discoveredCh <- dht.DiscoveredPeer{Infohash: movieHash, SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}
+	discoveredCh <- dht.DiscoveredPeer{Infohash: tvHash, SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}
+	discoveredCh <- dht.DiscoveredPeer{Infohash: rejHash, SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}
 
-	if !t.Run("IngestMovie", func(t *testing.T) {
+	if !t.Run("IndexMovie", func(t *testing.T) {
 		waitForState(t, ctx, queries, movieHex, gen.TorrentStateActive, 30*time.Second)
 	}) {
 		t.FailNow()
 	}
 
-	if !t.Run("IngestTV", func(t *testing.T) {
+	if !t.Run("IndexTV", func(t *testing.T) {
 		waitForState(t, ctx, queries, tvHex, gen.TorrentStateActive, 30*time.Second)
 	}) {
 		t.FailNow()
 	}
 
-	if !t.Run("IngestRejected", func(t *testing.T) {
+	if !t.Run("IndexRejected", func(t *testing.T) {
 		waitForState(t, ctx, queries, rejHex, gen.TorrentStateRejected, 15*time.Second)
 	}) {
 		t.FailNow()

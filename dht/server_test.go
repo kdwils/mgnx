@@ -18,7 +18,7 @@ func testServerCfg(t *testing.T) config.DHT {
 		RateLimit:           1000,
 		RateBurst:           1000,
 		Workers:             2,
-		HarvestBuffer:       100,
+		DiscoveryBuffer:     100,
 		TransactionTimeout:  2 * time.Second,
 		TokenRotation:       5 * time.Minute,
 		BucketSize:          8,
@@ -111,7 +111,7 @@ func TestServer_processQuery(t *testing.T) {
 		}
 	})
 
-	t.Run("announce_peer sends event to harvest channel", func(t *testing.T) {
+	t.Run("announce_peer sends event to discovery channel", func(t *testing.T) {
 		s := makeServer(t)
 		var ih [20]byte
 		ih[0] = 0xAB
@@ -130,11 +130,11 @@ func TestServer_processQuery(t *testing.T) {
 			},
 		})
 		select {
-		case event := <-s.harvest:
+		case event := <-s.discovered:
 			assert.Equal(t, ih, event.Infohash)
 			assert.Equal(t, port, event.Port)
 		case <-time.After(time.Second):
-			t.Fatal("no harvest event received")
+			t.Fatal("no discovery event received")
 		}
 	})
 }
