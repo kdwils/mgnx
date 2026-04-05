@@ -69,23 +69,28 @@ func detectTV(normalized string) tvInfo {
 		if m[1] != "" {
 			season, _ = strconv.Atoi(m[1])
 			episode, _ = strconv.Atoi(m[2])
-		} else if m[3] != "" {
+		}
+		if m[3] != "" {
 			season, _ = strconv.Atoi(m[3])
 			episode, _ = strconv.Atoi(m[4])
-		} else if m[5] != "" {
+		}
+		if m[5] != "" {
 			episode, _ = strconv.Atoi(m[5])
 		}
 		return tvInfo{true, season, episode}
 	}
+
 	if m := seasonNumberPattern.FindStringSubmatch(normalized); m != nil {
 		season, _ := strconv.Atoi(m[1])
 		if season > 0 && season <= 99 && seasonPackPattern.MatchString(normalized) {
 			return tvInfo{true, season, 0}
 		}
 	}
+
 	if seasonPackPattern.MatchString(normalized) {
 		return tvInfo{isTV: true}
 	}
+
 	return tvInfo{}
 }
 
