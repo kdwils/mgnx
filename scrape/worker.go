@@ -167,7 +167,7 @@ func (w *Worker) applyResult(ctx context.Context, r ScrapeResult, trackerID int6
 			"seeders", seeders,
 		)
 	}
-	log.DebugContext(ctx, "torrent scraped",
+	log.InfoContext(ctx, "torrent scraped",
 		"infohash", r.Infohash,
 		"seeders", seeders,
 		"leechers", leechers,

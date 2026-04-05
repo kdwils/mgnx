@@ -6,8 +6,10 @@ import (
 	"errors"
 	"net"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -27,6 +29,8 @@ type Worker struct {
 	allowedExts map[string]struct{}
 	peerTimeout time.Duration
 	peerRetries int
+	minSize     int64
+	maxSize     int64
 }
 
 func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg config.Indexer) *Worker {
@@ -34,19 +38,16 @@ func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg
 	for _, ext := range cfg.AllowedExtensions {
 		allowed[ext] = struct{}{}
 	}
-	peerRetries := cfg.PeerRetries
-	if peerRetries <= 0 {
-		peerRetries = 3
-	}
-	peerTimeout := cfg.PeerTimeout
 	return &Worker{
 		crawler:     crawler,
 		fetcher:     fetcher,
 		queries:     queries,
 		cfg:         cfg,
 		allowedExts: allowed,
-		peerTimeout: peerTimeout,
-		peerRetries: peerRetries,
+		peerTimeout: cfg.PeerTimeout,
+		peerRetries: cfg.PeerRetries,
+		minSize:     cfg.MinSize,
+		maxSize:     cfg.MaxSize,
 	}
 }
 
@@ -136,7 +137,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 
 		if err := w.queries.InsertTorrentFile(ctx, gen.InsertTorrentFileParams{
 			Infohash:  infohashHex,
-			Path:      f.Path,
+			Path:      sanitizePath(f.Path),
 			Size:      f.Size,
 			Extension: extension,
 			IsVideo:   isVideoExt(ext),
@@ -147,7 +148,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		classifyFiles[i] = classify.File{Path: f.Path, Size: f.Size}
 	}
 
-	result := classify.Classify(info.Name, classifyFiles, info.TotalSize, w.allowedExts)
+	result := classify.Classify(info.Name, classifyFiles, info.TotalSize, w.minSize, w.maxSize, w.allowedExts)
 	if err := w.queries.UpdateTorrentClassified(ctx, gen.UpdateTorrentClassifiedParams{
 		Infohash:     infohashHex,
 		State:        result.State,
@@ -186,4 +187,12 @@ func isVideoExt(ext string) bool {
 		return true
 	}
 	return false
+}
+
+func sanitizePath(path string) string {
+	if !utf8.ValidString(path) {
+		// Replace invalid UTF-8 bytes with replacement character
+		return strings.ToValidUTF8(path, "")
+	}
+	return path
 }

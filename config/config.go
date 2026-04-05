@@ -38,6 +38,8 @@ type Indexer struct {
 	PeerTimeout       time.Duration `mapstructure:"peer_timeout"` // timeout per peer, default 5s
 	PeerRetries       int           `mapstructure:"peer_retries"` // max peers to try per infohash, default 3
 	AllowedExtensions []string      `mapstructure:"allowed_extensions"`
+	MinSize           int64         `mapstructure:"min_size"` // minimum torrent size in bytes, default 50MB
+	MaxSize           int64         `mapstructure:"max_size"` // maximum torrent size in bytes, default 150GB
 }
 
 type Scrape struct {
