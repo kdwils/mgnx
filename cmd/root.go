@@ -52,12 +52,15 @@ func initConfig() {
 		viper.SetConfigType("yaml")
 	}
 
-	viper.SetDefault("dht.bootstrap_nodes", []string{})
 	viper.SetDefault("database.uri", "")
 
 	viper.SetDefault("indexer.peer_retries", 3)
 	viper.SetDefault("indexer.peer_timeout", 5*time.Second)
+	viper.SetDefault("indexer.min_size", 50*1024*1024)       // 50 MB
+	viper.SetDefault("indexer.max_size", 150*1024*1024*1024) // 150 GB
+	viper.SetDefault("indexer.allowed_extensions", []string{})
 
+	viper.SetDefault("dht.bootstrap_nodes", []string{})
 	viper.SetDefault("dht.node_id", "")
 	viper.SetDefault("dht.port", 6881)
 	viper.SetDefault("dht.rate_limit", 25.0)

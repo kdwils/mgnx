@@ -6,8 +6,10 @@ import (
 	"errors"
 	"net"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -40,25 +42,16 @@ func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg
 	if peerRetries <= 0 {
 		peerRetries = 3
 	}
-	peerTimeout := cfg.PeerTimeout
-	minSize := cfg.MinSize
-	if minSize <= 0 {
-		minSize = 50 * 1024 * 1024 // 50 MB default
-	}
-	maxSize := cfg.MaxSize
-	if maxSize <= 0 {
-		maxSize = 150 * 1024 * 1024 * 1024 // 150 GB default
-	}
 	return &Worker{
 		crawler:     crawler,
 		fetcher:     fetcher,
 		queries:     queries,
 		cfg:         cfg,
 		allowedExts: allowed,
-		peerTimeout: peerTimeout,
+		peerTimeout: cfg.PeerTimeout,
 		peerRetries: peerRetries,
-		minSize:     minSize,
-		maxSize:     maxSize,
+		minSize:     cfg.MinSize,
+		maxSize:     cfg.MaxSize,
 	}
 }
 
@@ -148,7 +141,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 
 		if err := w.queries.InsertTorrentFile(ctx, gen.InsertTorrentFileParams{
 			Infohash:  infohashHex,
-			Path:      f.Path,
+			Path:      sanitizePath(f.Path),
 			Size:      f.Size,
 			Extension: extension,
 			IsVideo:   isVideoExt(ext),
@@ -198,4 +191,12 @@ func isVideoExt(ext string) bool {
 		return true
 	}
 	return false
+}
+
+func sanitizePath(path string) string {
+	if !utf8.ValidString(path) {
+		// Replace invalid UTF-8 bytes with replacement character
+		return strings.ToValidUTF8(path, "")
+	}
+	return path
 }
