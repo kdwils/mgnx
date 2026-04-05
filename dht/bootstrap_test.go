@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/anacrolix/torrent/bencode"
+	dMocks "github.com/kdwils/mgnx/dht/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 // checkBEP42 verifies that id satisfies the BEP-42 invariant for the given IPv4.
@@ -110,27 +112,65 @@ func TestSaveNodeID(t *testing.T) {
 	})
 }
 
+func serverWithMockResolver(t *testing.T, resolver Resolver) *Server {
+	t.Helper()
+	s, err := NewServer(testServerCfg(t))
+	require.NoError(t, err)
+	t.Cleanup(s.Stop)
+	s.Resolver = resolver
+	return s
+}
+
 func TestResolveBootstrapAddrs(t *testing.T) {
+	ctx := context.Background()
+
 	t.Run("resolves localhost", func(t *testing.T) {
-		addrs := resolveBootstrapAddrs([]string{"localhost:6881"})
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		resolver := dMocks.NewMockResolver(ctrl)
+		resolver.EXPECT().LookupHost(gomock.Any(), "localhost").Times(1).Return([]string{"192.168.0.1"}, nil)
+		s := serverWithMockResolver(t, resolver)
+		addrs := s.resolveBootstrapAddrs(ctx, []string{"localhost:6881"})
 		require.NotEmpty(t, addrs)
 		assert.Equal(t, 6881, addrs[0].Port)
 	})
 
 	t.Run("skips invalid host:port", func(t *testing.T) {
-		assert.Empty(t, resolveBootstrapAddrs([]string{"nocolon"}))
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		resolver := dMocks.NewMockResolver(ctrl)
+		// SplitHostPort fails before LookupHost is reached — no calls expected.
+		s := serverWithMockResolver(t, resolver)
+		assert.Empty(t, s.resolveBootstrapAddrs(ctx, []string{"nocolon"}))
 	})
 
 	t.Run("skips unresolvable hostname", func(t *testing.T) {
-		assert.Empty(t, resolveBootstrapAddrs([]string{"this.does.not.exist.invalid:6881"}))
+		// Stub DNS so no real network call is made — avoids hangs on macOS
+		// where the CGO resolver ignores context cancellation deadlines.
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		resolver := dMocks.NewMockResolver(ctrl)
+		resolver.EXPECT().LookupHost(gomock.Any(), "this.does.not.exist.invalid").Times(1).Return(nil, &net.DNSError{Err: "no such host", IsNotFound: true})
+		s := serverWithMockResolver(t, resolver)
+		assert.Empty(t, s.resolveBootstrapAddrs(ctx, []string{"this.does.not.exist.invalid:6881"}))
 	})
 
 	t.Run("empty input returns empty slice", func(t *testing.T) {
-		assert.Empty(t, resolveBootstrapAddrs(nil))
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		resolver := dMocks.NewMockResolver(ctrl)
+		s := serverWithMockResolver(t, resolver)
+		assert.Empty(t, s.resolveBootstrapAddrs(ctx, nil))
 	})
 
 	t.Run("resolves multiple entries", func(t *testing.T) {
-		addrs := resolveBootstrapAddrs([]string{"localhost:6881", "127.0.0.1:6882"})
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		resolver := dMocks.NewMockResolver(ctrl)
+		resolver.EXPECT().LookupHost(gomock.Any(), "localhost").Times(1).Return([]string{"127.0.0.1"}, nil)
+		resolver.EXPECT().LookupHost(gomock.Any(), "127.0.0.1").Times(1).Return([]string{"127.0.0.1"}, nil)
+		s := serverWithMockResolver(t, resolver)
+		addrs := s.resolveBootstrapAddrs(ctx, []string{"localhost:6881", "127.0.0.1:6882"})
 		assert.GreaterOrEqual(t, len(addrs), 2)
 	})
 }
@@ -218,7 +258,7 @@ func newIPEchoServer(t *testing.T, externalIP net.IP) *net.UDPConn {
 			if err := bencode.Unmarshal(buf[:n], &req); err != nil {
 				continue
 			}
-			resp := Msg{
+			resp := Msg{	
 				T:  req.T,
 				Y:  "r",
 				IP: string(externalIP.To4()),

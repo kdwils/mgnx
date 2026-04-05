@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anacrolix/torrent/bencode"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,6 +28,48 @@ func makeHarvestNode(id byte, port int) *Node {
 		Addr:     &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port},
 		LastSeen: time.Now(),
 	}
+}
+
+// newGetPeersValueServer starts a minimal UDP listener that responds to any
+// incoming query with a get_peers Values response containing peer.
+func newGetPeersValueServer(t *testing.T, peer *net.UDPAddr) *net.UDPConn {
+	t.Helper()
+	conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	udpConn := conn.(*net.UDPConn)
+	t.Cleanup(func() { udpConn.Close() })
+
+	var fakeID NodeID
+	fakeID[0] = 0x42
+
+	go func() {
+		buf := make([]byte, 2048)
+		for {
+			n, addr, err := udpConn.ReadFromUDP(buf)
+			if err != nil {
+				return
+			}
+			var req Msg
+			if err := bencode.Unmarshal(buf[:n], &req); err != nil {
+				continue
+			}
+			resp := Msg{
+				T: req.T,
+				Y: "r",
+				R: &Return{
+					ID:     string(fakeID[:]),
+					Values: []string{EncodePeer(peer.IP, peer.Port)},
+				},
+			}
+			data, err := bencode.Marshal(resp)
+			if err != nil {
+				continue
+			}
+			udpConn.WriteToUDP(data, addr) //nolint:errcheck
+		}
+	}()
+
+	return udpConn
 }
 
 func TestNewCrawler(t *testing.T) {
@@ -137,34 +180,52 @@ func TestCrawler_nextEligible(t *testing.T) {
 
 func TestCrawler_processSamples(t *testing.T) {
 	t.Run("forwards new infohashes to harvest channel", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
 		c := makeCrawler(t)
-		node := makeHarvestNode(0x01, 1001)
+		require.NoError(t, c.server.Start(ctx))
+
+		peerAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9876}
+		responder := newGetPeersValueServer(t, peerAddr)
+		node := makeHarvestNode(0x01, responder.LocalAddr().(*net.UDPAddr).Port)
 		item := &bep51Item{node: node}
 
 		var h [20]byte
 		h[0] = 0xAB
-		c.processSamples(context.Background(), string(h[:]), item)
+		c.processSamples(ctx, string(h[:]), item)
 
 		select {
 		case event := <-c.harvest:
 			assert.Equal(t, h, event.Infohash)
-			assert.Equal(t, node.Addr.Port, event.Port)
-		case <-time.After(time.Second):
+			assert.Equal(t, peerAddr.Port, event.Port)
+		case <-time.After(2 * time.Second):
 			t.Fatal("expected harvest event")
 		}
 	})
 
 	t.Run("deduplicates repeated infohashes", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
 		c := makeCrawler(t)
-		node := makeHarvestNode(0x01, 1001)
+		require.NoError(t, c.server.Start(ctx))
+
+		peerAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9877}
+		responder := newGetPeersValueServer(t, peerAddr)
+		node := makeHarvestNode(0x01, responder.LocalAddr().(*net.UDPAddr).Port)
 		item := &bep51Item{node: node}
 
 		var h [20]byte
 		h[0] = 0xCD
-		c.processSamples(context.Background(), string(h[:]), item)
-		c.processSamples(context.Background(), string(h[:]), item)
+		c.processSamples(ctx, string(h[:]), item)
+		c.processSamples(ctx, string(h[:]), item)
 
-		<-c.harvest
+		select {
+		case <-c.harvest:
+		case <-time.After(2 * time.Second):
+			t.Fatal("expected first harvest event")
+		}
 		select {
 		case <-c.harvest:
 			t.Fatal("duplicate should be filtered by dedup")
@@ -202,18 +263,25 @@ func TestCrawler_processSamples(t *testing.T) {
 	})
 
 	t.Run("decodes multiple hashes from one samples string", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
 		c := makeCrawler(t)
-		node := makeHarvestNode(0x01, 1001)
+		require.NoError(t, c.server.Start(ctx))
+
+		peerAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9878}
+		responder := newGetPeersValueServer(t, peerAddr)
+		node := makeHarvestNode(0x01, responder.LocalAddr().(*net.UDPAddr).Port)
 		item := &bep51Item{node: node}
 
 		var buf [60]byte
 		buf[0] = 0x01
 		buf[20] = 0x02
 		buf[40] = 0x03
-		c.processSamples(context.Background(), string(buf[:]), item)
+		c.processSamples(ctx, string(buf[:]), item)
 
 		count := 0
-		timeout := time.After(time.Second)
+		timeout := time.After(2 * time.Second)
 		for count < 3 {
 			select {
 			case <-c.harvest:

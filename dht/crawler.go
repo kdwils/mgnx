@@ -260,7 +260,7 @@ func (c *crawler) processSamples(ctx context.Context, samples string, item *bep5
 		new++
 		go c.findAndHarvest(ctx, h, item.node)
 	}
-	logger.FromContext(ctx).Debug("BEP-51 samples processed",
+	logger.FromContext(ctx).Debug("samples processed",
 		"node", item.node.Addr,
 		"total", total,
 		"new", new,
@@ -287,7 +287,10 @@ func (c *crawler) findAndHarvest(ctx context.Context, h [20]byte, node *Node) {
 	if err != nil {
 		return
 	}
-	if resp.R == nil || len(resp.R.Values) == 0 {
+	if resp.R == nil {
+		return
+	}
+	if len(resp.R.Values) == 0 {
 		return
 	}
 

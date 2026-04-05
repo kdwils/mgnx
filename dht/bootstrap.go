@@ -20,6 +20,11 @@ const (
 	bootstrapK     = 8
 )
 
+//go:generate go run go.uber.org/mock/mockgen -destination=mocks/mock_resolver.go -package=mocks github.com/kdwils/mgnx/dht Resolver
+type Resolver interface {
+	LookupHost(ctx context.Context, host string) (addrs []string, err error)
+}
+
 // Bootstrap performs the BEP-05 iterative find_node self-lookup convergence
 // starting from addrs. It inserts discovered nodes into the routing table and
 // triggers a bucket refresh for any stale buckets after convergence.
@@ -28,7 +33,7 @@ const (
 // the first successful bootstrap response and saved to cfg.DHT.NodeIDPath.
 // Subsequent starts load the saved BEP-42 ID directly via loadOrGenerateNodeID.
 func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
-	resolved := resolveBootstrapAddrs(addrs)
+	resolved := s.resolveBootstrapAddrs(ctx, addrs)
 	log := logger.FromContext(ctx)
 	log.Info("DHT bootstrap starting", "bootstrap_nodes", len(resolved))
 
@@ -212,14 +217,14 @@ func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
 
 // resolveBootstrapAddrs resolves "host:port" strings to UDP addresses,
 // accepting multiple A records per hostname.
-func resolveBootstrapAddrs(addrs []string) []*net.UDPAddr {
+func (s *Server) resolveBootstrapAddrs(ctx context.Context, addrs []string) []*net.UDPAddr {
 	var result []*net.UDPAddr
 	for _, addr := range addrs {
 		host, port, err := net.SplitHostPort(addr)
 		if err != nil {
 			continue
 		}
-		ips, err := net.LookupHost(host)
+		ips, err := s.Resolver.LookupHost(ctx, host)
 		if err != nil {
 			continue
 		}

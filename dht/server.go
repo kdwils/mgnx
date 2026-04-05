@@ -43,6 +43,7 @@ type Server struct {
 	cfg      config.DHT
 	handlers chan inMsg
 	bufPool  sync.Pool
+	Resolver Resolver
 }
 
 // NewServer binds the UDP socket and initialises all subsystems.
@@ -79,7 +80,9 @@ func NewServer(cfg config.DHT) (*Server, error) {
 		bufPool: sync.Pool{
 			New: func() any { return make([]byte, 2048) },
 		},
+		Resolver: net.DefaultResolver,
 	}
+
 	table.SetPinger(s)
 	return s, nil
 }
