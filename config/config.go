@@ -2,7 +2,6 @@ package config
 
 import (
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/spf13/viper"
@@ -52,22 +51,13 @@ type Scrape struct {
 }
 
 type Database struct {
-	Host     string `mapstructure:"host"`
-	Port     int    `mapstructure:"port"`
-	User     string `mapstructure:"user"`
-	Password string `mapstructure:"password"`
-	Name     string `mapstructure:"name"`
-	SSLMode  string `mapstructure:"sslMode"`
+	URI string `mapstructure:"uri"`
 }
 
 type Server struct {
 	Port     int    `mapstructure:"port"`
 	LogLevel string `mapstructure:"log_level"`
 	APIKey   string `mapstructure:"apiKey"`
-}
-
-func (d Database) DSN() string {
-	return fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s", d.User, d.Password, d.Host, d.Port, d.Name, d.SSLMode)
 }
 
 func New(v *viper.Viper) (Config, error) {
