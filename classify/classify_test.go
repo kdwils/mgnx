@@ -11,6 +11,9 @@ import (
 const mb = 1024 * 1024
 const gb = 1024 * mb
 
+const testMinSize = 50 * mb
+const testMaxSize = 150 * gb
+
 // testAllowed mirrors the default production allowlist used in tests.
 var testAllowed = map[string]struct{}{
 	".mkv": {}, ".mp4": {}, ".avi": {}, ".mov": {}, ".wmv": {}, ".m4v": {},
@@ -206,12 +209,12 @@ func TestClassify(t *testing.T) {
 			},
 		},
 		{
-			name:      "rejected - no year or TV markers",
+			name:      "classified - no year or TV markers but has video",
 			torrent:   "Some.Random.Content.HDTV.x264",
 			files:     video(1, 500*mb),
 			totalSize: 500 * mb,
 			want: classify.Result{
-				State:       gen.TorrentStateRejected,
+				State:       gen.TorrentStateClassified,
 				ContentType: gen.ContentTypeUnknown,
 				Title:       "Some Random Content",
 				Encoding:    "x264",
@@ -296,7 +299,7 @@ func TestClassify(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := classify.Classify(tc.torrent, tc.files, tc.totalSize, testAllowed)
+			got := classify.Classify(tc.torrent, tc.files, tc.totalSize, testMinSize, testMaxSize, testAllowed)
 			assert.Equal(t, tc.want, got)
 		})
 	}

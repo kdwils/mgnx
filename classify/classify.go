@@ -9,11 +9,6 @@ import (
 	"github.com/kdwils/mgnx/db/gen"
 )
 
-const (
-	minSizeBytes int64 = 50 * 1024 * 1024         // 50 MB
-	maxSizeBytes int64 = 150 * 1024 * 1024 * 1024 // 150 GB
-)
-
 // File is a file entry from torrent metadata.
 type File struct {
 	Path string
@@ -141,11 +136,8 @@ func isVideoExt(ext string) bool {
 	return false
 }
 
-func shouldReject(ct gen.ContentType, files []File, totalSize int64, allowed map[string]struct{}) bool {
-	if totalSize < minSizeBytes || totalSize > maxSizeBytes {
-		return true
-	}
-	if ct == gen.ContentTypeUnknown {
+func shouldReject(ct gen.ContentType, files []File, totalSize int64, minSize, maxSize int64, allowed map[string]struct{}) bool {
+	if totalSize < minSize || totalSize > maxSize {
 		return true
 	}
 	videoCount, badCount := analyzeFiles(files, allowed)
@@ -170,7 +162,7 @@ func stripVideoExt(name string) string {
 
 // Classify analyzes a torrent name and file list to produce a classification result.
 // allowed is a pre-built set of allowed file extensions (built once at startup from config).
-func Classify(name string, files []File, totalSize int64, allowed map[string]struct{}) Result {
+func Classify(name string, files []File, totalSize int64, minSize, maxSize int64, allowed map[string]struct{}) Result {
 	result := Result{
 		SceneName:   name,
 		ContentType: gen.ContentTypeUnknown,
@@ -202,7 +194,7 @@ func Classify(name string, files []File, totalSize int64, allowed map[string]str
 		result.ReleaseGroup = m[1]
 	}
 
-	if shouldReject(result.ContentType, files, totalSize, allowed) {
+	if shouldReject(result.ContentType, files, totalSize, minSize, maxSize, allowed) {
 		result.State = gen.TorrentStateRejected
 		return result
 	}

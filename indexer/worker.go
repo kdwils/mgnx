@@ -27,6 +27,8 @@ type Worker struct {
 	allowedExts map[string]struct{}
 	peerTimeout time.Duration
 	peerRetries int
+	minSize     int64
+	maxSize     int64
 }
 
 func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg config.Indexer) *Worker {
@@ -39,6 +41,14 @@ func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg
 		peerRetries = 3
 	}
 	peerTimeout := cfg.PeerTimeout
+	minSize := cfg.MinSize
+	if minSize <= 0 {
+		minSize = 50 * 1024 * 1024 // 50 MB default
+	}
+	maxSize := cfg.MaxSize
+	if maxSize <= 0 {
+		maxSize = 150 * 1024 * 1024 * 1024 // 150 GB default
+	}
 	return &Worker{
 		crawler:     crawler,
 		fetcher:     fetcher,
@@ -47,6 +57,8 @@ func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg
 		allowedExts: allowed,
 		peerTimeout: peerTimeout,
 		peerRetries: peerRetries,
+		minSize:     minSize,
+		maxSize:     maxSize,
 	}
 }
 
@@ -147,7 +159,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		classifyFiles[i] = classify.File{Path: f.Path, Size: f.Size}
 	}
 
-	result := classify.Classify(info.Name, classifyFiles, info.TotalSize, w.allowedExts)
+	result := classify.Classify(info.Name, classifyFiles, info.TotalSize, w.minSize, w.maxSize, w.allowedExts)
 	if err := w.queries.UpdateTorrentClassified(ctx, gen.UpdateTorrentClassifiedParams{
 		Infohash:     infohashHex,
 		State:        result.State,
