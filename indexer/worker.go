@@ -20,13 +20,13 @@ import (
 )
 
 type Worker struct {
-	crawler      dht.Crawler
-	fetcher      metadata.Fetcher
-	queries      gen.Querier
-	cfg          config.Indexer
-	deniedExts   map[string]struct{}
-	fetchTimeout time.Duration
-	peerRetries  int
+	crawler     dht.Crawler
+	fetcher     metadata.Fetcher
+	queries     gen.Querier
+	cfg         config.Indexer
+	deniedExts  map[string]struct{}
+	peerTimeout time.Duration
+	peerRetries int
 }
 
 func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg config.Indexer) *Worker {
@@ -35,14 +35,15 @@ func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg
 		denied[ext] = struct{}{}
 	}
 	peerRetries := cfg.PeerRetries
+	peerTimeout := cfg.PeerTimeout
 	return &Worker{
-		crawler:      crawler,
-		fetcher:      fetcher,
-		queries:      queries,
-		cfg:          cfg,
-		deniedExts:   denied,
-		fetchTimeout: cfg.FetchTimeout,
-		peerRetries:  peerRetries,
+		crawler:     crawler,
+		fetcher:     fetcher,
+		queries:     queries,
+		cfg:         cfg,
+		deniedExts:  denied,
+		peerTimeout: peerTimeout,
+		peerRetries: peerRetries,
 	}
 }
 
@@ -98,7 +99,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeer) {
 		peer := ev.Peers[i]
 		addr := net.TCPAddr{IP: peer.SourceIP, Port: peer.Port}
 
-		fetchCtx, cancel := context.WithTimeout(ctx, w.fetchTimeout)
+		fetchCtx, cancel := context.WithTimeout(ctx, w.peerTimeout)
 		info, err = w.fetcher.Fetch(fetchCtx, ev.Infohash, addr)
 		cancel()
 		if err == nil {

@@ -107,7 +107,7 @@ func TestEndToEnd(t *testing.T) {
 	}).AnyTimes()
 
 	cfg := config.Config{
-		Indexer: config.Indexer{Workers: 4, FetchTimeout: 5 * time.Second},
+		Indexer: config.Indexer{Workers: 4, PeerTimeout: 5 * time.Second},
 		Scrape: config.Scrape{
 			PollInterval: 200 * time.Millisecond,
 			BatchSize:    74,
