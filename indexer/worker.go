@@ -191,8 +191,7 @@ func isVideoExt(ext string) bool {
 
 func sanitizePath(path string) string {
 	if !utf8.ValidString(path) {
-		// Replace invalid UTF-8 bytes with replacement character
-		return strings.ToValidUTF8(path, "")
+		return strings.ToValidUTF8(path, string(utf8.RuneError))
 	}
 	return path
 }
