@@ -126,6 +126,11 @@ func (s *Server) Infohashes() <-chan DiscoveredPeers {
 	return s.discovered
 }
 
+// Addr returns the local UDP address the server is listening on.
+func (s *Server) Addr() *net.UDPAddr {
+	return s.conn.LocalAddr().(*net.UDPAddr)
+}
+
 // SetNodeID updates the server's node ID. Called once during bootstrap when the
 // BEP-42 compliant ID is derived from the external IP. Must only be called
 // before production traffic begins.
@@ -235,8 +240,22 @@ func (s *Server) updateTableFromResponse(addr *net.UDPAddr, msg *Msg) {
 	if err != nil {
 		return
 	}
+	if !isValidNodeID(addr.IP, id) {
+		return
+	}
 	s.table.Insert(&Node{ID: id, Addr: addr, LastSeen: time.Now()})
 	s.table.MarkSuccess(id)
+}
+
+// isValidNodeID reports whether id satisfies the BEP-42 security constraint
+// for ip. Nodes that fail this check are not inserted into the routing table
+// to prevent eclipse attacks via crafted node IDs.
+// Non-IPv4 addresses always pass — BEP-42 is IPv4-only per project scope.
+func isValidNodeID(ip net.IP, id NodeID) bool {
+	if ip.To4() == nil {
+		return true
+	}
+	return ValidateNodeIDForIP(ip, id) == nil
 }
 
 // queryHandlerLoop processes inbound queries until ctx is cancelled.
@@ -256,7 +275,9 @@ func (s *Server) queryHandlerLoop(ctx context.Context) {
 func (s *Server) processQuery(ctx context.Context, in inMsg) {
 	if in.msg.A != nil {
 		if id, err := ParseNodeID(in.msg.A.ID); err == nil {
-			s.table.Insert(&Node{ID: id, Addr: in.addr, LastSeen: time.Now()})
+			if isValidNodeID(in.addr.IP, id) {
+				s.table.Insert(&Node{ID: id, Addr: in.addr, LastSeen: time.Now()})
+			}
 		}
 	}
 
@@ -286,12 +307,14 @@ func (s *Server) handlePing(addr *net.UDPAddr, msg *Msg) {
 // by returning the k-closest nodes to the requested target.
 func (s *Server) handleFindNode(addr *net.UDPAddr, msg *Msg) {
 	if msg.A == nil {
+		s.respondError(addr, msg.T, ErrProtocol, "missing arguments")
 		return
 	}
 	target, err := ParseNodeID(msg.A.Target)
 	if err != nil {
 		target, err = ParseNodeID(msg.A.InfoHash)
 		if err != nil {
+			s.respondError(addr, msg.T, ErrProtocol, "missing target")
 			return
 		}
 	}
@@ -307,10 +330,12 @@ func (s *Server) handleFindNode(addr *net.UDPAddr, msg *Msg) {
 // k-closest nodes ("nodes" path) along with a token for future announce_peer.
 func (s *Server) handleGetPeers(addr *net.UDPAddr, msg *Msg) {
 	if msg.A == nil {
+		s.respondError(addr, msg.T, ErrProtocol, "missing arguments")
 		return
 	}
 	target, err := ParseNodeID(msg.A.InfoHash)
 	if err != nil {
+		s.respondError(addr, msg.T, ErrProtocol, "missing info_hash")
 		return
 	}
 	closest := s.table.Closest(target, s.cfg.BucketSize)
@@ -325,6 +350,11 @@ func (s *Server) handleGetPeers(addr *net.UDPAddr, msg *Msg) {
 // The announcing node's address is emitted as a DiscoveredPeers event for the indexer.
 func (s *Server) handleAnnouncePeer(ctx context.Context, addr *net.UDPAddr, msg *Msg) {
 	if msg.A == nil {
+		s.respondError(addr, msg.T, ErrProtocol, "missing arguments")
+		return
+	}
+	if !s.token.Validate(addr.IP, msg.A.Token) {
+		s.respondError(addr, msg.T, ErrProtocol, "bad token")
 		return
 	}
 	var h [20]byte
@@ -338,6 +368,10 @@ func (s *Server) handleAnnouncePeer(ctx context.Context, addr *net.UDPAddr, msg 
 	port := msg.A.Port
 	if msg.A.ImpliedPort != nil && *msg.A.ImpliedPort != 0 {
 		port = addr.Port
+	}
+	if port <= 0 || port > 65535 {
+		s.respond(addr, msg.T, &Return{ID: string(s.ourID[:])})
+		return
 	}
 	event := DiscoveredPeers{
 		Infohash: h,
@@ -359,10 +393,12 @@ func (s *Server) handleAnnouncePeer(ctx context.Context, addr *net.UDPAddr, msg 
 // querier can continue its traversal.
 func (s *Server) handleSampleInfohashes(addr *net.UDPAddr, msg *Msg) {
 	if msg.A == nil {
+		s.respondError(addr, msg.T, ErrProtocol, "missing arguments")
 		return
 	}
 	target, err := ParseNodeID(msg.A.Target)
 	if err != nil {
+		s.respondError(addr, msg.T, ErrProtocol, "missing target")
 		return
 	}
 	// As a crawler we have no stored samples; respond with closest nodes.
@@ -377,6 +413,15 @@ func (s *Server) handleSampleInfohashes(addr *net.UDPAddr, msg *Msg) {
 func (s *Server) respond(addr *net.UDPAddr, t string, r *Return) {
 	select {
 	case s.outbound <- &outMsg{addr: addr, msg: &Msg{T: t, Y: "r", R: r}}:
+	default:
+	}
+}
+
+// respondError enqueues a BEP-05 KRPC error response.
+// Format per BEP-05 §KRPC Protocol: {"y":"e","t":...,"e":[code, msg]}.
+func (s *Server) respondError(addr *net.UDPAddr, t string, code int, msg string) {
+	select {
+	case s.outbound <- &outMsg{addr: addr, msg: &Msg{T: t, Y: "e", E: []any{code, msg}}}:
 	default:
 	}
 }

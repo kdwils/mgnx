@@ -54,6 +54,12 @@ func NewClient(dialer Dialer) *Client {
 
 const MAX_SIZE = 10 * 1024 * 1024
 
+// maxMsgSize is the upper bound on a single BEP-10 wire message. A malicious
+// peer could send a 4-byte length of 0xFFFFFFFF; without this guard the
+// make([]byte, length) below would attempt a ~4 GB allocation before the
+// connection deadline fires.
+const maxMsgSize = 16 * 1024 * 1024
+
 type FileInfo struct {
 	Path string
 	Size int64
@@ -284,6 +290,9 @@ func readMsg(r io.Reader) (msgType byte, payload []byte, err error) {
 	length := binary.BigEndian.Uint32(lenBuf[:])
 	if length == 0 {
 		return 0, nil, nil
+	}
+	if length > maxMsgSize {
+		return 0, nil, fmt.Errorf("message too large: %d bytes", length)
 	}
 	body := make([]byte, length)
 	if _, err = io.ReadFull(r, body); err != nil {

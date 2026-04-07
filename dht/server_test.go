@@ -2,6 +2,7 @@ package dht
 
 import (
 	"context"
+	"encoding/hex"
 	"net"
 	"testing"
 	"time"
@@ -10,6 +11,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// bep42NodeID derives a BEP-42 compliant node ID for 127.0.0.1 and returns
+// it as a hex string suitable for config.DHT.NodeID. Each call produces a
+// fresh random ID (the BEP-42 middle bytes are random), so servers in the
+// same test get distinct IDs while all passing validation.
+func bep42NodeID(t *testing.T) string {
+	t.Helper()
+	id, err := DeriveNodeIDFromIP(net.ParseIP("127.0.0.1"))
+	require.NoError(t, err)
+	return hex.EncodeToString(id[:])
+}
 
 func testServerCfg(t *testing.T) config.DHT {
 	t.Helper()
@@ -22,7 +34,7 @@ func testServerCfg(t *testing.T) config.DHT {
 		GoodNodeWindow:      15 * time.Minute,
 		BadFailureThreshold: 2,
 		StaleThreshold:      15 * time.Minute,
-		NodeID:              "a25e62fa2ffcc041d3ff12045b73c86e4ff95ff1",
+		NodeID:              bep42NodeID(t),
 		NodesPath:           t.TempDir() + "/dht_nodes.dat",
 		Alpha:               3,
 		MaxIterations:       4,
@@ -118,6 +130,7 @@ func TestServer_processQuery(t *testing.T) {
 		var ih [20]byte
 		ih[0] = 0xAB
 		port := 12345
+		token := s.token.Generate(addr.IP)
 		s.processQuery(context.Background(), inMsg{
 			addr: addr,
 			msg: &Msg{
@@ -128,6 +141,7 @@ func TestServer_processQuery(t *testing.T) {
 					ID:       string(make([]byte, 20)),
 					InfoHash: string(ih[:]),
 					Port:     port,
+					Token:    token,
 				},
 			},
 		})
