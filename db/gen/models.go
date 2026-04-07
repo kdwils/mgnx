@@ -186,6 +186,10 @@ type Torrent struct {
 	LastSeen                  pgtype.Timestamptz `json:"last_seen"`
 	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	ClassifiedTitle           pgtype.Text        `json:"classified_title"`
+	ClassifiedYear            pgtype.Int4        `json:"classified_year"`
+	ClassifiedSeason          pgtype.Int4        `json:"classified_season"`
+	ClassifiedEpisode         pgtype.Int4        `json:"classified_episode"`
 }
 
 type TorrentFile struct {

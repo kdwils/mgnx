@@ -479,7 +479,7 @@ func TestClassify(t *testing.T) {
 				Year:         2022,
 				Quality:      "2160p",
 				Encoding:     "x264",
-				DynamicRange: "",
+				DynamicRange: "Dolby Vision",
 				Source:       "BluRay",
 				ReleaseGroup: "GROUP",
 				SceneName:    "Movie.2022.2160p.BluRay.Dolby.Vision.x264-GROUP",

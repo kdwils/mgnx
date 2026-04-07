@@ -50,7 +50,7 @@ var (
 	// Quality tags — all run against the normalized (dot-replaced) name
 	reResolution   = regexp.MustCompile(`(?i)\b(2160p|4K(?:\s*UHD)?|1080[pi]|720p|576p|480p)\b`)
 	reEncoding     = regexp.MustCompile(`(?i)\b(x265|x264|HEVC|AVC|AV1|XviD|DivX|H\.?265|H\.?264|H\.264)\b`)
-	reDynamicRange = regexp.MustCompile(`(?i)\b(HDR10\+|HDR10|Dolby\.?Vision|DV|HDR|SDR)\b`)
+	reDynamicRange = regexp.MustCompile(`(?i)\b(HDR10\+|HDR10|Dolby[\. ]?Vision|DV|HDR|SDR)\b`)
 	reSource       = regexp.MustCompile(`(?i)\b(BluRay|Blu-Ray|BDRip|BDRemux|BDREMUX|REMUX|WEB-DL|WEBRip|WEBDL|WEB|HDTV|DVDRip|DVD|PDVD|HDCAM|PDTV)\b`)
 
 	// Release group: last hyphen-prefixed token at end of name (before any extension)
@@ -127,7 +127,7 @@ func firstMatch(re *regexp.Regexp, s string) string {
 func analyzeFiles(files []File, allowed map[string]struct{}) (videoCount, badCount int) {
 	for _, f := range files {
 		ext := strings.ToLower(filepath.Ext(f.Path))
-		if isVideoExt(ext) {
+		if IsVideoExt(ext) {
 			videoCount++
 			continue
 		}
@@ -138,7 +138,8 @@ func analyzeFiles(files []File, allowed map[string]struct{}) (videoCount, badCou
 	return
 }
 
-func isVideoExt(ext string) bool {
+// IsVideoExt reports whether ext is a recognised video file extension.
+func IsVideoExt(ext string) bool {
 	switch ext {
 	case ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".ts", ".m2ts", ".vob", ".flv", ".webm":
 		return true
@@ -167,7 +168,7 @@ func shouldReject(ct gen.ContentType, files []File, totalSize int64, minSize, ma
 // release group detection works correctly for single-file torrents.
 func stripVideoExt(name string) string {
 	ext := strings.ToLower(filepath.Ext(name))
-	if isVideoExt(ext) {
+	if IsVideoExt(ext) {
 		return name[:len(name)-len(ext)]
 	}
 	return name

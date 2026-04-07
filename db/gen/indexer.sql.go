@@ -45,28 +45,36 @@ func (q *Queries) InsertTorrentFile(ctx context.Context, arg InsertTorrentFilePa
 const updateTorrentClassified = `-- name: UpdateTorrentClassified :exec
 UPDATE torrents
 SET
-    state         = $1,
-    content_type  = $2,
-    quality       = $3,
-    encoding      = $4,
-    dynamic_range = $5,
-    source        = $6,
-    release_group = $7,
-    scene_name    = $8,
-    updated_at    = NOW()
-WHERE infohash = $9
+    state              = $1,
+    content_type       = $2,
+    quality            = $3,
+    encoding           = $4,
+    dynamic_range      = $5,
+    source             = $6,
+    release_group      = $7,
+    scene_name         = $8,
+    classified_title   = $9,
+    classified_year    = $10,
+    classified_season  = $11,
+    classified_episode = $12,
+    updated_at         = NOW()
+WHERE infohash = $13
 `
 
 type UpdateTorrentClassifiedParams struct {
-	State        TorrentState `json:"state"`
-	ContentType  ContentType  `json:"content_type"`
-	Quality      pgtype.Text  `json:"quality"`
-	Encoding     pgtype.Text  `json:"encoding"`
-	DynamicRange pgtype.Text  `json:"dynamic_range"`
-	Source       pgtype.Text  `json:"source"`
-	ReleaseGroup pgtype.Text  `json:"release_group"`
-	SceneName    pgtype.Text  `json:"scene_name"`
-	Infohash     string       `json:"infohash"`
+	State             TorrentState `json:"state"`
+	ContentType       ContentType  `json:"content_type"`
+	Quality           pgtype.Text  `json:"quality"`
+	Encoding          pgtype.Text  `json:"encoding"`
+	DynamicRange      pgtype.Text  `json:"dynamic_range"`
+	Source            pgtype.Text  `json:"source"`
+	ReleaseGroup      pgtype.Text  `json:"release_group"`
+	SceneName         pgtype.Text  `json:"scene_name"`
+	ClassifiedTitle   pgtype.Text  `json:"classified_title"`
+	ClassifiedYear    pgtype.Int4  `json:"classified_year"`
+	ClassifiedSeason  pgtype.Int4  `json:"classified_season"`
+	ClassifiedEpisode pgtype.Int4  `json:"classified_episode"`
+	Infohash          string       `json:"infohash"`
 }
 
 func (q *Queries) UpdateTorrentClassified(ctx context.Context, arg UpdateTorrentClassifiedParams) error {
@@ -79,6 +87,10 @@ func (q *Queries) UpdateTorrentClassified(ctx context.Context, arg UpdateTorrent
 		arg.Source,
 		arg.ReleaseGroup,
 		arg.SceneName,
+		arg.ClassifiedTitle,
+		arg.ClassifiedYear,
+		arg.ClassifiedSeason,
+		arg.ClassifiedEpisode,
 		arg.Infohash,
 	)
 	return err
