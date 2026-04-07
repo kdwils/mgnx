@@ -213,9 +213,8 @@ func Classify(name string, files []File, totalSize int64, minSize, maxSize int64
 	}
 
 	if result.ContentType == gen.ContentTypeUnknown {
-		if m := reYear.FindStringSubmatch(normalized); m != nil {
+		if reYear.MatchString(normalized) || reResolution.MatchString(normalized) {
 			result.ContentType = gen.ContentTypeMovie
-			result.Year, _ = strconv.Atoi(m[1])
 		}
 	}
 

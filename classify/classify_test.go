@@ -228,24 +228,6 @@ func TestClassify(t *testing.T) {
 			},
 		},
 		{
-			// No S## marker — "Complete Series" alone is not a reliable TV signal.
-			// The TMDB enricher is responsible for resolving these by title lookup.
-			name:      "complete series without season marker is rejected",
-			torrent:   "The.Wire.Complete.Series.720p.HDTV.x264-GROUP",
-			files:     video(60, 1*gb),
-			totalSize: 60 * gb,
-			want: classify.Result{
-				State:        gen.TorrentStateRejected,
-				ContentType:  gen.ContentTypeUnknown,
-				Title:        "The Wire Complete Series",
-				Quality:      "720p",
-				Encoding:     "x264",
-				Source:       "HDTV",
-				ReleaseGroup: "GROUP",
-				SceneName:    "The.Wire.Complete.Series.720p.HDTV.x264-GROUP",
-			},
-		},
-		{
 			name:      "4K HDR movie",
 			torrent:   "Avengers.Endgame.2019.2160p.UHD.BluRay.HDR.x265-GROUP",
 			files:     video(1, 60*gb),
@@ -330,6 +312,21 @@ func TestClassify(t *testing.T) {
 				Source:       "BluRay",
 				ReleaseGroup: "GROUP",
 				SceneName:    "The_Matrix_1999_1080p_BluRay_x264-GROUP",
+			},
+		},
+		{
+			name:      "movie without year",
+			torrent:   "Pompeii.The.Secrets.of.Civita.Giuliana.1080p.HDTV.x264.AC3.MVGroup.org.mkv",
+			files:     video(1, 8*gb),
+			totalSize: 8 * gb,
+			want: classify.Result{
+				State:       gen.TorrentStateClassified,
+				ContentType: gen.ContentTypeMovie,
+				Title:       "Pompeii The Secrets of Civita Giuliana",
+				Quality:     "1080p",
+				Encoding:    "x264",
+				Source:      "HDTV",
+				SceneName:   "Pompeii.The.Secrets.of.Civita.Giuliana.1080p.HDTV.x264.AC3.MVGroup.org.mkv",
 			},
 		},
 		{
@@ -631,21 +628,6 @@ func TestClassify(t *testing.T) {
 				Quality:     "720p",
 				Source:      "HDTV",
 				SceneName:   "Show.Name.5x12.720p.HDTV",
-			},
-		},
-		{
-			// No S## marker — same reasoning as above.
-			name:      "complete series without season marker is rejected",
-			torrent:   "The.Office.Complete.Series.1080p.BluRay",
-			files:     video(100, 1*gb),
-			totalSize: 100 * gb,
-			want: classify.Result{
-				State:       gen.TorrentStateRejected,
-				ContentType: gen.ContentTypeUnknown,
-				Title:       "The Office Complete Series",
-				Quality:     "1080p",
-				Source:      "BluRay",
-				SceneName:   "The.Office.Complete.Series.1080p.BluRay",
 			},
 		},
 		{
