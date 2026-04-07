@@ -79,7 +79,7 @@ func NewServer(cfg config.DHT) (*Server, error) {
 		discovered: make(chan DiscoveredPeers, cfg.DiscoveryBuffer),
 		token:      token,
 		rate:       rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateBurst),
-		ipLimiter:  newIPLimiter(cfg.RateLimit, cfg.RateBurst),
+		ipLimiter:  newIPLimiter(cfg.RateLimit, cfg.RateBurst, 5*time.Minute),
 		cfg:        cfg,
 		handlers:   make(chan inMsg, 512),
 		bufPool: sync.Pool{

@@ -3,96 +3,65 @@ package dht
 import (
 	"context"
 	"net"
-	"sync"
 	"time"
 
+	"github.com/kdwils/mgnx/pkg/cache"
 	"golang.org/x/time/rate"
 )
-
-type ipLimiter struct {
-	mu       sync.RWMutex
-	limiters map[string]*clientLimiter
-	cfg      perIPLimit
-}
 
 type clientLimiter struct {
 	limiter  *rate.Limiter
 	lastSeen time.Time
 }
 
-type perIPLimit struct {
-	rate     float64
-	burst    int
-	maxAddrs int
-	ttl      time.Duration
+type ipLimiter struct {
+	cache *cache.Cache[string, *clientLimiter]
+	cfg   perIPLimit
 }
 
-func newIPLimiter(rateLimit float64, burst int) *ipLimiter {
+type perIPLimit struct {
+	rate  float64
+	burst int
+	ttl   time.Duration
+}
+
+func newIPLimiter(rateLimit float64, burst int, ttl time.Duration) *ipLimiter {
+	cl := cache.New[string, *clientLimiter](
+		cache.WithCleanup[string, *clientLimiter](
+			ttl,
+			func(_ string, cl *clientLimiter) bool {
+				return time.Since(cl.lastSeen) > ttl
+			},
+		),
+	)
 	return &ipLimiter{
-		limiters: make(map[string]*clientLimiter),
+		cache: cl,
 		cfg: perIPLimit{
-			rate:     rateLimit,
-			burst:    burst,
-			maxAddrs: 10000,
-			ttl:      5 * time.Minute,
+			rate:  rateLimit,
+			burst: burst,
+			ttl:   ttl,
 		},
 	}
 }
 
 func (l *ipLimiter) Allow(ip net.IP) bool {
+	if ip == nil || len(ip) == 0 {
+		return false
+	}
 	key := ip.String()
-	l.mu.RLock()
-	cl, ok := l.limiters[key]
-	l.mu.RUnlock()
-
+	cl, ok := l.cache.Get(key)
 	if ok {
 		return cl.limiter.Allow()
-	}
-
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	if cl, ok := l.limiters[key]; ok {
-		return cl.limiter.Allow()
-	}
-
-	if len(l.limiters) >= l.cfg.maxAddrs {
-		l.cleanup()
-		if len(l.limiters) >= l.cfg.maxAddrs {
-			return false
-		}
 	}
 
 	cl = &clientLimiter{
 		limiter:  rate.NewLimiter(rate.Limit(l.cfg.rate), l.cfg.burst),
 		lastSeen: time.Now(),
 	}
-	l.limiters[key] = cl
+	l.cache.Set(key, cl)
 	return cl.limiter.Allow()
 }
 
-func (l *ipLimiter) cleanup() {
-	threshold := time.Now().Add(-l.cfg.ttl)
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	for k, v := range l.limiters {
-		if v.lastSeen.Before(threshold) {
-			delete(l.limiters, k)
-		}
-	}
-}
-
 func (l *ipLimiter) Start(ctx context.Context) {
-	go func() {
-		ticker := time.NewTicker(l.cfg.ttl)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				l.cleanup()
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+	l.cache.StartCleanup(ctx)
 }
