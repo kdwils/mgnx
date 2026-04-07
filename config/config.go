@@ -40,14 +40,15 @@ type Crawler struct {
 }
 
 type Indexer struct {
-	Workers           int           `mapstructure:"workers"`
-	RateLimit         float64       `mapstructure:"rate_limit"`
-	RateBurst         int           `mapstructure:"rate_burst"`
-	RequestTimeout    time.Duration `mapstructure:"request_timeout"`
-	MaxPeers          int           `mapstructure:"max_peers"`
-	AllowedExtensions []string      `mapstructure:"allowed_extensions"`
-	MinSize           int64         `mapstructure:"min_size"`
-	MaxSize           int64         `mapstructure:"max_size"`
+	Workers               int           `mapstructure:"workers"`
+	RateLimit             float64       `mapstructure:"rate_limit"`
+	RateBurst             int           `mapstructure:"rate_burst"`
+	RequestTimeout        time.Duration `mapstructure:"request_timeout"`
+	MaxPeers              int           `mapstructure:"max_peers"`
+	AllowedExtensions     []string      `mapstructure:"allowed_extensions"`
+	EnableExtensionFilter bool          `mapstructure:"enable_extension_filter"`
+	MinSize               int64         `mapstructure:"min_size"`
+	MaxSize               int64         `mapstructure:"max_size"`
 }
 
 type Scrape struct {

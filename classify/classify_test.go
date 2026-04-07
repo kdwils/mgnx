@@ -907,7 +907,7 @@ func TestClassify(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := classify.Classify(tc.torrent, tc.files, tc.totalSize, testMinSize, testMaxSize, testAllowed)
+			got := classify.Classify(tc.torrent, tc.files, tc.totalSize, testMinSize, testMaxSize, testAllowed, true)
 			assert.Equal(t, tc.want, got)
 		})
 	}

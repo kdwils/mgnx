@@ -158,7 +158,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		classifyFiles[i] = classify.File{Path: f.Path, Size: f.Size}
 	}
 
-	result := classify.Classify(info.Name, classifyFiles, info.TotalSize, w.minSize, w.maxSize, w.allowedExts)
+	result := classify.Classify(info.Name, classifyFiles, info.TotalSize, w.minSize, w.maxSize, w.allowedExts, w.cfg.EnableExtensionFilter)
 	if err := w.queries.UpdateTorrentClassified(ctx, gen.UpdateTorrentClassifiedParams{
 		Infohash:          infohashHex,
 		State:             result.State,

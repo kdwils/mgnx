@@ -167,7 +167,7 @@ func IsVideoExt(ext string) bool {
 	return false
 }
 
-func shouldReject(ct gen.ContentType, files []File, totalSize int64, minSize, maxSize int64, allowed map[string]struct{}) bool {
+func shouldReject(ct gen.ContentType, files []File, totalSize int64, minSize, maxSize int64, allowed map[string]struct{}, enableExtensionFilter bool) bool {
 	if totalSize < minSize || totalSize > maxSize {
 		return true
 	}
@@ -178,7 +178,7 @@ func shouldReject(ct gen.ContentType, files []File, totalSize int64, minSize, ma
 	if videoCount == 0 {
 		return true
 	}
-	if badCount > 0 {
+	if enableExtensionFilter && badCount > 0 {
 		return true
 	}
 	return false
@@ -196,7 +196,8 @@ func stripVideoExt(name string) string {
 
 // Classify analyzes a torrent name and file list to produce a classification result.
 // allowed is a pre-built set of allowed file extensions (built once at startup from config).
-func Classify(name string, files []File, totalSize int64, minSize, maxSize int64, allowed map[string]struct{}) Result {
+// enableExtensionFilter controls whether to reject torrents with non-allowed file extensions.
+func Classify(name string, files []File, totalSize int64, minSize, maxSize int64, allowed map[string]struct{}, enableExtensionFilter bool) Result {
 	result := Result{
 		SceneName:   name,
 		ContentType: gen.ContentTypeUnknown,
@@ -232,7 +233,7 @@ func Classify(name string, files []File, totalSize int64, minSize, maxSize int64
 		result.ReleaseGroup = m[1]
 	}
 
-	if shouldReject(result.ContentType, files, totalSize, minSize, maxSize, allowed) {
+	if shouldReject(result.ContentType, files, totalSize, minSize, maxSize, allowed, enableExtensionFilter) {
 		result.State = gen.TorrentStateRejected
 		return result
 	}
