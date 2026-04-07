@@ -21,13 +21,17 @@ VALUES (
 -- name: UpdateTorrentClassified :exec
 UPDATE torrents
 SET
-    state         = sqlc.arg('state'),
-    content_type  = sqlc.arg('content_type'),
-    quality       = sqlc.narg('quality'),
-    encoding      = sqlc.narg('encoding'),
-    dynamic_range = sqlc.narg('dynamic_range'),
-    source        = sqlc.narg('source'),
-    release_group = sqlc.narg('release_group'),
-    scene_name    = sqlc.narg('scene_name'),
-    updated_at    = NOW()
+    state              = sqlc.arg('state'),
+    content_type       = sqlc.arg('content_type'),
+    quality            = sqlc.narg('quality'),
+    encoding           = sqlc.narg('encoding'),
+    dynamic_range      = sqlc.narg('dynamic_range'),
+    source             = sqlc.narg('source'),
+    release_group      = sqlc.narg('release_group'),
+    scene_name         = sqlc.narg('scene_name'),
+    classified_title   = sqlc.narg('classified_title'),
+    classified_year    = sqlc.narg('classified_year'),
+    classified_season  = sqlc.narg('classified_season'),
+    classified_episode = sqlc.narg('classified_episode'),
+    updated_at         = NOW()
 WHERE infohash = sqlc.arg('infohash');

@@ -150,7 +150,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 			Path:      sanitizePath(f.Path),
 			Size:      f.Size,
 			Extension: extension,
-			IsVideo:   isVideoExt(ext),
+			IsVideo:   classify.IsVideoExt(ext),
 		}); err != nil {
 			log.ErrorContext(ctx, "insert torrent file failed", "infohash", infohashHex, "path", f.Path, "err", err)
 		}
@@ -160,15 +160,19 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 
 	result := classify.Classify(info.Name, classifyFiles, info.TotalSize, w.minSize, w.maxSize, w.allowedExts)
 	if err := w.queries.UpdateTorrentClassified(ctx, gen.UpdateTorrentClassifiedParams{
-		Infohash:     infohashHex,
-		State:        result.State,
-		ContentType:  result.ContentType,
-		Quality:      nullText(result.Quality),
-		Encoding:     nullText(result.Encoding),
-		DynamicRange: nullText(result.DynamicRange),
-		Source:       nullText(result.Source),
-		ReleaseGroup: nullText(result.ReleaseGroup),
-		SceneName:    nullText(result.SceneName),
+		Infohash:          infohashHex,
+		State:             result.State,
+		ContentType:       result.ContentType,
+		Quality:           nullText(result.Quality),
+		Encoding:          nullText(result.Encoding),
+		DynamicRange:      nullText(result.DynamicRange),
+		Source:            nullText(result.Source),
+		ReleaseGroup:      nullText(result.ReleaseGroup),
+		SceneName:         nullText(result.SceneName),
+		ClassifiedTitle:   nullText(result.Title),
+		ClassifiedYear:    nullInt4(result.Year),
+		ClassifiedSeason:  nullInt4(result.Season),
+		ClassifiedEpisode: nullInt4(result.Episode),
 	}); err != nil {
 		log.ErrorContext(ctx, "classify torrent failed", "infohash", infohashHex, "err", err)
 		return
@@ -191,12 +195,11 @@ func nullText(s string) pgtype.Text {
 	return pgtype.Text{String: s, Valid: true}
 }
 
-func isVideoExt(ext string) bool {
-	switch ext {
-	case ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".ts", ".m2ts", ".vob", ".flv", ".webm":
-		return true
+func nullInt4(n int) pgtype.Int4 {
+	if n == 0 {
+		return pgtype.Int4{}
 	}
-	return false
+	return pgtype.Int4{Int32: int32(n), Valid: true}
 }
 
 func sanitizePath(path string) string {
