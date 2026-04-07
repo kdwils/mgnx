@@ -62,6 +62,7 @@ func initConfig() {
 	viper.SetDefault("indexer.min_size", 50*1024*1024)
 	viper.SetDefault("indexer.max_size", 150*1024*1024*1024)
 	viper.SetDefault("indexer.allowed_extensions", []string{})
+	viper.SetDefault("indexer.enable_extension_filter", false)
 
 	viper.SetDefault("dht.bootstrap_nodes", []string{})
 	viper.SetDefault("dht.nodes_path", "./dht_nodes.dat")
