@@ -52,7 +52,7 @@ func initConfig() {
 		viper.SetConfigType("yaml")
 	}
 
-	viper.SetDefault("database.uri", "")
+	viper.SetDefault("database.url", "")
 
 	viper.SetDefault("indexer.workers", 2)
 	viper.SetDefault("indexer.request_timeout", 6*time.Second)
