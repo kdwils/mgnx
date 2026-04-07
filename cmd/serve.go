@@ -61,7 +61,8 @@ var serveCmd = &cobra.Command{
 				Dialer:      &net.Dialer{KeepAlive: -1},
 				DialTimeout: 3 * time.Second,
 			},
-			metadata.WithMaxMessageSize(cfg.DHT.MaxMessageSize),
+			cfg.DHT.MaxMessageSize,
+			cfg.DHT.MaxMetadataSize,
 		)
 		idxWorker := indexer.New(crawler, metaClient, queries, cfg.Indexer)
 		go idxWorker.Run(ctx)

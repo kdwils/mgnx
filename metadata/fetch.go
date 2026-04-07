@@ -44,33 +44,20 @@ func (d TimeoutDialer) DialContext(ctx context.Context, network, address string)
 // Client is the production Fetcher. It holds a Dialer so the transport layer
 // can be substituted in tests.
 type Client struct {
-	dialer     Dialer
-	maxMsgSize int
-}
-
-type ClientOption func(*Client)
-
-func WithMaxMessageSize(size int) ClientOption {
-	return func(c *Client) {
-		if size > 0 {
-			c.maxMsgSize = size
-		}
-	}
+	dialer          Dialer
+	maxMsgSize      int
+	maxMetadataSize int
 }
 
 // NewClient creates a Client using the provided Dialer.
-func NewClient(dialer Dialer, opts ...ClientOption) *Client {
-	c := &Client{
-		dialer:     dialer,
-		maxMsgSize: 16 * 1024 * 1024, // default 16MB
+// maxMsgSize and maxMetadataSize should be set from config (e.g., cfg.DHT from viper).
+func NewClient(dialer Dialer, maxMsgSize, maxMetadataSize int) *Client {
+	return &Client{
+		dialer:          dialer,
+		maxMsgSize:      maxMsgSize,
+		maxMetadataSize: maxMetadataSize,
 	}
-	for _, opt := range opts {
-		opt(c)
-	}
-	return c
 }
-
-const MAX_SIZE = 10 * 1024 * 1024
 
 type FileInfo struct {
 	Path string
@@ -173,7 +160,7 @@ func (c *Client) Fetch(ctx context.Context, infohash [20]byte, addr net.TCPAddr)
 	if peerUTMetadataID == 0 {
 		return nil, errors.New("peer does not support ut_metadata")
 	}
-	if totalSize <= 0 || totalSize > MAX_SIZE {
+	if totalSize <= 0 || totalSize > c.maxMetadataSize {
 		return nil, fmt.Errorf("invalid metadata size: %d", totalSize)
 	}
 
