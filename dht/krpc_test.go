@@ -98,9 +98,9 @@ func TestDecodePeers(t *testing.T) {
 		addrs, err := DecodePeers([]string{EncodePeer(ip, port)})
 		require.NoError(t, err)
 		require.Len(t, addrs, 1)
-		udp := addrs[0].(*net.UDPAddr)
-		assert.Equal(t, ip, udp.IP)
-		assert.Equal(t, port, udp.Port)
+		tcp := addrs[0].(*net.TCPAddr)
+		assert.Equal(t, ip, tcp.IP)
+		assert.Equal(t, port, tcp.Port)
 	})
 
 	t.Run("returns error for wrong record length", func(t *testing.T) {

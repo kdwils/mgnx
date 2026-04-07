@@ -70,13 +70,13 @@ func (mr *MockCrawlerMockRecorder) Start(ctx any) *gomock.Call {
 }
 
 // Stop mocks base method.
-func (m *MockCrawler) Stop() {
+func (m *MockCrawler) Stop(ctx context.Context) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "Stop")
+	m.ctrl.Call(m, "Stop", ctx)
 }
 
 // Stop indicates an expected call of Stop.
-func (mr *MockCrawlerMockRecorder) Stop() *gomock.Call {
+func (mr *MockCrawlerMockRecorder) Stop(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Stop", reflect.TypeOf((*MockCrawler)(nil).Stop))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Stop", reflect.TypeOf((*MockCrawler)(nil).Stop), ctx)
 }

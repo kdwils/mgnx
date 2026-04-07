@@ -11,46 +11,56 @@ type Config struct {
 	Database Database `mapstructure:"database"`
 	Server   Server   `mapstructure:"server"`
 	DHT      DHT      `mapstructure:"dht"`
+	Crawler  Crawler  `mapstructure:"crawler"`
 	Indexer  Indexer  `mapstructure:"indexer"`
 	Scrape   Scrape   `mapstructure:"scrape"`
 }
 
 type DHT struct {
 	NodeID              string        `mapstructure:"node_id"`
-	Port                int           `mapstructure:"port"`                  // default 6881
-	BootstrapNodes      []string      `mapstructure:"bootstrap_nodes"`       // override defaults
-	RateLimit           float64       `mapstructure:"rate_limit"`            // queries/sec, default 25
-	RateBurst           int           `mapstructure:"rate_burst"`            // default 25
-	Workers             int           `mapstructure:"workers"`               // query handler goroutines, default 4
-	BEP51Workers        int           `mapstructure:"bep51_workers"`         // default 2
-	DiscoveryBuffer     int           `mapstructure:"discovery_buffer"`      // channel size, default 10000
-	NodesPath           string        `mapstructure:"nodes_path"`            // default $HOME/.mgnx/dht_nodes.dat
-	GoodNodeWindow      time.Duration `mapstructure:"good_node_window"`      // default 15m
-	BadFailureThreshold int           `mapstructure:"bad_failure_threshold"` // default 2
-	BucketSize          int           `mapstructure:"bucket_size"`           // default 8 (BEP-05 k)
-	StaleThreshold      time.Duration `mapstructure:"stale_threshold"`       // default 15m
-	TransactionTimeout  time.Duration `mapstructure:"transaction_timeout"`   // default 10s
-	TokenRotation       time.Duration `mapstructure:"token_rotation"`        // default 5m
+	Port                int           `mapstructure:"port"`
+	BootstrapNodes      []string      `mapstructure:"bootstrap_nodes"`
+	DiscoveryBuffer     int           `mapstructure:"discovery_buffer"`
+	NodesPath           string        `mapstructure:"nodes_path"`
+	GoodNodeWindow      time.Duration `mapstructure:"good_node_window"`
+	BadFailureThreshold int           `mapstructure:"bad_failure_threshold"`
+	BucketSize          int           `mapstructure:"bucket_size"`
+	StaleThreshold      time.Duration `mapstructure:"stale_threshold"`
+	TransactionTimeout  time.Duration `mapstructure:"transaction_timeout"`
+	TokenRotation       time.Duration `mapstructure:"token_rotation"`
+	Alpha               int           `mapstructure:"alpha"`
+	MaxIterations       int           `mapstructure:"max_iterations"`
+	Workers             int           `mapstructure:"workers"`
+	RateLimit           float64       `mapstructure:"rate_limit"`
+	RateBurst           int           `mapstructure:"rate_burst"`
+}
+
+type Crawler struct {
+	Workers int `mapstructure:"crawlers"`
 }
 
 type Indexer struct {
 	Workers           int           `mapstructure:"workers"`
-	PeerTimeout       time.Duration `mapstructure:"peer_timeout"` // timeout per peer, default 5s
-	PeerRetries       int           `mapstructure:"peer_retries"` // max peers to try per infohash, default 3
+	RateLimit         float64       `mapstructure:"rate_limit"`
+	RateBurst         int           `mapstructure:"rate_burst"`
+	RequestTimeout    time.Duration `mapstructure:"request_timeout"`
+	MaxPeers          int           `mapstructure:"max_peers"`
 	AllowedExtensions []string      `mapstructure:"allowed_extensions"`
-	MinSize           int64         `mapstructure:"min_size"` // minimum torrent size in bytes, default 50MB
-	MaxSize           int64         `mapstructure:"max_size"` // maximum torrent size in bytes, default 150GB
+	MinSize           int64         `mapstructure:"min_size"`
+	MaxSize           int64         `mapstructure:"max_size"`
 }
 
 type Scrape struct {
-	Workers       int           `mapstructure:"workers"`        // concurrent tracker connections, default 5
-	BatchSize     int           `mapstructure:"batch_size"`     // infohashes per scrape request, default 74
-	PollInterval  time.Duration `mapstructure:"poll_interval"`  // how often to check for due scrapes, default 30s
-	DialTimeout   time.Duration `mapstructure:"dial_timeout"`   // UDP dial timeout, default 5s
-	ReadTimeout   time.Duration `mapstructure:"read_timeout"`   // UDP read deadline, default 10s
-	DeadAfter     time.Duration `mapstructure:"dead_after"`     // mark dead after seeders=0 this long, default 90d
-	PruneInterval time.Duration `mapstructure:"prune_interval"` // how often to prune scrape_history, default 24h
-	Trackers      []string      `mapstructure:"trackers"`       // UDP tracker URLs
+	Workers       int           `mapstructure:"workers"`
+	RateLimit     float64       `mapstructure:"rate_limit"`
+	RateBurst     int           `mapstructure:"rate_burst"`
+	BatchSize     int           `mapstructure:"batch_size"`
+	PollInterval  time.Duration `mapstructure:"poll_interval"`
+	DialTimeout   time.Duration `mapstructure:"dial_timeout"`
+	ReadTimeout   time.Duration `mapstructure:"read_timeout"`
+	DeadAfter     time.Duration `mapstructure:"dead_after"`
+	PruneInterval time.Duration `mapstructure:"prune_interval"`
+	Trackers      []string      `mapstructure:"trackers"`
 }
 
 type Database struct {

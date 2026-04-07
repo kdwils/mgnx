@@ -54,19 +54,22 @@ func initConfig() {
 
 	viper.SetDefault("database.uri", "")
 
-	viper.SetDefault("indexer.peer_retries", 3)
-	viper.SetDefault("indexer.peer_timeout", 5*time.Second)
-	viper.SetDefault("indexer.min_size", 50*1024*1024)       // 50 MB
-	viper.SetDefault("indexer.max_size", 150*1024*1024*1024) // 150 GB
+	viper.SetDefault("indexer.workers", 2)
+	viper.SetDefault("indexer.request_timeout", 6*time.Second)
+	viper.SetDefault("indexer.max_peers", 100)
+	viper.SetDefault("indexer.rate_limit", 2.0)
+	viper.SetDefault("indexer.rate_burst", 4)
+	viper.SetDefault("indexer.min_size", 50*1024*1024)
+	viper.SetDefault("indexer.max_size", 150*1024*1024*1024)
 	viper.SetDefault("indexer.allowed_extensions", []string{})
 
 	viper.SetDefault("dht.bootstrap_nodes", []string{})
+	viper.SetDefault("dht.nodes_path", "./dht_nodes.dat")
 	viper.SetDefault("dht.node_id", "")
 	viper.SetDefault("dht.port", 6881)
+	viper.SetDefault("dht.workers", 4)
 	viper.SetDefault("dht.rate_limit", 25.0)
 	viper.SetDefault("dht.rate_burst", 25)
-	viper.SetDefault("dht.workers", 4)
-	viper.SetDefault("dht.bep51_workers", 2)
 	viper.SetDefault("dht.discovery_buffer", 10000)
 	viper.SetDefault("dht.good_node_window", 15*time.Minute)
 	viper.SetDefault("dht.bad_failure_threshold", 2)
@@ -74,8 +77,14 @@ func initConfig() {
 	viper.SetDefault("dht.stale_threshold", 15*time.Minute)
 	viper.SetDefault("dht.transaction_timeout", 10*time.Second)
 	viper.SetDefault("dht.token_rotation", 5*time.Minute)
+	viper.SetDefault("dht.alpha", 3)
+	viper.SetDefault("dht.max_iterations", 4)
+
+	viper.SetDefault("crawler.crawlers", 2)
 
 	viper.SetDefault("scrape.workers", 5)
+	viper.SetDefault("scrape.rate_limit", 2.0)
+	viper.SetDefault("scrape.rate_burst", 4)
 	viper.SetDefault("scrape.batch_size", 74)
 	viper.SetDefault("scrape.poll_interval", 30*time.Second)
 	viper.SetDefault("scrape.dial_timeout", 5*time.Second)

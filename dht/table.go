@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kdwils/mgnx/config"
+	"github.com/kdwils/mgnx/logger"
 )
 
 // Pinger is used by the routing table to perform async ping-before-evict.
@@ -205,7 +206,8 @@ func (rt *RoutingTable) StaleBuckets() []*Bucket {
 
 // Save writes all good nodes to cfg.NodesPath as consecutive 26-byte compact
 // records using an atomic write (temp file + rename).
-func (rt *RoutingTable) Save() error {
+func (rt *RoutingTable) Save(ctx context.Context) error {
+	logger := logger.FromContext(ctx)
 	path := rt.cfg.NodesPath
 	// TODO: make this cleaner, we should have a dedicated package for file io + dep injection
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -222,7 +224,7 @@ func (rt *RoutingTable) Save() error {
 	var goodNodes []*Node
 	for _, b := range rt.buckets {
 		for _, n := range b.Nodes {
-			if n.IsGood(rt.cfg.GoodNodeWindow) {
+			if !n.IsBad(rt.cfg.BadFailureThreshold) {
 				goodNodes = append(goodNodes, n)
 			}
 		}
@@ -239,7 +241,11 @@ func (rt *RoutingTable) Save() error {
 		os.Remove(tmpPath)
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	logger.Debug("routing table saved", "nodes", len(goodNodes), "path", path)
+	return nil
 }
 
 // Load reads nodes from cfg.NodesPath and inserts them into the routing table.

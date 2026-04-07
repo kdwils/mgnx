@@ -256,7 +256,7 @@ func TestRoutingTable_SaveLoad(t *testing.T) {
 		rt.Insert(n1)
 		rt.Insert(n2)
 
-		require.NoError(t, rt.Save())
+		require.NoError(t, rt.Save(t.Context()))
 
 		rt2 := NewRoutingTable(ourID, cfg, nil)
 		require.NoError(t, rt2.Load())

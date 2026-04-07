@@ -116,9 +116,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 // Stop closes the UDP socket (causing the read loop to exit) and saves the
 // routing table to disk.
-func (s *Server) Stop() {
+func (s *Server) Stop(ctx context.Context) {
 	s.conn.Close()
-	s.table.Save() //nolint:errcheck — best-effort on shutdown
+	s.table.Save(ctx) //nolint:errcheck — best-effort on shutdown
 }
 
 // Infohashes returns the channel of discovereded infohash events.

@@ -97,6 +97,7 @@ func EncodePeer(ip net.IP, port int) string {
 }
 
 // DecodePeers parses a list of 6-byte compact peer strings into net.Addr values.
+// Per BEP-05, these are TCP peer addresses for BitTorrent protocol, not DHT UDP nodes.
 // Returns an error if any entry is not exactly 6 bytes.
 func DecodePeers(values []string) ([]net.Addr, error) {
 	addrs := make([]net.Addr, 0, len(values))
@@ -107,7 +108,7 @@ func DecodePeers(values []string) ([]net.Addr, error) {
 		ip := make(net.IP, 4)
 		copy(ip, v[:4])
 		port := int(binary.BigEndian.Uint16([]byte(v[4:6])))
-		addrs = append(addrs, &net.UDPAddr{IP: ip, Port: port})
+		addrs = append(addrs, &net.TCPAddr{IP: ip, Port: port})
 	}
 	return addrs, nil
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/kdwils/mgnx/dht"
 	"github.com/kdwils/mgnx/logger"
 	"github.com/kdwils/mgnx/metadata"
+	"golang.org/x/time/rate"
 )
 
 type Worker struct {
@@ -28,7 +29,8 @@ type Worker struct {
 	cfg         config.Indexer
 	allowedExts map[string]struct{}
 	peerTimeout time.Duration
-	peerRetries int
+	maxPeers    int
+	rateLimiter *rate.Limiter
 	minSize     int64
 	maxSize     int64
 }
@@ -44,8 +46,9 @@ func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg
 		queries:     queries,
 		cfg:         cfg,
 		allowedExts: allowed,
-		peerTimeout: cfg.PeerTimeout,
-		peerRetries: cfg.PeerRetries,
+		peerTimeout: cfg.RequestTimeout,
+		maxPeers:    cfg.MaxPeers,
+		rateLimiter: rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateBurst),
 		minSize:     cfg.MinSize,
 		maxSize:     cfg.MaxSize,
 	}
@@ -89,13 +92,20 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		return
 	}
 
-	retries := w.peerRetries
+	retries := w.maxPeers
 	if len(ev.Peers) < retries {
 		retries = len(ev.Peers)
 	}
 
 	var info *metadata.TorrentInfo
 	for i := 0; i < retries; i++ {
+		// Rate limit between peer attempts (after first peer)
+		if i > 0 {
+			if err := w.rateLimiter.Wait(ctx); err != nil {
+				break
+			}
+		}
+
 		peer := ev.Peers[i]
 		addr := net.TCPAddr{IP: peer.SourceIP, Port: peer.Port}
 

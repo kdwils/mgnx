@@ -18,8 +18,8 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-// checkBEP42 verifies that id satisfies the BEP-42 invariant for the given IPv4.
-func checkBEP42(t *testing.T, ip net.IP, id NodeID) {
+// checkIPBasedNodeID verifies that id satisfies the IP-based invariant for the given IPv4.
+func checkIPBasedNodeID(t *testing.T, ip net.IP, id NodeID) {
 	t.Helper()
 	ip4 := ip.To4()
 	require.NotNil(t, ip4)
@@ -35,41 +35,41 @@ func checkBEP42(t *testing.T, ip net.IP, id NodeID) {
 	assert.Equal(t, byte(crc>>8)&0xf8, id[2]&0xf8, "top 5 bits of id[2] must match crc bits 15..11")
 }
 
-func TestDeriveBEP42NodeID(t *testing.T) {
+func TestDeriveNodeIDFromIP(t *testing.T) {
 	t.Run("satisfies crc32c invariant", func(t *testing.T) {
 		ip := net.IP{1, 2, 3, 4}
-		id, err := DeriveBEP42NodeID(ip)
+		id, err := DeriveNodeIDFromIP(ip)
 		require.NoError(t, err)
-		checkBEP42(t, ip, id)
+		checkIPBasedNodeID(t, ip, id)
 	})
 
 	t.Run("last 3 bits of id[19] equal r in seed", func(t *testing.T) {
 		ip := net.IP{203, 0, 113, 1}
-		id, err := DeriveBEP42NodeID(ip)
+		id, err := DeriveNodeIDFromIP(ip)
 		require.NoError(t, err)
-		// checkBEP42 derives r from id[19]&0x07 and verifies the full CRC round-trip.
-		checkBEP42(t, ip, id)
+		// checkIPBasedNodeID derives r from id[19]&0x07 and verifies the full CRC round-trip.
+		checkIPBasedNodeID(t, ip, id)
 	})
 
 	t.Run("two calls produce different random middle bytes", func(t *testing.T) {
 		ip := net.IP{10, 0, 0, 1}
-		id1, err := DeriveBEP42NodeID(ip)
+		id1, err := DeriveNodeIDFromIP(ip)
 		require.NoError(t, err)
-		id2, err := DeriveBEP42NodeID(ip)
+		id2, err := DeriveNodeIDFromIP(ip)
 		require.NoError(t, err)
-		checkBEP42(t, ip, id1)
-		checkBEP42(t, ip, id2)
+		checkIPBasedNodeID(t, ip, id1)
+		checkIPBasedNodeID(t, ip, id2)
 		assert.NotEqual(t, id1, id2)
 	})
 
 	t.Run("different IPs produce different CRC prefix", func(t *testing.T) {
-		id1, _ := DeriveBEP42NodeID(net.IP{1, 2, 3, 4})
-		id2, _ := DeriveBEP42NodeID(net.IP{5, 6, 7, 8})
+		id1, _ := DeriveNodeIDFromIP(net.IP{1, 2, 3, 4})
+		id2, _ := DeriveNodeIDFromIP(net.IP{5, 6, 7, 8})
 		assert.NotEqual(t, [2]byte{id1[0], id1[1]}, [2]byte{id2[0], id2[1]})
 	})
 
 	t.Run("non-IPv4 returns zero ID without error", func(t *testing.T) {
-		id, err := DeriveBEP42NodeID(net.ParseIP("::1"))
+		id, err := DeriveNodeIDFromIP(net.ParseIP("::1"))
 		require.NoError(t, err)
 		assert.Equal(t, NodeID{}, id)
 	})
@@ -116,7 +116,7 @@ func serverWithMockResolver(t *testing.T, resolver Resolver) *Server {
 	t.Helper()
 	s, err := NewServer(testServerCfg(t))
 	require.NoError(t, err)
-	t.Cleanup(s.Stop)
+	t.Cleanup(func() { s.Stop(t.Context()) })
 	s.Resolver = resolver
 	return s
 }
@@ -181,7 +181,7 @@ func TestServer_Bootstrap_noAddrs(t *testing.T) {
 
 	s, err := NewServer(testServerCfg(t))
 	require.NoError(t, err)
-	defer s.Stop()
+	defer s.Stop(t.Context())
 	require.NoError(t, s.Start(ctx))
 
 	assert.NoError(t, s.Bootstrap(ctx, nil))
@@ -194,12 +194,12 @@ func TestServer_Bootstrap_seedNode(t *testing.T) {
 
 		seed, err := NewServer(testServerCfg(t))
 		require.NoError(t, err)
-		defer seed.Stop()
+		defer seed.Stop(t.Context())
 		require.NoError(t, seed.Start(ctx))
 
 		client, err := NewServer(testServerCfg(t))
 		require.NoError(t, err)
-		defer client.Stop()
+		defer client.Stop(t.Context())
 		require.NoError(t, client.Start(ctx))
 
 		seedAddr := fmt.Sprintf("127.0.0.1:%d", seed.conn.LocalAddr().(*net.UDPAddr).Port)
@@ -211,7 +211,7 @@ func TestServer_Bootstrap_seedNode(t *testing.T) {
 	})
 }
 
-func TestServer_Bootstrap_bep42(t *testing.T) {
+func TestServer_Bootstrap_ipBasedNodeID(t *testing.T) {
 	t.Run("node ID is updated when response carries external IP", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -224,7 +224,7 @@ func TestServer_Bootstrap_bep42(t *testing.T) {
 		cfg.NodeID = "" // force random ID so BEP-42 derivation runs
 		client, err := NewServer(cfg)
 		require.NoError(t, err)
-		defer client.Stop()
+		defer client.Stop(t.Context())
 		require.NoError(t, client.Start(ctx))
 
 		originalID := client.ourID
@@ -232,7 +232,7 @@ func TestServer_Bootstrap_bep42(t *testing.T) {
 		require.NoError(t, client.Bootstrap(ctx, []string{seedAddr}))
 
 		assert.NotEqual(t, originalID, client.ourID)
-		checkBEP42(t, externalIP, client.ourID)
+		checkIPBasedNodeID(t, externalIP, client.ourID)
 	})
 }
 
