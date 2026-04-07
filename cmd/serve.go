@@ -34,7 +34,7 @@ var serveCmd = &cobra.Command{
 
 		ctx := logger.WithContext(cmd.Context(), l)
 
-		pool, err := db.Connect(ctx, cfg.Database.URI)
+		pool, err := db.Connect(ctx, cfg.Database.URL)
 		if err != nil {
 			return fmt.Errorf("db connect: %w", err)
 		}

@@ -251,8 +251,8 @@ func (s *Server) queryHandlerLoop(ctx context.Context) {
 	}
 }
 
-// processQuery dispatches a single inbound query to the appropriate handler
-// and adds the querying node to the routing table.
+// processQuery dispatches a single inbound KRPC query (BEP-05 §KRPC Protocol)
+// to the appropriate handler and adds the querying node to the routing table.
 func (s *Server) processQuery(ctx context.Context, in inMsg) {
 	if in.msg.A != nil {
 		if id, err := ParseNodeID(in.msg.A.ID); err == nil {
@@ -277,10 +277,13 @@ func (s *Server) processQuery(ctx context.Context, in inMsg) {
 	}
 }
 
+// handlePing responds to a BEP-05 ping query (BEP-05 §ping).
 func (s *Server) handlePing(addr *net.UDPAddr, msg *Msg) {
 	s.respond(addr, msg.T, &Return{ID: string(s.ourID[:])})
 }
 
+// handleFindNode responds to a BEP-05 find_node query (BEP-05 §find node)
+// by returning the k-closest nodes to the requested target.
 func (s *Server) handleFindNode(addr *net.UDPAddr, msg *Msg) {
 	if msg.A == nil {
 		return
@@ -299,6 +302,9 @@ func (s *Server) handleFindNode(addr *net.UDPAddr, msg *Msg) {
 	})
 }
 
+// handleGetPeers responds to a BEP-05 get_peers query (BEP-05 §get peers).
+// Since this node is a crawler without a peer store, it always returns the
+// k-closest nodes ("nodes" path) along with a token for future announce_peer.
 func (s *Server) handleGetPeers(addr *net.UDPAddr, msg *Msg) {
 	if msg.A == nil {
 		return
@@ -315,6 +321,8 @@ func (s *Server) handleGetPeers(addr *net.UDPAddr, msg *Msg) {
 	})
 }
 
+// handleAnnouncePeer handles a BEP-05 announce_peer query (BEP-05 §announce peer).
+// The announcing node's address is emitted as a DiscoveredPeers event for the indexer.
 func (s *Server) handleAnnouncePeer(ctx context.Context, addr *net.UDPAddr, msg *Msg) {
 	if msg.A == nil {
 		return
@@ -346,6 +354,9 @@ func (s *Server) handleAnnouncePeer(ctx context.Context, addr *net.UDPAddr, msg 
 	s.respond(addr, msg.T, &Return{ID: string(s.ourID[:])})
 }
 
+// handleSampleInfohashes handles a BEP-51 sample_infohashes query (BEP-51 §3).
+// As a crawler we hold no stored samples; we respond with closest nodes so the
+// querier can continue its traversal.
 func (s *Server) handleSampleInfohashes(addr *net.UDPAddr, msg *Msg) {
 	if msg.A == nil {
 		return

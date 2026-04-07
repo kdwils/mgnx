@@ -241,8 +241,9 @@ func (s *Server) resolveBootstrapAddrs(ctx context.Context, addrs []string) []*n
 	return result
 }
 
-// DeriveNodeIDFromIP generates an IP-based node ID for the given IPv4
-// address. See https://www.bittorrent.org/beps/bep_0042.html
+// DeriveNodeIDFromIP generates a BEP-42 compliant node ID for the given IPv4
+// address. Implements BEP-42 (DHT Security Extension) §Node ID.
+// See https://www.bittorrent.org/beps/bep_0042.html
 //
 // Derivation (IPv4):
 //
@@ -286,8 +287,9 @@ func DeriveNodeIDFromIP(ip net.IP) (NodeID, error) {
 	return id, nil
 }
 
-// ValidateNodeIDForIP verifies that id satisfies the IP-based node ID invariant for the
-// given IPv4 address. Returns nil if valid, or an error describing the failure.
+// ValidateNodeIDForIP verifies that id satisfies the BEP-42 node ID invariant
+// for the given IPv4 address. Implements BEP-42 §Node ID verification.
+// Returns nil if valid, or an error describing the failure.
 func ValidateNodeIDForIP(ip net.IP, id NodeID) error {
 	ip4 := ip.To4()
 	if ip4 == nil {

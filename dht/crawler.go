@@ -408,7 +408,7 @@ func (c *crawler) discoverPeers(ctx context.Context, h [20]byte, initialNode *No
 			return
 		}
 
-		responses := c.queryParallel(ctx, toQuery, target, h)
+		responses := c.queryParallel(ctx, toQuery, h)
 
 		alpha := c.cfg.Alpha
 		if len(toQuery) < alpha {
@@ -462,7 +462,9 @@ func (c *crawler) sortByDistance(nodes map[NodeID]*Node, target NodeID) []*Node 
 	return entries
 }
 
-func (c *crawler) queryParallel(ctx context.Context, nodes []*Node, target NodeID, h [20]byte) []*Msg {
+// queryParallel sends BEP-05 get_peers queries to up to Alpha nodes concurrently
+// (BEP-05 §2 alpha-parallel lookup) and returns all successful responses.
+func (c *crawler) queryParallel(ctx context.Context, nodes []*Node, h [20]byte) []*Msg {
 	alpha := c.cfg.Alpha
 	if len(nodes) < alpha {
 		alpha = len(nodes)
@@ -487,6 +489,8 @@ func (c *crawler) queryParallel(ctx context.Context, nodes []*Node, target NodeI
 	return results
 }
 
+// queryNodeAsync sends a single BEP-05 get_peers query (BEP-05 §4.2) to node
+// and forwards a successful response to respCh.
 func (c *crawler) queryNodeAsync(ctx context.Context, node *Node, h [20]byte, respCh chan<- *Msg, wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -506,6 +510,9 @@ func (c *crawler) queryNodeAsync(ctx context.Context, node *Node, h [20]byte, re
 	}
 }
 
+// processResponses inspects get_peers responses per BEP-05 §4.2: if any
+// response carries peer Values, extract them and signal discovery; otherwise
+// collect the returned Nodes for the next iteration of the shortlist.
 func (c *crawler) processResponses(responses []*Msg, h [20]byte) (bool, map[NodeID]*Node) {
 	var newNodes map[NodeID]*Node
 
@@ -533,6 +540,9 @@ func (c *crawler) processResponses(responses []*Msg, h [20]byte) (bool, map[Node
 	return false, newNodes
 }
 
+// extractPeers decodes the compact 6-byte peer list from a BEP-05 get_peers
+// response (BEP-05 §4.2 "values" field). Each entry is a TCP address for the
+// BitTorrent peer protocol — not a DHT UDP node address.
 func (c *crawler) extractPeers(resp *Msg, h [20]byte) []PeerAddr {
 	if len(resp.R.Values) == 0 {
 		return nil
@@ -576,6 +586,9 @@ func (c *crawler) mergeNodes(shortlist map[NodeID]*Node, newNodes map[NodeID]*No
 	return result
 }
 
+// extractNodes decodes the compact 26-byte node list from a BEP-05 get_peers
+// or BEP-51 sample_infohashes response ("nodes" field, BEP-05 §4.2) and
+// inserts each node into the routing table.
 func (c *crawler) extractNodes(resp *Msg) map[NodeID]*Node {
 	if len(resp.R.Nodes) == 0 {
 		return nil
@@ -594,8 +607,9 @@ func (c *crawler) extractNodes(resp *Msg) map[NodeID]*Node {
 	return result
 }
 
-// processNodes decodes compact node records from a BEP-51 response, inserts
-// them into the routing table, and enqueues them for future traversal.
+// processNodes decodes compact node records from a BEP-51 sample_infohashes
+// response ("nodes" field, BEP-51 §4), inserts them into the routing table,
+// and enqueues them onto the crawlerWorker's traversal priority queue.
 func (c *crawler) processNodes(encoded string, target NodeID, pq *traversalHeap) {
 	nodes, err := DecodeNodes(encoded)
 	if err != nil {

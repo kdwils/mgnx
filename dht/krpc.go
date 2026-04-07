@@ -39,11 +39,12 @@ type Return struct {
 	Num      int      `bencode:"num,omitempty"`
 }
 
+// KRPC error codes per BEP-05 §KRPC Protocol and BEP-51 §3.
 const (
 	ErrGeneric  = 201
 	ErrServer   = 202
 	ErrProtocol = 203
-	ErrMethod   = 204
+	ErrMethod   = 204 // "Method Unknown" — returned by nodes that don't implement a query (e.g. sample_infohashes per BEP-51 §3)
 )
 
 // isMethodUnknown reports whether msg is a KRPC 204 "method unknown" error.
@@ -57,7 +58,8 @@ func isMethodUnknown(msg *Msg) bool {
 }
 
 // EncodeNodes encodes a slice of nodes as a concatenated sequence of 26-byte
-// compact node records. Non-IPv4 nodes are silently skipped.
+// compact node records per BEP-05 §Compact Node Info.
+// Non-IPv4 nodes are silently skipped.
 // Format per node: [20]byte ID | [4]byte IPv4 big-endian | [2]byte port big-endian.
 func EncodeNodes(nodes []*Node) string {
 	buf := make([]byte, 0, len(nodes)*26)
@@ -75,7 +77,8 @@ func EncodeNodes(nodes []*Node) string {
 	return string(buf)
 }
 
-// DecodeNodes parses a compact node string into a slice of nodes.
+// DecodeNodes parses a compact node string into a slice of nodes per
+// BEP-05 §Compact Node Info.
 // Returns an error if the length is not a multiple of 26.
 func DecodeNodes(s string) ([]*Node, error) {
 	if len(s)%26 != 0 {
@@ -97,7 +100,8 @@ func DecodeNodes(s string) ([]*Node, error) {
 	return nodes, nil
 }
 
-// EncodePeer encodes a single peer as a 6-byte compact peer record.
+// EncodePeer encodes a single peer as a 6-byte compact peer record per
+// BEP-05 §Compact Peer Info.
 // Format: [4]byte IPv4 big-endian | [2]byte port big-endian.
 func EncodePeer(ip net.IP, port int) string {
 	var buf [6]byte

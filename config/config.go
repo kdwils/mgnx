@@ -64,7 +64,7 @@ type Scrape struct {
 }
 
 type Database struct {
-	URI string `mapstructure:"uri"`
+	URL string `mapstructure:"url"`
 }
 
 type Server struct {
