@@ -46,12 +46,12 @@ func TestTransaction_deliver(t *testing.T) {
 }
 
 func TestTxnManager_New(t *testing.T) {
-	t.Run("returns transaction with 2-byte ID", func(t *testing.T) {
+	t.Run("returns transaction with 4-byte ID", func(t *testing.T) {
 		m, _ := testTxnManager(t, 10*time.Second)
 		addr := &net.UDPAddr{IP: net.ParseIP("1.2.3.4"), Port: 6881}
 		txn := m.New(NodeID{}, addr)
 
-		assert.Len(t, txn.ID, 2)
+		assert.Len(t, txn.ID, 4)
 		assert.Equal(t, addr, txn.Addr)
 		assert.NotNil(t, txn.Response)
 	})
@@ -128,12 +128,13 @@ func TestTxnManager_sweeper(t *testing.T) {
 }
 
 func TestTxnKey(t *testing.T) {
-	t.Run("encodes 0 as two zero bytes", func(t *testing.T) {
-		assert.Equal(t, string([]byte{0x00, 0x00}), txnKey(0))
+	t.Run("encodes 0 as four zero bytes", func(t *testing.T) {
+		assert.Equal(t, string([]byte{0x00, 0x00, 0x00, 0x00}), txnKey(0))
 	})
 
 	t.Run("encodes big-endian correctly", func(t *testing.T) {
-		assert.Equal(t, string([]byte{0x01, 0x00}), txnKey(0x0100))
-		assert.Equal(t, string([]byte{0xFF, 0xFF}), txnKey(0xFFFF))
+		assert.Equal(t, string([]byte{0x00, 0x00, 0x01, 0x00}), txnKey(0x0100))
+		assert.Equal(t, string([]byte{0x00, 0x00, 0xFF, 0xFF}), txnKey(0xFFFF))
+		assert.Equal(t, string([]byte{0xFF, 0xFF, 0xFF, 0xFF}), txnKey(0xFFFFFFFF))
 	})
 }

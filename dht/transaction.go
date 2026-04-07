@@ -75,12 +75,12 @@ func (m *TxnManager) Start(ctx context.Context) {
 	m.cache.StartCleanup(ctx)
 }
 
-// New allocates a Transaction with a unique 2-byte ID, registers it in the
+// New allocates a Transaction with a unique 4-byte ID, registers it in the
 // map, and returns it. The caller is responsible for sending the query.
 func (m *TxnManager) New(nodeID NodeID, addr *net.UDPAddr) *Transaction {
 	for {
 		raw := m.counter.Add(1)
-		key := txnKey(uint16(raw & 0xFFFF))
+		key := txnKey(raw)
 
 		// Skip IDs that are currently in-flight (rare wrap-around case).
 		if _, ok := m.cache.Get(key); ok {
@@ -110,8 +110,9 @@ func (m *TxnManager) Complete(id string, msg *Msg) {
 	txn.deliver(msg)
 }
 
-// txnKey encodes a 16-bit counter as a raw 2-byte big-endian binary string,
-// matching the BEP-05 transaction ID format.
-func txnKey(id uint16) string {
-	return string([]byte{byte(id >> 8), byte(id)})
+// txnKey encodes a 32-bit counter as a raw 4-byte big-endian binary string.
+// 4 bytes (2^32 possible IDs) makes off-path response injection via ID
+// brute-force infeasible compared to the previous 2-byte scheme.
+func txnKey(id uint32) string {
+	return string([]byte{byte(id >> 24), byte(id >> 16), byte(id >> 8), byte(id)})
 }

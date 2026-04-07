@@ -601,6 +601,9 @@ func (c *crawler) extractNodes(resp *Msg) map[NodeID]*Node {
 
 	result := make(map[NodeID]*Node)
 	for _, n := range nodes {
+		if !isValidNodeID(n.Addr.IP, n.ID) {
+			continue
+		}
 		result[n.ID] = n
 		c.server.table.Insert(n)
 	}
@@ -616,6 +619,9 @@ func (c *crawler) processNodes(encoded string, target NodeID, pq *traversalHeap)
 		return
 	}
 	for _, n := range nodes {
+		if !isValidNodeID(n.Addr.IP, n.ID) {
+			continue
+		}
 		c.server.table.Insert(n)
 		heap.Push(pq, &traversalItem{
 			node:   n,

@@ -15,7 +15,12 @@ type Msg struct {
 	R  *Return  `bencode:"r,omitempty"`
 	E  []any    `bencode:"e,omitempty"`
 	V  string   `bencode:"v,omitempty"`
-	IP string   `bencode:"ip,omitempty"` // BEP-42: our external IP as seen by the responder (4 bytes IPv4)
+	IP string   `bencode:"ip,omitempty"`
+}
+
+type Error struct {
+	Code    int64  `bencode:"0"`
+	Message string `bencode:"1"`
 }
 
 // MsgArgs holds query arguments (union of fields across all query types).

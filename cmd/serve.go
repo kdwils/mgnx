@@ -15,8 +15,8 @@ import (
 	"github.com/kdwils/mgnx/logger"
 	"github.com/kdwils/mgnx/metadata"
 	"github.com/kdwils/mgnx/scrape"
-	"github.com/kdwils/mgnx/server"
 	"github.com/kdwils/mgnx/service"
+	"github.com/kdwils/mgnx/torznab"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -56,10 +56,14 @@ var serveCmd = &cobra.Command{
 		}
 		defer crawler.Stop(ctx)
 
-		metaClient := metadata.NewClient(metadata.TimeoutDialer{
-			Dialer:      &net.Dialer{KeepAlive: -1},
-			DialTimeout: 3 * time.Second,
-		})
+		metaClient := metadata.NewClient(
+			metadata.TimeoutDialer{
+				Dialer:      &net.Dialer{KeepAlive: -1},
+				DialTimeout: 3 * time.Second,
+			},
+			cfg.DHT.MaxMessageSize,
+			cfg.DHT.MaxMetadataSize,
+		)
 		idxWorker := indexer.New(crawler, metaClient, queries, cfg.Indexer)
 		go idxWorker.Run(ctx)
 
@@ -72,7 +76,7 @@ var serveCmd = &cobra.Command{
 		go scrapeWorker.Run(ctx)
 
 		svc := service.New(queries, cfg)
-		srv := server.New(cfg.Server.Port, l, svc)
+		srv := torznab.New(cfg.Server.Port, l, svc)
 		return srv.Serve(ctx)
 	},
 }

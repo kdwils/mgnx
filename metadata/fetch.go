@@ -44,15 +44,20 @@ func (d TimeoutDialer) DialContext(ctx context.Context, network, address string)
 // Client is the production Fetcher. It holds a Dialer so the transport layer
 // can be substituted in tests.
 type Client struct {
-	dialer Dialer
+	dialer          Dialer
+	maxMsgSize      int
+	maxMetadataSize int
 }
 
 // NewClient creates a Client using the provided Dialer.
-func NewClient(dialer Dialer) *Client {
-	return &Client{dialer: dialer}
+// maxMsgSize and maxMetadataSize should be set from config (e.g., cfg.DHT from viper).
+func NewClient(dialer Dialer, maxMsgSize, maxMetadataSize int) *Client {
+	return &Client{
+		dialer:          dialer,
+		maxMsgSize:      maxMsgSize,
+		maxMetadataSize: maxMetadataSize,
+	}
 }
-
-const MAX_SIZE = 10 * 1024 * 1024
 
 type FileInfo struct {
 	Path string
@@ -130,7 +135,7 @@ func (c *Client) Fetch(ctx context.Context, infohash [20]byte, addr net.TCPAddr)
 	var totalSize int
 
 	for {
-		msgType, payload, err := readMsg(rw.Reader)
+		msgType, payload, err := c.readMsg(rw.Reader)
 		if err != nil {
 			return nil, err
 		}
@@ -155,7 +160,7 @@ func (c *Client) Fetch(ctx context.Context, infohash [20]byte, addr net.TCPAddr)
 	if peerUTMetadataID == 0 {
 		return nil, errors.New("peer does not support ut_metadata")
 	}
-	if totalSize <= 0 || totalSize > MAX_SIZE {
+	if totalSize <= 0 || totalSize > c.maxMetadataSize {
 		return nil, fmt.Errorf("invalid metadata size: %d", totalSize)
 	}
 
@@ -177,7 +182,7 @@ func (c *Client) Fetch(ctx context.Context, infohash [20]byte, addr net.TCPAddr)
 		}
 
 		for {
-			msgType, payload, err := readMsg(rw.Reader)
+			msgType, payload, err := c.readMsg(rw.Reader)
 			if err != nil {
 				return nil, err
 			}
@@ -276,7 +281,7 @@ func sendMsg(w io.Writer, msgType byte, extID byte, payload []byte) error {
 	return nil
 }
 
-func readMsg(r io.Reader) (msgType byte, payload []byte, err error) {
+func (c *Client) readMsg(r io.Reader) (msgType byte, payload []byte, err error) {
 	var lenBuf [4]byte
 	if _, err = io.ReadFull(r, lenBuf[:]); err != nil {
 		return
@@ -284,6 +289,9 @@ func readMsg(r io.Reader) (msgType byte, payload []byte, err error) {
 	length := binary.BigEndian.Uint32(lenBuf[:])
 	if length == 0 {
 		return 0, nil, nil
+	}
+	if length > uint32(c.maxMsgSize) {
+		return 0, nil, fmt.Errorf("message too large: %d bytes", length)
 	}
 	body := make([]byte, length)
 	if _, err = io.ReadFull(r, body); err != nil {

@@ -22,8 +22,14 @@ func makeCrawler(t *testing.T) *crawler {
 }
 
 func makeDiscoveredNode(id byte, port int) *Node {
-	var nodeID NodeID
-	nodeID[0] = id
+	// Derive a BEP-42 compliant node ID for 127.0.0.1. BEP-42 constrains the
+	// top 21 bits and bottom 3 bits only; bytes 3–18 are free, so we write id
+	// there to give each test node a distinct identity.
+	nodeID, err := DeriveNodeIDFromIP(net.ParseIP("127.0.0.1"))
+	if err != nil {
+		panic(err)
+	}
+	nodeID[3] = id
 	return &Node{
 		ID:       nodeID,
 		Addr:     &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port},
@@ -547,8 +553,8 @@ func TestCrawler_processResponses(t *testing.T) {
 	t.Run("aggregates nodes from multiple responses", func(t *testing.T) {
 		c := makeCrawler(t)
 
-		node1 := &Node{ID: NodeID{0x10}, Addr: &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 2000}}
-		node2 := &Node{ID: NodeID{0x20}, Addr: &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 2001}}
+		node1 := makeDiscoveredNode(0x10, 2000)
+		node2 := makeDiscoveredNode(0x20, 2001)
 		encodedNodes1 := EncodeNodes([]*Node{node1})
 		encodedNodes2 := EncodeNodes([]*Node{node2})
 
