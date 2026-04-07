@@ -38,25 +38,45 @@ type tvInfo struct {
 }
 
 var (
-	// TV/Season patterns
-	seasonPackPattern    = regexp.MustCompile(`(?i)(?:\bS(?:eason)?[\s._-]?\d{1,2}\b|\bComplete\b)`)
-	episodePattern       = regexp.MustCompile(`(?i)\b(S\d{1,2}E\d{2,})|\b(\d{1,2}x\d{2,})`)
-	episodeNumberPattern = regexp.MustCompile(`(?i)\b(?:S(\d{1,2})(?:E|x)(\d{1,2})|(\d{1,2})x(\d{1,2})|Ep\.?(\d{1,2}))\b`)
-	seasonNumberPattern  = regexp.MustCompile(`(?i)\bS(?:eason)?[\s._-]?(\d{1,2})\b`)
+	// TV/Season patterns.
+	// seasonPackPattern requires an explicit S##/Season ## marker; "Complete" alone
+	// is not sufficient to avoid false-positives on non-TV names.
+	seasonPackPattern = regexp.MustCompile(`(?i)\bS(?:eason)?[\s._-]?\d{1,2}\b`)
 
-	// Movie: 4-digit year (1900–2039)
+	// episodePattern is used only for title-cut detection.
+	// The multi-episode suffix (?:[E-]\d{1,2})* handles S01E01E02 and S01E01-E03.
+	episodePattern = regexp.MustCompile(`(?i)\b(?:S\d{1,2}E\d{1,2}(?:[E-]\d{1,2})*|\d{1,2}x\d{2,})\b`)
+
+	// episodeNumberPattern extracts season/episode numbers.
+	// Handles S01E01, S01E01E02 (multi-episode), S01E01-E03 (range), 5x12, Ep.5
+	episodeNumberPattern = regexp.MustCompile(`(?i)\b(?:S(\d{1,2})E(\d{1,2})(?:[E-]\d{1,2})*|(\d{1,2})x(\d{2,})|Ep\.?(\d{1,2}))\b`)
+
+	seasonNumberPattern = regexp.MustCompile(`(?i)\bS(?:eason)?[\s._-]?(\d{1,2})\b`)
+
+	// Movie: 4-digit year (1900–2039).
 	reYear = regexp.MustCompile(`\b(19\d{2}|20[0-3]\d)\b`)
 
-	// Quality tags — all run against the normalized (dot-replaced) name
-	reResolution   = regexp.MustCompile(`(?i)\b(2160p|4K(?:\s*UHD)?|1080[pi]|720p|576p|480p)\b`)
-	reEncoding     = regexp.MustCompile(`(?i)\b(x265|x264|HEVC|AVC|AV1|XviD|DivX|H\.?265|H\.?264|H\.264)\b`)
-	reDynamicRange = regexp.MustCompile(`(?i)\b(HDR10\+|HDR10|Dolby[\. ]?Vision|DV|HDR|SDR)\b`)
-	reSource       = regexp.MustCompile(`(?i)\b(BluRay|Blu-Ray|BDRip|BDRemux|BDREMUX|REMUX|WEB-DL|WEBRip|WEBDL|WEB|HDTV|DVDRip|DVD|PDVD|HDCAM|PDTV)\b`)
+	// Quality tags — all run against the normalized (dot/underscore-replaced) name.
+	reResolution = regexp.MustCompile(`(?i)\b(2160p|4K(?:\s*UHD)?|1080[pi]|720p|576p|480p|360p)\b`)
 
-	// Release group: last hyphen-prefixed token at end of name (before any extension)
+	// Encoding: more-specific tokens first. Duplicate H\.264 entry removed
+	// (H\.?264 already covers both H264 and H.264). AV1 before AVC to avoid
+	// the AV prefix matching AVC first.
+	reEncoding = regexp.MustCompile(`(?i)\b(x265|x264|HEVC|AV1|AVC|XviD|DivX|H\.?265|H\.?264)\b`)
+
+	// Dynamic range: HDR10+ before HDR10 before HDR (prefix ordering).
+	// Dolby Vision handles both dot and space separators.
+	// DV with \b is safe — it only matches the standalone token.
+	reDynamicRange = regexp.MustCompile(`(?i)\b(HDR10\+|HDR10|Dolby[\. ]?Vision|DV|HDR|SDR)\b`)
+
+	// Source: more-specific variants before their shorter prefixes so the longer
+	// match wins (e.g. BDRemux before BluRay, WEB-DL/WEBRip before WEB).
+	reSource = regexp.MustCompile(`(?i)\b(BDRemux|BDREMUX|REMUX|BDRip|BluRay|Blu-Ray|WEB-DL|WEBDL|WEBRip|HDTV|DVDRip|DVD|PDVD|HDCAM|PDTV|WEB)\b`)
+
+	// Release group: last hyphen-prefixed token at end of name (before any extension).
 	reReleaseGroup = regexp.MustCompile(`-([A-Za-z0-9]{2,15})$`)
 
-	// Patterns used to find where the title ends in a normalized name
+	// Patterns used to find where the title ends in a normalized name.
 	titleCutPatterns = []*regexp.Regexp{
 		episodePattern, seasonNumberPattern, seasonPackPattern,
 		reYear, reResolution, reEncoding, reDynamicRange, reSource,
