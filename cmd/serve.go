@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"net"
+	"time"
 
 	"github.com/kdwils/mgnx/config"
 	"github.com/kdwils/mgnx/db"
@@ -33,7 +34,7 @@ var serveCmd = &cobra.Command{
 
 		ctx := logger.WithContext(cmd.Context(), l)
 
-		pool, err := db.Connect(ctx, cfg.Database.URI)
+		pool, err := db.Connect(ctx, cfg.Database.URL)
 		if err != nil {
 			return fmt.Errorf("db connect: %w", err)
 		}
@@ -45,7 +46,7 @@ var serveCmd = &cobra.Command{
 
 		queries := gen.New(pool)
 
-		crawler, err := dht.NewCrawler(cfg.DHT)
+		crawler, err := dht.NewCrawler(cfg.DHT, cfg.Crawler)
 		if err != nil {
 			return fmt.Errorf("dht crawler: %w", err)
 		}
@@ -53,9 +54,12 @@ var serveCmd = &cobra.Command{
 		if err := crawler.Start(ctx); err != nil {
 			return fmt.Errorf("crawler start: %w", err)
 		}
-		defer crawler.Stop()
+		defer crawler.Stop(ctx)
 
-		metaClient := metadata.NewClient(&net.Dialer{})
+		metaClient := metadata.NewClient(metadata.TimeoutDialer{
+			Dialer:      &net.Dialer{KeepAlive: -1},
+			DialTimeout: 3 * time.Second,
+		})
 		idxWorker := indexer.New(crawler, metaClient, queries, cfg.Indexer)
 		go idxWorker.Run(ctx)
 

@@ -132,7 +132,7 @@ func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
 	// BEP-42: derive a compliant node ID from our external IP if not already set via config.
 	// Skip if dht.node_id was provided (user-managed, already BEP-42 compliant).
 	if s.cfg.NodeID == "" && externalIP != nil {
-		if newID, err := DeriveBEP42NodeID(externalIP); err == nil {
+		if newID, err := DeriveNodeIDFromIP(externalIP); err == nil {
 			s.SetNodeID(newID)
 			// Recompute distances with the new ID.
 			for _, e := range shortlistMap {
@@ -241,8 +241,9 @@ func (s *Server) resolveBootstrapAddrs(ctx context.Context, addrs []string) []*n
 	return result
 }
 
-// DeriveBEP42NodeID generates a BEP-42 compliant node ID for the given IPv4
-// address. See https://www.bittorrent.org/beps/bep_0042.html
+// DeriveNodeIDFromIP generates a BEP-42 compliant node ID for the given IPv4
+// address. Implements BEP-42 (DHT Security Extension) §Node ID.
+// See https://www.bittorrent.org/beps/bep_0042.html
 //
 // Derivation (IPv4):
 //
@@ -254,7 +255,7 @@ func (s *Server) resolveBootstrapAddrs(ctx context.Context, addrs []string) []*n
 //	id[2]      = (crc >> 8) & 0xf8 | random_3_bits
 //	id[3..18]  = random
 //	id[19]     = random_5_bits | r
-func DeriveBEP42NodeID(ip net.IP) (NodeID, error) {
+func DeriveNodeIDFromIP(ip net.IP) (NodeID, error) {
 	ip4 := ip.To4()
 	if ip4 == nil {
 		return NodeID{}, nil // IPv6 out of scope per project charter
@@ -286,9 +287,10 @@ func DeriveBEP42NodeID(ip net.IP) (NodeID, error) {
 	return id, nil
 }
 
-// ValidateBEP42NodeID verifies that id satisfies the BEP-42 invariant for the
-// given IPv4 address. Returns nil if valid, or an error describing the failure.
-func ValidateBEP42NodeID(ip net.IP, id NodeID) error {
+// ValidateNodeIDForIP verifies that id satisfies the BEP-42 node ID invariant
+// for the given IPv4 address. Implements BEP-42 §Node ID verification.
+// Returns nil if valid, or an error describing the failure.
+func ValidateNodeIDForIP(ip net.IP, id NodeID) error {
 	ip4 := ip.To4()
 	if ip4 == nil {
 		return errors.New("not an IPv4 address")

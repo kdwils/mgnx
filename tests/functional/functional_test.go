@@ -63,7 +63,7 @@ func TestEndToEnd(t *testing.T) {
 
 	crawler := mocks.NewMockCrawler(ctrl)
 	crawler.EXPECT().Start(gomock.Any()).Return(nil)
-	crawler.EXPECT().Stop()
+	crawler.EXPECT().Stop(gomock.Any())
 	crawler.EXPECT().Infohashes().Return((<-chan dht.DiscoveredPeers)(discoveredCh)).AnyTimes()
 
 	fetcher := mocks.NewMockFetcher(ctrl)
@@ -109,8 +109,10 @@ func TestEndToEnd(t *testing.T) {
 	cfg := config.Config{
 		Indexer: config.Indexer{
 			Workers:           4,
-			PeerTimeout:       5 * time.Second,
-			PeerRetries:       1,
+			RequestTimeout:    6 * time.Second,
+			MaxPeers:          1,
+			RateLimit:         2.0,
+			RateBurst:         4,
 			MinSize:           50 * 1024 * 1024,
 			MaxSize:           150 * 1024 * 1024 * 1024,
 			AllowedExtensions: []string{".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".ts", ".m2ts", ".vob", ".flv", ".webm", ".srt", ".ass", ".ssa"},
@@ -125,7 +127,7 @@ func TestEndToEnd(t *testing.T) {
 
 	idxWorker := indexer.New(crawler, fetcher, queries, cfg.Indexer)
 	require.NoError(t, crawler.Start(ctx))
-	t.Cleanup(crawler.Stop)
+	t.Cleanup(func() { crawler.Stop(ctx) })
 	go idxWorker.Run(ctx)
 
 	scrapeWorker := scrape.New(queries, scraper, cfg.Scrape)

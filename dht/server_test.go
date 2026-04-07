@@ -14,10 +14,7 @@ import (
 func testServerCfg(t *testing.T) config.DHT {
 	t.Helper()
 	return config.DHT{
-		Port:                0, // OS assigns a free port
-		RateLimit:           1000,
-		RateBurst:           1000,
-		Workers:             2,
+		Port:                0,
 		DiscoveryBuffer:     100,
 		TransactionTimeout:  2 * time.Second,
 		TokenRotation:       5 * time.Minute,
@@ -27,6 +24,11 @@ func testServerCfg(t *testing.T) config.DHT {
 		StaleThreshold:      15 * time.Minute,
 		NodeID:              "a25e62fa2ffcc041d3ff12045b73c86e4ff95ff1",
 		NodesPath:           t.TempDir() + "/dht_nodes.dat",
+		Alpha:               3,
+		MaxIterations:       4,
+		RateLimit:           1000,
+		RateBurst:           1000,
+		Workers:             2,
 	}
 }
 
@@ -34,7 +36,7 @@ func TestNewServer(t *testing.T) {
 	t.Run("creates server with valid config", func(t *testing.T) {
 		s, err := NewServer(testServerCfg(t))
 		require.NoError(t, err)
-		defer s.Stop()
+		defer s.Stop(t.Context())
 		assert.NotNil(t, s.table)
 		assert.NotNil(t, s.txns)
 		assert.NotNil(t, s.token)
@@ -48,7 +50,7 @@ func TestServer_processQuery(t *testing.T) {
 		t.Helper()
 		s, err := NewServer(testServerCfg(t))
 		require.NoError(t, err)
-		t.Cleanup(s.Stop)
+		t.Cleanup(func() { s.Stop(t.Context()) })
 		return s
 	}
 
@@ -147,12 +149,12 @@ func TestServer_ping_roundtrip(t *testing.T) {
 
 		s1, err := NewServer(testServerCfg(t))
 		require.NoError(t, err)
-		defer s1.Stop()
+		defer s1.Stop(t.Context())
 		require.NoError(t, s1.Start(ctx))
 
 		s2, err := NewServer(testServerCfg(t))
 		require.NoError(t, err)
-		defer s2.Stop()
+		defer s2.Stop(t.Context())
 		require.NoError(t, s2.Start(ctx))
 
 		s2Addr := &net.UDPAddr{

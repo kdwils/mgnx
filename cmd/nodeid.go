@@ -18,7 +18,7 @@ var generateNodeIDCmd = &cobra.Command{
 	Short: "Generate a BEP-42 compliant node id",
 	Long:  `Generate a BEP-42 compliant node id from an external IP address`,
 	Run: func(cmd *cobra.Command, args []string) {
-		id, err := dht.DeriveBEP42NodeID(net.ParseIP(externalIP))
+		id, err := dht.DeriveNodeIDFromIP(net.ParseIP(externalIP))
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -42,7 +42,7 @@ var validateNodeIDCmd = &cobra.Command{
 			log.Fatalf("invalid node ID: %v", err)
 		}
 
-		if err := dht.ValidateBEP42NodeID(parsedIP, parsedID); err != nil {
+		if err := dht.ValidateNodeIDForIP(parsedIP, parsedID); err != nil {
 			log.Fatalf("INVALID: %v", err)
 		}
 

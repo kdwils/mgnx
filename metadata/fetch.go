@@ -29,6 +29,18 @@ type Dialer interface {
 	DialContext(ctx context.Context, network, address string) (net.Conn, error)
 }
 
+// TimeoutDialer wraps a Dialer with an explicit dial timeout.
+type TimeoutDialer struct {
+	Dialer      Dialer
+	DialTimeout time.Duration
+}
+
+func (d TimeoutDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, d.DialTimeout)
+	defer cancel()
+	return d.Dialer.DialContext(ctx, network, address)
+}
+
 // Client is the production Fetcher. It holds a Dialer so the transport layer
 // can be substituted in tests.
 type Client struct {
@@ -56,13 +68,19 @@ type TorrentInfo struct {
 func (c *Client) Fetch(ctx context.Context, infohash [20]byte, addr net.TCPAddr) (*TorrentInfo, error) {
 	deadline, ok := ctx.Deadline()
 	if !ok {
-		deadline = time.Now().Add(15 * time.Second)
+		deadline = time.Now().Add(6 * time.Second)
 	}
 
 	conn, err := c.dialer.DialContext(ctx, "tcp4", addr.String())
 	if err != nil {
 		return nil, err
 	}
+
+	// Set SO_LINGER to quickly close stuck connections
+	if tc, ok := conn.(*net.TCPConn); ok {
+		tc.SetLinger(0) //nolint:errcheck
+	}
+
 	defer conn.Close()
 
 	conn.SetDeadline(deadline) //nolint:errcheck

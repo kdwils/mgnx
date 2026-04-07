@@ -8,15 +8,16 @@ import (
 	"time"
 
 	"github.com/anacrolix/torrent/bencode"
+	"github.com/kdwils/mgnx/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func makeCrawler(t *testing.T) *crawler {
 	t.Helper()
-	c, err := NewCrawler(testServerCfg(t))
+	c, err := NewCrawler(testServerCfg(t), config.Crawler{Workers: 2})
 	require.NoError(t, err)
-	t.Cleanup(c.Stop)
+	t.Cleanup(func() { c.Stop(t.Context()) })
 	return c.(*crawler)
 }
 
@@ -91,39 +92,39 @@ func TestBep51PQ_ordering(t *testing.T) {
 
 		var nearID NodeID
 		nearID[0] = 0x01
-		near := &bep51Item{node: makeDiscoveredNode(0x01, 1001), target: target, dist: target.XOR(nearID)}
+		near := &traversalItem{node: makeDiscoveredNode(0x01, 1001), target: target, dist: target.XOR(nearID)}
 
 		var farID NodeID
 		farID[0] = 0xff
-		far := &bep51Item{node: makeDiscoveredNode(0xff, 1002), target: target, dist: target.XOR(farID)}
+		far := &traversalItem{node: makeDiscoveredNode(0xff, 1002), target: target, dist: target.XOR(farID)}
 
-		pq := &bep51PQ{}
+		pq := &traversalHeap{}
 		heap.Init(pq)
 		heap.Push(pq, far)
 		heap.Push(pq, near)
 
-		first := heap.Pop(pq).(*bep51Item)
+		first := heap.Pop(pq).(*traversalItem)
 		assert.Equal(t, near.dist, first.dist)
 	})
 
 	t.Run("maintains heap invariant across multiple pushes", func(t *testing.T) {
 		var target NodeID
-		pq := &bep51PQ{}
+		pq := &traversalHeap{}
 		heap.Init(pq)
 
 		for _, b := range []byte{0x50, 0x10, 0xff, 0x01, 0x80} {
 			var id NodeID
 			id[0] = b
-			heap.Push(pq, &bep51Item{
+			heap.Push(pq, &traversalItem{
 				node:   makeDiscoveredNode(b, int(b)+1000),
 				target: target,
 				dist:   target.XOR(id),
 			})
 		}
 
-		prev := heap.Pop(pq).(*bep51Item)
+		prev := heap.Pop(pq).(*traversalItem)
 		for pq.Len() > 0 {
-			next := heap.Pop(pq).(*bep51Item)
+			next := heap.Pop(pq).(*traversalItem)
 			assert.LessOrEqual(t, prev.dist[0], next.dist[0])
 			prev = next
 		}
@@ -133,7 +134,7 @@ func TestBep51PQ_ordering(t *testing.T) {
 func TestCrawler_nextEligible(t *testing.T) {
 	t.Run("returns nil for empty queue", func(t *testing.T) {
 		c := makeCrawler(t)
-		pq := &bep51PQ{}
+		pq := &traversalHeap{}
 		heap.Init(pq)
 		assert.Nil(t, c.nextEligible(pq, make(map[NodeID]time.Time)))
 	})
@@ -142,9 +143,9 @@ func TestCrawler_nextEligible(t *testing.T) {
 		c := makeCrawler(t)
 		var target NodeID
 		node := makeDiscoveredNode(0x01, 1001)
-		pq := &bep51PQ{}
+		pq := &traversalHeap{}
 		heap.Init(pq)
-		heap.Push(pq, &bep51Item{node: node, target: target, dist: target.XOR(node.ID)})
+		heap.Push(pq, &traversalItem{node: node, target: target, dist: target.XOR(node.ID)})
 
 		seen := map[NodeID]time.Time{node.ID: time.Now().Add(time.Hour)}
 		assert.Nil(t, c.nextEligible(pq, seen))
@@ -154,9 +155,9 @@ func TestCrawler_nextEligible(t *testing.T) {
 		c := makeCrawler(t)
 		var target NodeID
 		node := makeDiscoveredNode(0x01, 1001)
-		pq := &bep51PQ{}
+		pq := &traversalHeap{}
 		heap.Init(pq)
-		heap.Push(pq, &bep51Item{node: node, target: target, dist: target.XOR(node.ID)})
+		heap.Push(pq, &traversalItem{node: node, target: target, dist: target.XOR(node.ID)})
 
 		seen := map[NodeID]time.Time{node.ID: time.Now().Add(-time.Second)}
 		item := c.nextEligible(pq, seen)
@@ -168,9 +169,9 @@ func TestCrawler_nextEligible(t *testing.T) {
 		c := makeCrawler(t)
 		var target NodeID
 		node := makeDiscoveredNode(0x02, 1002)
-		pq := &bep51PQ{}
+		pq := &traversalHeap{}
 		heap.Init(pq)
-		heap.Push(pq, &bep51Item{node: node, target: target, dist: target.XOR(node.ID)})
+		heap.Push(pq, &traversalItem{node: node, target: target, dist: target.XOR(node.ID)})
 
 		item := c.nextEligible(pq, make(map[NodeID]time.Time))
 		require.NotNil(t, item)
@@ -189,7 +190,7 @@ func TestCrawler_processSamples(t *testing.T) {
 		peerAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9876}
 		responder := newGetPeersValueServer(t, peerAddr)
 		node := makeDiscoveredNode(0x01, responder.LocalAddr().(*net.UDPAddr).Port)
-		item := &bep51Item{node: node}
+		item := &traversalItem{node: node}
 
 		var h [20]byte
 		h[0] = 0xAB
@@ -215,7 +216,7 @@ func TestCrawler_processSamples(t *testing.T) {
 		peerAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9877}
 		responder := newGetPeersValueServer(t, peerAddr)
 		node := makeDiscoveredNode(0x01, responder.LocalAddr().(*net.UDPAddr).Port)
-		item := &bep51Item{node: node}
+		item := &traversalItem{node: node}
 
 		var h [20]byte
 		h[0] = 0xCD
@@ -237,7 +238,7 @@ func TestCrawler_processSamples(t *testing.T) {
 	t.Run("ignores partial trailing bytes", func(t *testing.T) {
 		c := makeCrawler(t)
 		node := makeDiscoveredNode(0x01, 1001)
-		item := &bep51Item{node: node}
+		item := &traversalItem{node: node}
 
 		c.processSamples(context.Background(), string(make([]byte, 19)), item)
 
@@ -251,7 +252,7 @@ func TestCrawler_processSamples(t *testing.T) {
 	t.Run("drops silently when discovery channel is full", func(t *testing.T) {
 		c := makeCrawler(t)
 		node := makeDiscoveredNode(0x01, 1001)
-		item := &bep51Item{node: node}
+		item := &traversalItem{node: node}
 
 		for i := range cap(c.discovered) {
 			c.discovered <- DiscoveredPeers{Infohash: [20]byte{byte(i)}}
@@ -273,7 +274,7 @@ func TestCrawler_processSamples(t *testing.T) {
 		peerAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9878}
 		responder := newGetPeersValueServer(t, peerAddr)
 		node := makeDiscoveredNode(0x01, responder.LocalAddr().(*net.UDPAddr).Port)
-		item := &bep51Item{node: node}
+		item := &traversalItem{node: node}
 
 		var buf [60]byte
 		buf[0] = 0x01
@@ -302,12 +303,12 @@ func TestCrawler_processNodes(t *testing.T) {
 		node := makeDiscoveredNode(0x10, 2000)
 		encoded := EncodeNodes([]*Node{node})
 
-		pq := &bep51PQ{}
+		pq := &traversalHeap{}
 		heap.Init(pq)
 		c.processNodes(encoded, target, pq)
 
 		assert.Equal(t, 1, pq.Len())
-		item := heap.Pop(pq).(*bep51Item)
+		item := heap.Pop(pq).(*traversalItem)
 		assert.Equal(t, node.ID, item.node.ID)
 		assert.Equal(t, target.XOR(node.ID), item.dist)
 	})
@@ -316,7 +317,7 @@ func TestCrawler_processNodes(t *testing.T) {
 		c := makeCrawler(t)
 		var target NodeID
 
-		pq := &bep51PQ{}
+		pq := &traversalHeap{}
 		heap.Init(pq)
 		c.processNodes("bad", target, pq)
 		assert.Equal(t, 0, pq.Len())
@@ -327,20 +328,261 @@ func TestCrawler_seedQueue(t *testing.T) {
 	t.Run("pushes closest routing table nodes onto queue", func(t *testing.T) {
 		c := makeCrawler(t)
 
-		for i := range 5 {
-			c.server.table.Insert(makeDiscoveredNode(byte(i+1), 3000+i))
-		}
-
 		var target NodeID
-		pq := &bep51PQ{}
+		target[0] = 0x50
+
+		node := makeDiscoveredNode(0x10, 2000)
+		c.server.table.Insert(node)
+
+		pq := &traversalHeap{}
 		heap.Init(pq)
 		c.seedQueue(pq, target)
 
-		assert.Greater(t, pq.Len(), 0)
-		for pq.Len() > 0 {
-			item := heap.Pop(pq).(*bep51Item)
-			assert.Equal(t, target, item.target)
-			assert.Equal(t, target.XOR(item.node.ID), item.dist)
+		assert.Equal(t, 1, pq.Len())
+		item := heap.Pop(pq).(*traversalItem)
+		assert.Equal(t, target, item.target)
+		assert.Equal(t, target.XOR(item.node.ID), item.dist)
+	})
+}
+
+func TestCrawler_mergeNodes(t *testing.T) {
+	t.Run("merges two node maps", func(t *testing.T) {
+		c := makeCrawler(t)
+
+		node1 := makeDiscoveredNode(0x10, 2000)
+		node2 := makeDiscoveredNode(0x20, 2001)
+		node3 := makeDiscoveredNode(0x30, 2002)
+
+		shortlist := map[NodeID]*Node{
+			node1.ID: node1,
+			node2.ID: node2,
 		}
+
+		newNodes := map[NodeID]*Node{
+			node2.ID: node2,
+			node3.ID: node3,
+		}
+
+		result := c.mergeNodes(shortlist, newNodes)
+
+		expected := map[NodeID]*Node{
+			node1.ID: node1,
+			node2.ID: node2,
+			node3.ID: node3,
+		}
+		assert.Equal(t, expected, result)
+	})
+
+	t.Run("returns new map without modifying inputs", func(t *testing.T) {
+		c := makeCrawler(t)
+
+		node1 := makeDiscoveredNode(0x10, 2000)
+		node2 := makeDiscoveredNode(0x20, 2001)
+
+		shortlist := map[NodeID]*Node{node1.ID: node1}
+		newNodes := map[NodeID]*Node{node2.ID: node2}
+
+		result := c.mergeNodes(shortlist, newNodes)
+
+		assert.Equal(t, map[NodeID]*Node{node1.ID: node1}, shortlist)
+		assert.Equal(t, map[NodeID]*Node{node2.ID: node2}, newNodes)
+		assert.Equal(t, map[NodeID]*Node{node1.ID: node1, node2.ID: node2}, result)
+	})
+
+	t.Run("handles empty maps", func(t *testing.T) {
+		c := makeCrawler(t)
+
+		node1 := makeDiscoveredNode(0x10, 2000)
+		shortlist := map[NodeID]*Node{}
+		newNodes := map[NodeID]*Node{node1.ID: node1}
+
+		result := c.mergeNodes(shortlist, newNodes)
+
+		assert.Equal(t, map[NodeID]*Node{node1.ID: node1}, result)
+	})
+}
+
+func TestCrawler_extractNodes(t *testing.T) {
+	t.Run("extracts nodes from response and inserts into routing table", func(t *testing.T) {
+		c := makeCrawler(t)
+
+		node := makeDiscoveredNode(0x10, 2000)
+		encoded := EncodeNodes([]*Node{node})
+
+		resp := &Msg{
+			R: &Return{
+				Nodes: encoded,
+			},
+		}
+
+		result := c.extractNodes(resp)
+
+		assert.Equal(t, 1, len(result))
+		assert.Equal(t, node.ID, result[node.ID].ID)
+		assert.Equal(t, 2000, result[node.ID].Addr.Port)
+		assert.Equal(t, "127.0.0.1", result[node.ID].Addr.IP.String())
+	})
+
+	t.Run("returns nil when no nodes in response", func(t *testing.T) {
+		c := makeCrawler(t)
+
+		resp := &Msg{
+			R: &Return{
+				Nodes: "",
+			},
+		}
+
+		result := c.extractNodes(resp)
+
+		assert.Nil(t, result)
+	})
+
+	t.Run("returns nil on decode error", func(t *testing.T) {
+		c := makeCrawler(t)
+
+		resp := &Msg{
+			R: &Return{
+				Nodes: "invalid",
+			},
+		}
+
+		result := c.extractNodes(resp)
+
+		assert.Nil(t, result)
+	})
+
+	t.Run("extracts multiple nodes", func(t *testing.T) {
+		c := makeCrawler(t)
+
+		node1 := makeDiscoveredNode(0x10, 2000)
+		node2 := makeDiscoveredNode(0x20, 2001)
+		node3 := makeDiscoveredNode(0x30, 2002)
+		encoded := EncodeNodes([]*Node{node1, node2, node3})
+
+		resp := &Msg{
+			R: &Return{
+				Nodes: encoded,
+			},
+		}
+
+		result := c.extractNodes(resp)
+
+		assert.Equal(t, 3, len(result))
+		assert.Equal(t, node1.ID, result[node1.ID].ID)
+		assert.Equal(t, node2.ID, result[node2.ID].ID)
+		assert.Equal(t, node3.ID, result[node3.ID].ID)
+	})
+}
+
+func TestCrawler_processResponses(t *testing.T) {
+	t.Run("returns true when peers found", func(t *testing.T) {
+		c := makeCrawler(t)
+
+		peer := &net.TCPAddr{IP: net.ParseIP("1.2.3.4"), Port: 6881}
+		encodedPeer := EncodePeer(peer.IP, peer.Port)
+
+		var h [20]byte
+		h[0] = 0xab
+
+		resp := &Msg{
+			R: &Return{
+				Values: []string{encodedPeer},
+			},
+		}
+
+		foundPeers, newNodes := c.processResponses([]*Msg{resp}, h)
+
+		assert.Equal(t, true, foundPeers)
+		assert.Nil(t, newNodes)
+	})
+
+	t.Run("returns nodes when no peers found", func(t *testing.T) {
+		c := makeCrawler(t)
+
+		node := makeDiscoveredNode(0x10, 2000)
+		encodedNodes := EncodeNodes([]*Node{node})
+
+		var h [20]byte
+		h[0] = 0xab
+
+		resp := &Msg{
+			R: &Return{
+				Nodes: encodedNodes,
+			},
+		}
+
+		foundPeers, gotNodes := c.processResponses([]*Msg{resp}, h)
+
+		decodedNodes, _ := DecodeNodes(encodedNodes)
+		wantNodes := make(map[NodeID]*Node)
+		for _, n := range decodedNodes {
+			wantNodes[n.ID] = n
+		}
+		assert.Equal(t, false, foundPeers)
+		assert.Equal(t, wantNodes, gotNodes)
+	})
+
+	t.Run("ignores nil responses", func(t *testing.T) {
+		c := makeCrawler(t)
+
+		var h [20]byte
+
+		foundPeers, newNodes := c.processResponses([]*Msg{nil, nil}, h)
+
+		assert.Equal(t, false, foundPeers)
+		assert.Nil(t, newNodes)
+	})
+
+	t.Run("ignores responses without R", func(t *testing.T) {
+		c := makeCrawler(t)
+
+		var h [20]byte
+
+		foundPeers, newNodes := c.processResponses([]*Msg{{Y: "r"}}, h)
+
+		assert.Equal(t, false, foundPeers)
+		assert.Nil(t, newNodes)
+	})
+
+	t.Run("aggregates nodes from multiple responses", func(t *testing.T) {
+		c := makeCrawler(t)
+
+		node1 := &Node{ID: NodeID{0x10}, Addr: &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 2000}}
+		node2 := &Node{ID: NodeID{0x20}, Addr: &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 2001}}
+		encodedNodes1 := EncodeNodes([]*Node{node1})
+		encodedNodes2 := EncodeNodes([]*Node{node2})
+
+		var h [20]byte
+		h[0] = 0xab
+
+		resp1 := &Msg{R: &Return{Nodes: encodedNodes1}}
+		resp2 := &Msg{R: &Return{Nodes: encodedNodes2}}
+
+		foundPeers, gotNodes := c.processResponses([]*Msg{resp1, resp2}, h)
+
+		decodedNodes, _ := DecodeNodes(encodedNodes1 + encodedNodes2)
+		wantNodes := make(map[NodeID]*Node)
+		for _, n := range decodedNodes {
+			wantNodes[n.ID] = n
+		}
+		assert.Equal(t, false, foundPeers)
+		assert.Equal(t, wantNodes, gotNodes)
+	})
+
+	t.Run("stops on first peer response", func(t *testing.T) {
+		c := makeCrawler(t)
+
+		peer := &net.TCPAddr{IP: net.ParseIP("1.2.3.4"), Port: 6881}
+		encodedPeer := EncodePeer(peer.IP, peer.Port)
+
+		var h [20]byte
+		h[0] = 0xab
+
+		respWithPeers := &Msg{R: &Return{Values: []string{encodedPeer}}}
+
+		foundPeers, gotNodes := c.processResponses([]*Msg{respWithPeers}, h)
+
+		assert.Equal(t, true, foundPeers)
+		assert.Nil(t, gotNodes)
 	})
 }
