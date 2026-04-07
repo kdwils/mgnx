@@ -44,21 +44,33 @@ func (d TimeoutDialer) DialContext(ctx context.Context, network, address string)
 // Client is the production Fetcher. It holds a Dialer so the transport layer
 // can be substituted in tests.
 type Client struct {
-	dialer Dialer
+	dialer     Dialer
+	maxMsgSize int
+}
+
+type ClientOption func(*Client)
+
+func WithMaxMessageSize(size int) ClientOption {
+	return func(c *Client) {
+		if size > 0 {
+			c.maxMsgSize = size
+		}
+	}
 }
 
 // NewClient creates a Client using the provided Dialer.
-func NewClient(dialer Dialer) *Client {
-	return &Client{dialer: dialer}
+func NewClient(dialer Dialer, opts ...ClientOption) *Client {
+	c := &Client{
+		dialer:     dialer,
+		maxMsgSize: 16 * 1024 * 1024, // default 16MB
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 const MAX_SIZE = 10 * 1024 * 1024
-
-// maxMsgSize is the upper bound on a single BEP-10 wire message. A malicious
-// peer could send a 4-byte length of 0xFFFFFFFF; without this guard the
-// make([]byte, length) below would attempt a ~4 GB allocation before the
-// connection deadline fires.
-const maxMsgSize = 16 * 1024 * 1024
 
 type FileInfo struct {
 	Path string
@@ -136,7 +148,7 @@ func (c *Client) Fetch(ctx context.Context, infohash [20]byte, addr net.TCPAddr)
 	var totalSize int
 
 	for {
-		msgType, payload, err := readMsg(rw.Reader)
+		msgType, payload, err := c.readMsg(rw.Reader)
 		if err != nil {
 			return nil, err
 		}
@@ -183,7 +195,7 @@ func (c *Client) Fetch(ctx context.Context, infohash [20]byte, addr net.TCPAddr)
 		}
 
 		for {
-			msgType, payload, err := readMsg(rw.Reader)
+			msgType, payload, err := c.readMsg(rw.Reader)
 			if err != nil {
 				return nil, err
 			}
@@ -282,7 +294,7 @@ func sendMsg(w io.Writer, msgType byte, extID byte, payload []byte) error {
 	return nil
 }
 
-func readMsg(r io.Reader) (msgType byte, payload []byte, err error) {
+func (c *Client) readMsg(r io.Reader) (msgType byte, payload []byte, err error) {
 	var lenBuf [4]byte
 	if _, err = io.ReadFull(r, lenBuf[:]); err != nil {
 		return
@@ -291,7 +303,7 @@ func readMsg(r io.Reader) (msgType byte, payload []byte, err error) {
 	if length == 0 {
 		return 0, nil, nil
 	}
-	if length > maxMsgSize {
+	if length > uint32(c.maxMsgSize) {
 		return 0, nil, fmt.Errorf("message too large: %d bytes", length)
 	}
 	body := make([]byte, length)

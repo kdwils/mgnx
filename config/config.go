@@ -35,6 +35,7 @@ type DHT struct {
 	RateBurst           int           `mapstructure:"rate_burst"`
 	MaxNodesPerResponse int           `mapstructure:"max_nodes_per_response"`
 	MaxPeersPerResponse int           `mapstructure:"max_peers_per_response"`
+	MaxMessageSize      int           `mapstructure:"max_message_size"`
 }
 
 type Crawler struct {

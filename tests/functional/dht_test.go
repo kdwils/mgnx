@@ -112,8 +112,6 @@ func TestDHTBEPProtocol(t *testing.T) {
 	t.Run("announce_peer rejects invalid token", func(t *testing.T) {
 		infoHash := [20]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14}
 
-		time.Sleep(250 * time.Millisecond)
-
 		resp := mockNode.sendQuery(ctx, serverAddr, &dht.Msg{
 			T: "ff",
 			Y: "q",
@@ -135,7 +133,6 @@ func TestDHTBEPProtocol(t *testing.T) {
 	})
 
 	t.Run("find_node missing target returns error", func(t *testing.T) {
-		time.Sleep(250 * time.Millisecond)
 		resp := mockNode.sendQuery(ctx, serverAddr, &dht.Msg{
 			T: "gg",
 			Y: "q",
@@ -152,7 +149,6 @@ func TestDHTBEPProtocol(t *testing.T) {
 	})
 
 	t.Run("get_peers missing info_hash returns error", func(t *testing.T) {
-		time.Sleep(250 * time.Millisecond)
 		resp := mockNode.sendQuery(ctx, serverAddr, &dht.Msg{
 			T: "hh",
 			Y: "q",
@@ -239,6 +235,38 @@ func TestDHTBEPProtocol(t *testing.T) {
 				ID:       string(mockNode.id[:]),
 				InfoHash: string(infoHash[:]),
 				Port:     0,
+				Token:    token,
+			},
+		})
+
+		require.NotNil(t, resp)
+		require.Equal(t, "r", resp.Y, "should return response even with invalid port")
+	})
+
+	t.Run("announce_peer rejects port > 65535", func(t *testing.T) {
+		mockNode := newMockNode()
+		infoHash := [20]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14}
+
+		getPeersResp := mockNode.sendQuery(ctx, serverAddr, &dht.Msg{
+			T: "ff",
+			Y: "q",
+			Q: "get_peers",
+			A: &dht.MsgArgs{
+				ID:       string(mockNode.id[:]),
+				InfoHash: string(infoHash[:]),
+			},
+		})
+		require.NotNil(t, getPeersResp)
+		token := getPeersResp.R.Token
+
+		resp := mockNode.sendQuery(ctx, serverAddr, &dht.Msg{
+			T: "gg",
+			Y: "q",
+			Q: "announce_peer",
+			A: &dht.MsgArgs{
+				ID:       string(mockNode.id[:]),
+				InfoHash: string(infoHash[:]),
+				Port:     70000,
 				Token:    token,
 			},
 		})

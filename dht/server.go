@@ -342,6 +342,7 @@ func (s *Server) handleFindNode(addr *net.UDPAddr, msg *Msg) {
 // handleGetPeers responds to a BEP-05 get_peers query (BEP-05 §get peers).
 // Since this node is a crawler without a peer store, it always returns the
 // k-closest nodes ("nodes" path) along with a token for future announce_peer.
+// TODO: When peer storage is implemented, use MaxPeersPerResponse to bound Values.
 func (s *Server) handleGetPeers(addr *net.UDPAddr, msg *Msg) {
 	if msg.A == nil {
 		s.respondError(addr, msg.T, ErrProtocol, "missing arguments")

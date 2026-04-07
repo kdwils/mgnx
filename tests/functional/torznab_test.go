@@ -21,8 +21,8 @@ import (
 	"github.com/kdwils/mgnx/metadata"
 	"github.com/kdwils/mgnx/mocks"
 	"github.com/kdwils/mgnx/scrape"
-	"github.com/kdwils/mgnx/server"
 	"github.com/kdwils/mgnx/service"
+	"github.com/kdwils/mgnx/torznab"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -137,7 +137,7 @@ func TestEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 
 	svc := service.New(queries, cfg)
-	srv := server.New(0, logger.New("error"), svc)
+	srv := torznab.New(0, logger.New("error"), svc)
 	go srv.ServeListener(ctx, ln)
 
 	serverURL := "http://127.0.0.1:" + strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)

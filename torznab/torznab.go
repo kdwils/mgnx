@@ -1,4 +1,4 @@
-package server
+package torznab
 
 import (
 	"encoding/xml"
