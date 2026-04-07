@@ -38,6 +38,7 @@ type Server struct {
 	token      *TokenManager
 	dedup      *BloomFilter
 	rate       *rate.Limiter
+	ipLimiter  *ipLimiter
 	cfg        config.DHT
 	handlers   chan inMsg
 	bufPool    sync.Pool
@@ -78,6 +79,7 @@ func NewServer(cfg config.DHT) (*Server, error) {
 		discovered: make(chan DiscoveredPeers, cfg.DiscoveryBuffer),
 		token:      token,
 		rate:       rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateBurst),
+		ipLimiter:  newIPLimiter(cfg.RateLimit, cfg.RateBurst),
 		cfg:        cfg,
 		handlers:   make(chan inMsg, 512),
 		bufPool: sync.Pool{
@@ -98,6 +100,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.txns.Start(ctx)
 	s.token.Start(ctx)
+	s.ipLimiter.Start(ctx)
 
 	go s.readLoop(ctx)
 	go s.writeLoop(ctx)
@@ -273,6 +276,10 @@ func (s *Server) queryHandlerLoop(ctx context.Context) {
 // processQuery dispatches a single inbound KRPC query (BEP-05 §KRPC Protocol)
 // to the appropriate handler and adds the querying node to the routing table.
 func (s *Server) processQuery(ctx context.Context, in inMsg) {
+	if !s.ipLimiter.Allow(in.addr.IP) {
+		return
+	}
+
 	if in.msg.A != nil {
 		if id, err := ParseNodeID(in.msg.A.ID); err == nil {
 			if isValidNodeID(in.addr.IP, id) {
@@ -319,6 +326,13 @@ func (s *Server) handleFindNode(addr *net.UDPAddr, msg *Msg) {
 		}
 	}
 	closest := s.table.Closest(target, s.cfg.BucketSize)
+	maxNodes := s.cfg.MaxNodesPerResponse
+	if maxNodes <= 0 {
+		maxNodes = 256
+	}
+	if len(closest) > maxNodes {
+		closest = closest[:maxNodes]
+	}
 	s.respond(addr, msg.T, &Return{
 		ID:    string(s.ourID[:]),
 		Nodes: EncodeNodes(closest),
@@ -339,6 +353,13 @@ func (s *Server) handleGetPeers(addr *net.UDPAddr, msg *Msg) {
 		return
 	}
 	closest := s.table.Closest(target, s.cfg.BucketSize)
+	maxNodes := s.cfg.MaxNodesPerResponse
+	if maxNodes <= 0 {
+		maxNodes = 256
+	}
+	if len(closest) > maxNodes {
+		closest = closest[:maxNodes]
+	}
 	s.respond(addr, msg.T, &Return{
 		ID:    string(s.ourID[:]),
 		Nodes: EncodeNodes(closest),

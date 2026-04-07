@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha1"
+	"crypto/subtle"
 	"net"
 	"sync"
 	"time"
@@ -57,13 +58,16 @@ func (m *TokenManager) Generate(ip net.IP) string {
 }
 
 // Validate reports whether token is valid for ip against either the current
-// or previous secret.
+// or previous secret. Uses constant-time comparison to prevent timing attacks.
 func (m *TokenManager) Validate(ip net.IP, token string) bool {
 	m.mu.RLock()
 	current := m.currentSecret
 	previous := m.previousSecret
 	m.mu.RUnlock()
-	return token == tokenFor(ip, current) || token == tokenFor(ip, previous)
+	currentToken := tokenFor(ip, current)
+	prevToken := tokenFor(ip, previous)
+	return subtle.ConstantTimeCompare([]byte(token), []byte(currentToken)) == 1 ||
+		subtle.ConstantTimeCompare([]byte(token), []byte(prevToken)) == 1
 }
 
 // rotate advances the secret window: previous = current, current = new random.

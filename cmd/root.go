@@ -80,6 +80,8 @@ func initConfig() {
 	viper.SetDefault("dht.token_rotation", 5*time.Minute)
 	viper.SetDefault("dht.alpha", 3)
 	viper.SetDefault("dht.max_iterations", 4)
+	viper.SetDefault("dht.max_nodes_per_response", 256)
+	viper.SetDefault("dht.max_peers_per_response", 50)
 
 	viper.SetDefault("crawler.crawlers", 2)
 

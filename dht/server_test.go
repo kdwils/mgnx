@@ -41,6 +41,8 @@ func testServerCfg(t *testing.T) config.DHT {
 		RateLimit:           1000,
 		RateBurst:           1000,
 		Workers:             2,
+		MaxNodesPerResponse: 256,
+		MaxPeersPerResponse: 50,
 	}
 }
 

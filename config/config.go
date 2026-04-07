@@ -33,6 +33,8 @@ type DHT struct {
 	Workers             int           `mapstructure:"workers"`
 	RateLimit           float64       `mapstructure:"rate_limit"`
 	RateBurst           int           `mapstructure:"rate_burst"`
+	MaxNodesPerResponse int           `mapstructure:"max_nodes_per_response"`
+	MaxPeersPerResponse int           `mapstructure:"max_peers_per_response"`
 }
 
 type Crawler struct {
