@@ -15,6 +15,7 @@ import (
 
 	"github.com/kdwils/mgnx/config"
 	"github.com/kdwils/mgnx/logger"
+	pkgcache "github.com/kdwils/mgnx/pkg/cache"
 )
 
 // DiscoveredPeers is the only coupling point between the DHT layer (Section 3)
@@ -42,41 +43,46 @@ type Crawler interface {
 //  1. Passive: announce_peer queries already wired in the server (Step 6).
 //  2. Active:  BEP-51 sample_infohashes traversal driven here.
 type crawler struct {
-	server      *Server
-	discovered  chan DiscoveredPeers
-	dedup       *BloomFilter
-	cfg         config.DHT
-	crawlerCfg  config.Crawler
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
-	rateLimiter *nodeRateLimiter
+	server           *Server
+	discovered       chan DiscoveredPeers
+	dedup            *BloomFilter
+	cfg              config.DHT
+	crawlerCfg       config.Crawler
+	cancel           context.CancelFunc
+	wg               sync.WaitGroup
+	rateLimiter      *nodeRateLimiter
+	nodeSampleSupport *pkgcache.Cache[NodeID, bool]
 }
 
 // nodeRateLimiter enforces minimum spacing between queries to the same node.
 type nodeRateLimiter struct {
-	mu         sync.Mutex
-	lastQuery  map[NodeID]time.Time
+	cache      *pkgcache.Cache[NodeID, time.Time]
 	minSpacing time.Duration
 }
 
-func newNodeRateLimiter() *nodeRateLimiter {
-	return &nodeRateLimiter{
-		lastQuery:  make(map[NodeID]time.Time),
-		minSpacing: 2 * time.Second,
-	}
+func newNodeRateLimiter(minSpacing time.Duration) *nodeRateLimiter {
+	c := pkgcache.New[NodeID, time.Time](
+		pkgcache.WithCleanup[NodeID, time.Time](
+			minSpacing,
+			func(_ NodeID, last time.Time) bool {
+				return time.Since(last) > minSpacing
+			},
+		),
+	)
+	return &nodeRateLimiter{cache: c, minSpacing: minSpacing}
 }
 
 func (r *nodeRateLimiter) throttle(id NodeID) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if last, ok := r.lastQuery[id]; ok {
-		if time.Since(last) < r.minSpacing {
-			return true
-		}
+	last, ok := r.cache.Get(id)
+	if ok && time.Since(last) < r.minSpacing {
+		return true
 	}
-	r.lastQuery[id] = time.Now()
+	r.cache.Set(id, time.Now())
 	return false
+}
+
+func (r *nodeRateLimiter) Start(ctx context.Context) {
+	r.cache.StartCleanup(ctx)
 }
 
 // NewCrawler creates a Crawler backed by a new UDP Server. The BloomFilter is
@@ -90,12 +96,18 @@ func NewCrawler(dhtCfg config.DHT, crawlerCfg config.Crawler) (Crawler, error) {
 	dedup := NewBloomFilter()
 	server.dedup = dedup
 	return &crawler{
-		server:      server,
-		discovered:  server.discovered,
-		dedup:       dedup,
-		cfg:         dhtCfg,
-		crawlerCfg:  crawlerCfg,
-		rateLimiter: newNodeRateLimiter(),
+		server:     server,
+		discovered: server.discovered,
+		dedup:      dedup,
+		cfg:        dhtCfg,
+		crawlerCfg: crawlerCfg,
+		rateLimiter: newNodeRateLimiter(2 * time.Second),
+		nodeSampleSupport: pkgcache.New[NodeID, bool](
+			pkgcache.WithCleanup[NodeID, bool](
+				1*time.Hour,
+				func(_ NodeID, _ bool) bool { return true },
+			),
+		),
 	}, nil
 }
 
@@ -118,6 +130,9 @@ func (c *crawler) Start(ctx context.Context) error {
 	crawlCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 
+	c.nodeSampleSupport.StartCleanup(crawlCtx)
+	c.rateLimiter.Start(crawlCtx)
+
 	workers := c.crawlerCfg.Workers
 	for range workers {
 		c.wg.Go(func() {
@@ -129,14 +144,18 @@ func (c *crawler) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop cancels the BEP-51 workers, waits for them to exit, then shuts down
+// Stop cancels the traversal workers, waits for them to exit, then shuts down
 // the server (closing the socket and persisting the routing table).
-func (c *crawler) Stop(ctx context.Context) {
+// The caller's context is ignored — it is likely already cancelled at shutdown
+// time. A fresh timeout context is used for the routing table save.
+func (c *crawler) Stop(_ context.Context) {
 	if c.cancel != nil {
 		c.cancel()
 	}
 	c.wg.Wait()
-	c.server.Stop(ctx)
+	saveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c.server.Stop(saveCtx)
 }
 
 // traversalItem is an element of the traversal heap.
@@ -172,6 +191,46 @@ func (pq *traversalHeap) Pop() any {
 	*pq = old[:n-1]
 	item.index = -1
 	return item
+}
+
+// getPeers sends a BEP-05 get_peers query for item.target and returns the raw response.
+func (c *crawler) getPeers(ctx context.Context, item *traversalItem) (*Msg, error) {
+	return c.server.Query(ctx, item.node.Addr, item.node.ID, &Msg{
+		Y: "q", Q: "get_peers",
+		A: &MsgArgs{
+			ID:       string(c.server.ourID[:]),
+			InfoHash: string(item.target[:]),
+		},
+	})
+}
+
+// queryForSamples tries sample_infohashes (BEP-51) against the node first.
+// If the node responds with a 204 "method unknown" error it doesn't support
+// BEP-51; that fact is cached and get_peers is used as a fallback for routing
+// continuation. Subsequent calls for the same node skip straight to get_peers.
+func (c *crawler) queryForSamples(ctx context.Context, item *traversalItem) (*Msg, error) {
+	capable, known := c.nodeSampleSupport.Get(item.node.ID)
+	if known && !capable {
+		return c.getPeers(ctx, item)
+	}
+
+	resp, err := c.server.Query(ctx, item.node.Addr, item.node.ID, &Msg{
+		Y: "q", Q: "sample_infohashes",
+		A: &MsgArgs{
+			ID:     string(c.server.ourID[:]),
+			Target: string(item.target[:]),
+		},
+	})
+	if err != nil {
+		return resp, err
+	}
+	if !isMethodUnknown(resp) {
+		c.nodeSampleSupport.Set(item.node.ID, true)
+		return resp, nil
+	}
+
+	c.nodeSampleSupport.Set(item.node.ID, false)
+	return c.getPeers(ctx, item)
 }
 
 // retargetEvery is the number of queries each worker issues before
@@ -222,33 +281,16 @@ func (c *crawler) crawlerWorker(ctx context.Context) {
 		// Per-node rate limiting to avoid overwhelming responsive nodes
 		if c.rateLimiter.throttle(item.node.ID) {
 			heap.Push(pq, item)
-			time.Sleep(100 * time.Millisecond)
+			select {
+			case <-time.After(100 * time.Millisecond):
+			case <-ctx.Done():
+				return
+			}
 			continue
 		}
 
 		qCtx, cancel := context.WithTimeout(ctx, c.cfg.TransactionTimeout)
-
-		// Try BEP-05 (get_peers) first - all DHT nodes support it
-		resp, err := c.server.Query(qCtx, item.node.Addr, item.node.ID, &Msg{
-			Y: "q",
-			Q: "get_peers",
-			A: &MsgArgs{
-				ID:       string(c.server.ourID[:]),
-				InfoHash: string(item.target[:]),
-			},
-		})
-
-		// Fallback to BEP-51 if get_peers returned no peers (only nodes)
-		if err == nil && resp != nil && resp.R != nil && len(resp.R.Values) == 0 {
-			resp, err = c.server.Query(qCtx, item.node.Addr, item.node.ID, &Msg{
-				Y: "q",
-				Q: "sample_infohashes",
-				A: &MsgArgs{
-					ID:     string(c.server.ourID[:]),
-					Target: string(item.target[:]),
-				},
-			})
-		}
+		resp, err := c.queryForSamples(qCtx, item)
 		cancel()
 		queried++
 
@@ -329,19 +371,21 @@ func (c *crawler) processSamples(ctx context.Context, samples string, item *trav
 	)
 }
 
-// discoverPeers performs an iterative get_peers lookup to find peers for infohash.
-// Per BEP-05, when a node doesn't have peers it returns closer nodes - we must
-// iteratively query them until peers are found.
+// discoverPeers performs an iterative BEP-05 get_peers lookup for h.
+// At each iteration it queries up to Alpha nodes in parallel, then trims the
+// shortlist to the k-closest seen so far. It stops early when the closest node
+// stops changing (Kademlia convergence) or no new nodes are returned.
 func (c *crawler) discoverPeers(ctx context.Context, h [20]byte, initialNode *Node) {
-	log := logger.FromContext(ctx)
+	logger.FromContext(ctx).Debug("discoverPeers started", "infohash", hex.EncodeToString(h[:]))
+
 	target := NodeID(h)
-
-	log.Debug("discoverPeers started", "infohash", hex.EncodeToString(h[:]), "initialNode", initialNode != nil)
-
 	shortlist := make(map[NodeID]*Node)
 	if initialNode != nil {
 		shortlist[initialNode.ID] = initialNode
 	}
+
+	queried := make(map[NodeID]bool)
+	var prevClosest NodeID
 
 	for iter := 0; iter < c.cfg.MaxIterations; iter++ {
 		entries := c.sortByDistance(shortlist, target)
@@ -349,20 +393,58 @@ func (c *crawler) discoverPeers(ctx context.Context, h [20]byte, initialNode *No
 			return
 		}
 
-		responses := c.queryParallel(ctx, entries, target, h)
+		if iter > 0 && entries[0].ID == prevClosest {
+			return
+		}
+		prevClosest = entries[0].ID
 
-		foundPeers, newNodes := c.processResponses(responses, h)
-
-		if foundPeers {
+		var toQuery []*Node
+		for _, n := range entries {
+			if !queried[n.ID] {
+				toQuery = append(toQuery, n)
+			}
+		}
+		if len(toQuery) == 0 {
 			return
 		}
 
+		responses := c.queryParallel(ctx, toQuery, target, h)
+
+		alpha := c.cfg.Alpha
+		if len(toQuery) < alpha {
+			alpha = len(toQuery)
+		}
+		for i := range alpha {
+			queried[toQuery[i].ID] = true
+		}
+
+		foundPeers, newNodes := c.processResponses(responses, h)
+		if foundPeers {
+			return
+		}
 		if len(newNodes) == 0 {
 			return
 		}
 
-		shortlist = c.mergeNodes(shortlist, newNodes)
+		shortlist = c.trimToKClosest(c.mergeNodes(shortlist, newNodes), target)
 	}
+}
+
+// trimToKClosest returns a new map containing only the k nodes closest to target.
+func (c *crawler) trimToKClosest(nodes map[NodeID]*Node, target NodeID) map[NodeID]*Node {
+	k := c.cfg.BucketSize
+	if k <= 0 {
+		k = 8
+	}
+	if len(nodes) <= k {
+		return nodes
+	}
+	sorted := c.sortByDistance(nodes, target)
+	result := make(map[NodeID]*Node, k)
+	for _, n := range sorted[:k] {
+		result[n.ID] = n
+	}
+	return result
 }
 
 func (c *crawler) sortByDistance(nodes map[NodeID]*Node, target NodeID) []*Node {

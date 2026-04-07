@@ -6,10 +6,10 @@ import (
 	"time"
 )
 
-type CleanupFunc[K comparable, T any] func(key string, value T) bool
+type CleanupFunc[K comparable, T any] func(key K, value T) bool
 
 type Cache[K comparable, T any] struct {
-	entries         map[string]T
+	entries         map[K]T
 	mu              sync.RWMutex
 	cleanupInterval time.Duration
 	cleanupFunc     CleanupFunc[K, T]
@@ -20,7 +20,7 @@ type Option[K comparable, T any] func(*Cache[K, T])
 func New[K comparable, T any](opts ...Option[K, T]) *Cache[K, T] {
 	c := &Cache[K, T]{
 		mu:      sync.RWMutex{},
-		entries: make(map[string]T),
+		entries: make(map[K]T),
 	}
 
 	for _, opt := range opts {
@@ -43,19 +43,19 @@ func WithCleanupInterval[K comparable, T any](interval time.Duration) Option[K, 
 	}
 }
 
-func (c *Cache[K, T]) Set(key string, value T) {
+func (c *Cache[K, T]) Set(key K, value T) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.entries[key] = value
 }
 
-func (c *Cache[K, T]) Delete(key string) {
+func (c *Cache[K, T]) Delete(key K) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.entries, key)
 }
 
-func (c *Cache[K, T]) Get(key string) (T, bool) {
+func (c *Cache[K, T]) Get(key K) (T, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	entry, ok := c.entries[key]
@@ -68,10 +68,10 @@ func (c *Cache[K, T]) Size() int {
 	return len(c.entries)
 }
 
-func (c *Cache[K, T]) Keys() []string {
+func (c *Cache[K, T]) Keys() []K {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	keys := make([]string, 0, len(c.entries))
+	keys := make([]K, 0, len(c.entries))
 	for k := range c.entries {
 		keys = append(keys, k)
 	}
@@ -105,7 +105,7 @@ func (c *Cache[K, T]) StartCleanup(ctx context.Context) {
 	}()
 }
 
-func (c *Cache[K, T]) Cleanup(ctx context.Context, shouldDelete func(key string, value T) bool) {
+func (c *Cache[K, T]) Cleanup(ctx context.Context, shouldDelete func(key K, value T) bool) {
 	if c.cleanupInterval == 0 {
 		return
 	}
@@ -116,7 +116,7 @@ func (c *Cache[K, T]) Cleanup(ctx context.Context, shouldDelete func(key string,
 	for {
 		select {
 		case <-ticker.C:
-			var keysToDelete []string
+			var keysToDelete []K
 
 			c.mu.RLock()
 			for key, value := range c.entries {

@@ -46,6 +46,16 @@ const (
 	ErrMethod   = 204
 )
 
+// isMethodUnknown reports whether msg is a KRPC 204 "method unknown" error.
+// Per BEP-51 §3, nodes that don't implement sample_infohashes return this code.
+func isMethodUnknown(msg *Msg) bool {
+	if msg == nil || len(msg.E) < 1 {
+		return false
+	}
+	code, ok := msg.E[0].(int64)
+	return ok && code == ErrMethod
+}
+
 // EncodeNodes encodes a slice of nodes as a concatenated sequence of 26-byte
 // compact node records. Non-IPv4 nodes are silently skipped.
 // Format per node: [20]byte ID | [4]byte IPv4 big-endian | [2]byte port big-endian.

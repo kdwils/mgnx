@@ -147,13 +147,12 @@ func TestServer_ping_roundtrip(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		cfg := testServerCfg(t)
-		s1, err := NewServer(cfg)
+		s1, err := NewServer(testServerCfg(t))
 		require.NoError(t, err)
 		defer s1.Stop(t.Context())
 		require.NoError(t, s1.Start(ctx))
 
-		s2, err := NewServer(cfg)
+		s2, err := NewServer(testServerCfg(t))
 		require.NoError(t, err)
 		defer s2.Stop(t.Context())
 		require.NoError(t, s2.Start(ctx))
