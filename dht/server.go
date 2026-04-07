@@ -354,9 +354,6 @@ func (s *Server) handleGetPeers(addr *net.UDPAddr, msg *Msg) {
 	}
 	closest := s.table.Closest(target, s.cfg.BucketSize)
 	maxNodes := s.cfg.MaxNodesPerResponse
-	if maxNodes <= 0 {
-		maxNodes = 256
-	}
 	if len(closest) > maxNodes {
 		closest = closest[:maxNodes]
 	}
@@ -442,7 +439,7 @@ func (s *Server) respond(addr *net.UDPAddr, t string, r *Return) {
 // Format per BEP-05 §KRPC Protocol: {"y":"e","t":...,"e":[code, msg]}.
 func (s *Server) respondError(addr *net.UDPAddr, t string, code int, msg string) {
 	select {
-	case s.outbound <- &outMsg{addr: addr, msg: &Msg{T: t, Y: "e", E: []any{code, msg}}}:
+	case s.outbound <- &outMsg{addr: addr, msg: &Msg{T: t, Y: "e", E: []any{int64(code), msg}}}:
 	default:
 	}
 }
