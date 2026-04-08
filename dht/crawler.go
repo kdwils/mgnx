@@ -240,7 +240,7 @@ func (c *crawler) getPeers(ctx context.Context, item *traversalItem) (*Msg, erro
 // BEP-51; that fact is cached and get_peers is used as a fallback for routing
 // continuation. Subsequent calls for the same node skip straight to get_peers.
 func (c *crawler) queryForSamples(ctx context.Context, item *traversalItem) (*Msg, error) {
-	log := logger.FromContext(ctx).With("service", "crawler", "node", item.node.Addr, "target", hex.EncodeToString(item.target[:]))
+	log := logger.FromContext(ctx).With("service", "crawler", "node", item.node.Addr.String(), "target", hex.EncodeToString(item.target[:]))
 
 	capable, known := c.nodeSampleSupport.Get(item.node.ID)
 	if known && !capable {
@@ -378,7 +378,7 @@ func (c *crawler) crawlerWorker(ctx context.Context) {
 
 		seen[item.node.ID] = time.Now().Add(interval)
 		log.Debug("query complete",
-			"node", item.node.Addr,
+			"node", item.node.Addr.String(),
 			"err", err,
 			"interval", interval,
 			"queue_size", pq.Len(),
@@ -450,7 +450,7 @@ func (c *crawler) processSamples(ctx context.Context, samples string, item *trav
 	}
 	logger.FromContext(ctx).Debug("samples processed",
 		"service", "crawler",
-		"node", item.node.Addr,
+		"node", item.node.Addr.String(),
 		"total", total,
 		"new", new,
 	)
