@@ -244,7 +244,7 @@ func (rt *RoutingTable) Save(ctx context.Context) error {
 	if err := os.Rename(tmpPath, path); err != nil {
 		return err
 	}
-	logger.Debug("routing table saved", "nodes", len(goodNodes), "path", path)
+	logger.Debug("routing table saved", "service", "dht", "nodes", len(goodNodes), "path", path)
 	return nil
 }
 

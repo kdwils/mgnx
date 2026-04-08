@@ -92,10 +92,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		return
 	}
 
-	retries := w.maxPeers
-	if len(ev.Peers) < retries {
-		retries = len(ev.Peers)
-	}
+	retries := min(len(ev.Peers), w.maxPeers)
 
 	var info *metadata.TorrentInfo
 	for i := 0; i < retries; i++ {

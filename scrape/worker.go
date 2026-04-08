@@ -57,7 +57,7 @@ func (w *Worker) Run(ctx context.Context) {
 
 // initTracker upserts the primary configured tracker URL and returns its DB ID.
 func (w *Worker) initTracker(ctx context.Context) int64 {
-	log := logger.FromContext(ctx)
+	log := logger.FromContext(ctx).With("service", "scraper")
 	if len(w.cfg.Trackers) == 0 {
 		return 0
 	}
@@ -91,7 +91,7 @@ func (w *Worker) runScrapeLoop(ctx context.Context, trackerID int64) {
 
 // scrapeOnce fetches a batch of due torrents and scrapes them.
 func (w *Worker) scrapeOnce(ctx context.Context, trackerID int64) {
-	log := logger.FromContext(ctx)
+	log := logger.FromContext(ctx).With("service", "scraper")
 
 	batchSize := w.cfg.BatchSize
 	if batchSize <= 0 {
@@ -157,7 +157,7 @@ func (w *Worker) applyResult(ctx context.Context, r ScrapeResult, trackerID int6
 		lastSeen = pgtype.Timestamptz{Time: time.Now(), Valid: true}
 	}
 
-	log := logger.FromContext(ctx)
+	log := logger.FromContext(ctx).With("service", "scraper")
 	nextState := newState(m.state, seeders)
 	if nextState != m.state {
 		log.InfoContext(ctx, "torrent state transition",
@@ -222,7 +222,7 @@ func (w *Worker) runDeadDetection(ctx context.Context) {
 }
 
 func (w *Worker) detectDead(ctx context.Context) {
-	log := logger.FromContext(ctx)
+	log := logger.FromContext(ctx).With("service", "scraper")
 
 	deadAfter := w.cfg.DeadAfter
 	if deadAfter <= 0 {
@@ -270,7 +270,7 @@ func (w *Worker) runPruner(ctx context.Context) {
 }
 
 func (w *Worker) prune(ctx context.Context) {
-	log := logger.FromContext(ctx)
+	log := logger.FromContext(ctx).With("service", "scraper")
 	cutoff := pgtype.Timestamptz{Time: time.Now().Add(-90 * 24 * time.Hour), Valid: true}
 	if err := w.queries.PruneScrapeHistory(ctx, cutoff); err != nil {
 		log.ErrorContext(ctx, "prune scrape history failed", "err", err)

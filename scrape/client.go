@@ -33,42 +33,86 @@ type ScrapeResult struct {
 	Complete int32 // all-time download count
 }
 
-// Client is a BEP-15 UDP tracker scrape client for a single tracker.
+// Client is a BEP-15 UDP tracker scrape client that queries one or more trackers
+// in order, stopping at the first tracker that returns any seeders.
 type Client struct {
-	addr        string
+	addrs       []string
 	dialTimeout time.Duration
 	readTimeout time.Duration
 }
 
-// NewClient parses trackerURL (must be udp://) and returns a Client.
-func NewClient(trackerURL string, dialTimeout, readTimeout time.Duration) (*Client, error) {
-	addr, err := parseUDPAddr(trackerURL)
-	if err != nil {
-		return nil, err
+// NewClient parses one or more UDP tracker URLs and returns a Client.
+// URLs that fail to parse are silently skipped; an error is returned only if
+// no valid URLs remain.
+func NewClient(dialTimeout, readTimeout time.Duration, trackerURLs ...string) (*Client, error) {
+	addrs := make([]string, 0, len(trackerURLs))
+	for _, u := range trackerURLs {
+		addr, err := parseUDPAddr(u)
+		if err != nil {
+			continue
+		}
+		addrs = append(addrs, addr)
 	}
-	return &Client{addr: addr, dialTimeout: dialTimeout, readTimeout: readTimeout}, nil
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("no valid UDP tracker URLs provided")
+	}
+	return &Client{addrs: addrs, dialTimeout: dialTimeout, readTimeout: readTimeout}, nil
 }
 
-// Scrape performs the BEP-15 connect + scrape sequence for all infohashes,
-// splitting into batches of maxPerBatch automatically.
+func (c *Client) shuffledAddrs() []string {
+	addrs := make([]string, len(c.addrs))
+	copy(addrs, c.addrs)
+	rand.Shuffle(len(addrs), func(i, j int) { addrs[i], addrs[j] = addrs[j], addrs[i] })
+	return addrs
+}
+
+// Scrape queries trackers in a random order, returning results from the first
+// tracker that reports any seeders. If no tracker reports seeders, the results
+// from the last reachable tracker are returned. An error is returned only when
+// no tracker could be reached or the context was cancelled.
 func (c *Client) Scrape(ctx context.Context, infohashes []string) ([]ScrapeResult, error) {
-	conn, err := c.dial(ctx)
+	var lastResults []ScrapeResult
+	reachable := 0
+	for _, addr := range c.shuffledAddrs() {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		results, err := c.scrapeTracker(ctx, addr, infohashes)
+		if err != nil {
+			continue
+		}
+		reachable++
+		for _, r := range results {
+			if r.Seeders > 0 {
+				return results, nil
+			}
+		}
+		lastResults = results
+	}
+	if reachable == 0 {
+		return nil, fmt.Errorf("all trackers unreachable")
+	}
+	return lastResults, nil
+}
+
+// scrapeTracker performs the BEP-15 connect + scrape sequence against a single
+// tracker address, splitting infohashes into batches of maxPerBatch.
+func (c *Client) scrapeTracker(ctx context.Context, addr string, infohashes []string) ([]ScrapeResult, error) {
+	conn, err := c.dialAddr(ctx, addr)
 	if err != nil {
-		return nil, fmt.Errorf("dial %s: %w", c.addr, err)
+		return nil, fmt.Errorf("dial %s: %w", addr, err)
 	}
 	defer conn.Close()
 
 	connID, err := c.connect(conn)
 	if err != nil {
-		return nil, fmt.Errorf("connect %s: %w", c.addr, err)
+		return nil, fmt.Errorf("connect %s: %w", addr, err)
 	}
 
 	var results []ScrapeResult
 	for i := 0; i < len(infohashes); i += maxPerBatch {
 		end := min(i+maxPerBatch, len(infohashes))
-		batch := infohashes[i:end]
-
-		batchResults, err := c.scrapeBatch(conn, connID, batch)
+		batchResults, err := c.scrapeBatch(conn, connID, infohashes[i:end])
 		if err != nil {
 			return results, fmt.Errorf("scrape batch: %w", err)
 		}
@@ -77,9 +121,9 @@ func (c *Client) Scrape(ctx context.Context, infohashes []string) ([]ScrapeResul
 	return results, nil
 }
 
-func (c *Client) dial(ctx context.Context) (net.Conn, error) {
+func (c *Client) dialAddr(ctx context.Context, addr string) (net.Conn, error) {
 	d := net.Dialer{Timeout: c.dialTimeout}
-	return d.DialContext(ctx, "udp", c.addr)
+	return d.DialContext(ctx, "udp", addr)
 }
 
 func (c *Client) connect(conn net.Conn) (int64, error) {

@@ -9,7 +9,7 @@ import (
 )
 
 func TestDecodeInfoSingleFile(t *testing.T) {
-	data, err := bencode.Marshal(map[string]interface{}{
+	data, err := bencode.Marshal(map[string]any{
 		"name":         "ubuntu.iso",
 		"length":       int64(1024 * 1024 * 700),
 		"piece length": int64(512 * 1024),
@@ -28,16 +28,16 @@ func TestDecodeInfoSingleFile(t *testing.T) {
 }
 
 func TestDecodeInfoMultiFile(t *testing.T) {
-	data, err := bencode.Marshal(map[string]interface{}{
+	data, err := bencode.Marshal(map[string]any{
 		"name":         "My.Show.S01",
 		"piece length": int64(512 * 1024),
 		"pieces":       "xxxxxxxxxxxxxxxxxxxx",
-		"files": []interface{}{
-			map[string]interface{}{
+		"files": []any{
+			map[string]any{
 				"path":   []string{"episode1.mkv"},
 				"length": int64(500 * 1024 * 1024),
 			},
-			map[string]interface{}{
+			map[string]any{
 				"path":   []string{"subs", "episode1.srt"},
 				"length": int64(50 * 1024),
 			},

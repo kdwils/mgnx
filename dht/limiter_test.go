@@ -16,7 +16,7 @@ func TestIPLimiter(t *testing.T) {
 
 		ip := net.ParseIP("192.168.1.1")
 
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			assert.True(t, limiter.Allow(ip), "expected allow for request %d", i+1)
 		}
 	})
@@ -26,7 +26,7 @@ func TestIPLimiter(t *testing.T) {
 
 		ip := net.ParseIP("192.168.1.1")
 
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			limiter.Allow(ip)
 		}
 
@@ -54,12 +54,10 @@ func TestIPLimiter(t *testing.T) {
 		ip := net.ParseIP("10.0.0.1")
 		var wg sync.WaitGroup
 
-		for i := 0; i < 50; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range 50 {
+			wg.Go(func() {
 				limiter.Allow(ip)
-			}()
+			})
 		}
 
 		wg.Wait()

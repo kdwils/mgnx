@@ -109,7 +109,8 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	go s.bucketRefreshLoop(ctx)
 
-	logger.FromContext(ctx).Info("DHT server started",
+	logger.FromContext(ctx).Info("server started",
+		"service", "dht",
 		"addr", s.conn.LocalAddr(),
 		"node_id", hex.EncodeToString(s.ourID[:]),
 		"workers", s.cfg.Workers,
@@ -276,7 +277,7 @@ func (s *Server) queryHandlerLoop(ctx context.Context) {
 // processQuery dispatches a single inbound KRPC query (BEP-05 §KRPC Protocol)
 // to the appropriate handler and adds the querying node to the routing table.
 func (s *Server) processQuery(ctx context.Context, in inMsg) {
-	log := logger.FromContext(ctx)
+	log := logger.FromContext(ctx).With("service", "dht")
 
 	if !s.ipLimiter.Allow(in.addr.IP) {
 		return
@@ -310,7 +311,7 @@ func (s *Server) processQuery(ctx context.Context, in inMsg) {
 
 // handlePing responds to a BEP-05 ping query (BEP-05 §ping).
 func (s *Server) handlePing(ctx context.Context, addr *net.UDPAddr, msg *Msg) {
-	log := logger.FromContext(ctx)
+	log := logger.FromContext(ctx).With("service", "dht")
 	log.Debug("handle_ping", "from", addr)
 	s.respond(addr, msg.T, &Return{ID: string(s.ourID[:])})
 }
@@ -318,7 +319,7 @@ func (s *Server) handlePing(ctx context.Context, addr *net.UDPAddr, msg *Msg) {
 // handleFindNode responds to a BEP-05 find_node query (BEP-05 §find node)
 // by returning the k-closest nodes to the requested target.
 func (s *Server) handleFindNode(ctx context.Context, addr *net.UDPAddr, msg *Msg) {
-	log := logger.FromContext(ctx)
+	log := logger.FromContext(ctx).With("service", "dht")
 	log.Debug("handle_find_node", "from", addr)
 
 	if msg.A == nil {
@@ -349,7 +350,7 @@ func (s *Server) handleFindNode(ctx context.Context, addr *net.UDPAddr, msg *Msg
 // k-closest nodes ("nodes" path) along with a token for future announce_peer.
 // TODO: When peer storage is implemented, use MaxPeersPerResponse to bound Values.
 func (s *Server) handleGetPeers(ctx context.Context, addr *net.UDPAddr, msg *Msg) {
-	log := logger.FromContext(ctx).With("server", "get_peers").With("addr", addr.String())
+	log := logger.FromContext(ctx).With("service", "dht", "handler", "get_peers", "addr", addr.String())
 	log.Debug("received request")
 
 	if msg.A == nil {
@@ -378,7 +379,7 @@ func (s *Server) handleGetPeers(ctx context.Context, addr *net.UDPAddr, msg *Msg
 // handleAnnouncePeer handles a BEP-05 announce_peer query (BEP-05 §announce peer).
 // The announcing node's address is emitted as a DiscoveredPeers event for the indexer.
 func (s *Server) handleAnnouncePeer(ctx context.Context, addr *net.UDPAddr, msg *Msg) {
-	log := logger.FromContext(ctx).With("server", "announce_peer").With("addr", addr.String())
+	log := logger.FromContext(ctx).With("service", "dht", "handler", "announce_peer", "addr", addr.String())
 	log.Debug("received request")
 
 	if msg.A == nil {
@@ -427,7 +428,7 @@ func (s *Server) handleAnnouncePeer(ctx context.Context, addr *net.UDPAddr, msg 
 // As a crawler we hold no stored samples; we respond with closest nodes so the
 // querier can continue its traversal.
 func (s *Server) handleSampleInfohashes(ctx context.Context, addr *net.UDPAddr, msg *Msg) {
-	log := logger.FromContext(ctx).With("server", "sample_infohashes").With("addr", addr.String())
+	log := logger.FromContext(ctx).With("service", "dht", "handler", "sample_infohashes", "addr", addr.String())
 	log.Debug("received request")
 
 	if msg.A == nil {
