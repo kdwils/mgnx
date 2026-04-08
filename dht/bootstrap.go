@@ -296,6 +296,20 @@ func (s *Server) resolveBootstrapAddrs(ctx context.Context, addrs []string) []*n
 	return result
 }
 
+// DeriveNodeIDFromIP generates a BEP-42 compliant node ID for the given IPv4
+// address. Implements BEP-42 (DHT Security Extension) §Node ID.
+// See https://www.bittorrent.org/beps/bep_0042.html
+//
+// Derivation (IPv4):
+//
+//	r          = random 0–7
+//	masked_ip  = ip_uint32 & 0x030f3fff
+//	seed       = masked_ip | (r << 29)   (4 bytes, big-endian)
+//	crc        = crc32c(seed)
+//	id[0..1]   = top 16 bits of crc
+//	id[2]      = (crc >> 8) & 0xf8 | random_3_bits
+//	id[3..18]  = random
+//	id[19]     = random_5_bits | r
 func DeriveNodeIDFromIP(ip net.IP) (NodeID, error) {
 	ip4 := ip.To4()
 	if ip4 == nil {
