@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -37,7 +38,8 @@ var serveCmd = &cobra.Command{
 
 		l := logger.New(cfg.Server.LogLevel)
 
-		ctx := logger.WithContext(cmd.Context(), l)
+		ctx, cancel := context.WithCancel(logger.WithContext(cmd.Context(), l))
+		defer cancel()
 
 		if cfg.Gluetun.Endpoint != "" && cfg.DHT.NodeID != "" {
 			return fmt.Errorf("gluetun.endpoint and dht.node_id are mutually exclusive")
@@ -103,6 +105,8 @@ var serveCmd = &cobra.Command{
 			return fmt.Errorf("crawler start: %w", err)
 		}
 		defer crawler.Stop(ctx)
+
+		go gluetun.WatchFiles(ctx, cancel, cfg.DHT.ForwardedPortFile, cfg.DHT.ExternalIPFile)
 
 		metaClient := metadata.NewClient(
 			metadata.TimeoutDialer{
