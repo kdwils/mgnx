@@ -38,6 +38,8 @@ type DHT struct {
 	MaxPeersPerResponse int           `mapstructure:"max_peers_per_response"`
 	MaxMessageSize      int           `mapstructure:"max_message_size"`
 	MaxMetadataSize     int           `mapstructure:"max_metadata_size"`
+	ForwardedPortFile   string        `mapstructure:"forwarded_port_file"`
+	ExternalIPFile      string        `mapstructure:"external_ip_file"`
 }
 
 type Crawler struct {
@@ -80,8 +82,7 @@ type Server struct {
 }
 
 type Gluetun struct {
-	Endpoint          string `mapstructure:"endpoint"`
-	ForwardedPortFile string `mapstructure:"forwarded_port_file"`
+	Endpoint string `mapstructure:"endpoint"`
 }
 
 func New(v *viper.Viper) (Config, error) {

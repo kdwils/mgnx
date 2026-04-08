@@ -59,11 +59,12 @@ func NewTxnManager(table *RoutingTable, timeout time.Duration) *TxnManager {
 			if time.Since(txn.SentAt) <= timeout {
 				return false
 			}
-			// Timed out: signal the waiter and mark the node as failed.
-			txn.deliver(nil)
+			// Mark failure before closing the channel so callers that
+			// unblock on the close observe the updated routing table state.
 			if table != nil {
 				table.MarkFailure(txn.NodeID)
 			}
+			txn.deliver(nil)
 			return true
 		}),
 	)

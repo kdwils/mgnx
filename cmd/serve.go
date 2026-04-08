@@ -69,14 +69,14 @@ var serveCmd = &cobra.Command{
 			l.Info("gluetun: derived BEP-42 node ID from public IP", "node_id", cfg.DHT.NodeID)
 		}
 
-		if cfg.Gluetun.ForwardedPortFile != "" {
-			data, err := os.ReadFile(cfg.Gluetun.ForwardedPortFile)
+		if cfg.DHT.ForwardedPortFile != "" {
+			data, err := os.ReadFile(cfg.DHT.ForwardedPortFile)
 			if err != nil {
 				return fmt.Errorf("gluetun: read forwarded port file: %w", err)
 			}
 			p, err := strconv.Atoi(strings.TrimSpace(string(data)))
 			if err != nil || p <= 0 || p > 65535 {
-				return fmt.Errorf("gluetun: invalid forwarded port in %s", cfg.Gluetun.ForwardedPortFile)
+				return fmt.Errorf("gluetun: invalid forwarded port in %s", cfg.DHT.ForwardedPortFile)
 			}
 			cfg.DHT.Port = p
 			l.Info("gluetun: using forwarded port", "port", p)
