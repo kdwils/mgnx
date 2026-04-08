@@ -1,16 +1,18 @@
 package cmd
 
 import (
+	"encoding/hex"
 	"fmt"
 	"log"
-
 	"net"
+	"net/http"
 	"time"
 
 	"github.com/kdwils/mgnx/config"
 	"github.com/kdwils/mgnx/db"
 	"github.com/kdwils/mgnx/db/gen"
 	"github.com/kdwils/mgnx/dht"
+	"github.com/kdwils/mgnx/gluetun"
 	"github.com/kdwils/mgnx/indexer"
 	"github.com/kdwils/mgnx/logger"
 	"github.com/kdwils/mgnx/metadata"
@@ -33,6 +35,36 @@ var serveCmd = &cobra.Command{
 		l := logger.New(cfg.Server.LogLevel)
 
 		ctx := logger.WithContext(cmd.Context(), l)
+
+		if cfg.Gluetun.Endpoint != "" && cfg.DHT.NodeID != "" {
+			return fmt.Errorf("gluetun.endpoint and dht.node_id are mutually exclusive")
+		}
+
+		if cfg.Gluetun.Endpoint != "" {
+			gc := gluetun.New(cfg.Gluetun.Endpoint, &http.Client{Timeout: 10 * time.Second})
+			info, err := gc.FetchPublicIP(ctx)
+			if err != nil {
+				return fmt.Errorf("gluetun: %w", err)
+			}
+			l.Info("gluetun: public IP detected",
+				"public_ip", info.PublicIP,
+				"city", info.City,
+				"region", info.Region,
+				"country", info.Country,
+				"organization", info.Organization,
+				"timezone", info.Timezone,
+			)
+			ip := info.IP()
+			if ip == nil {
+				return fmt.Errorf("gluetun: could not parse public IP %q", info.PublicIP)
+			}
+			id, err := dht.DeriveNodeIDFromIP(ip)
+			if err != nil {
+				return fmt.Errorf("gluetun: derive node ID: %w", err)
+			}
+			cfg.DHT.NodeID = hex.EncodeToString(id[:])
+			l.Info("gluetun: derived BEP-42 node ID from public IP", "node_id", cfg.DHT.NodeID)
+		}
 
 		pool, err := db.Connect(ctx, cfg.Database.URL)
 		if err != nil {

@@ -43,14 +43,14 @@ type Crawler interface {
 //  1. Passive: announce_peer queries already wired in the server (Step 6).
 //  2. Active:  BEP-51 sample_infohashes traversal driven here.
 type crawler struct {
-	server           *Server
-	discovered       chan DiscoveredPeers
-	dedup            *BloomFilter
-	cfg              config.DHT
-	crawlerCfg       config.Crawler
-	cancel           context.CancelFunc
-	wg               sync.WaitGroup
-	rateLimiter      *nodeRateLimiter
+	server            *Server
+	discovered        chan DiscoveredPeers
+	dedup             *BloomFilter
+	cfg               config.DHT
+	crawlerCfg        config.Crawler
+	cancel            context.CancelFunc
+	wg                sync.WaitGroup
+	rateLimiter       *nodeRateLimiter
 	nodeSampleSupport *pkgcache.Cache[NodeID, bool]
 }
 
@@ -96,11 +96,11 @@ func NewCrawler(dhtCfg config.DHT, crawlerCfg config.Crawler) (Crawler, error) {
 	dedup := NewBloomFilter()
 	server.dedup = dedup
 	return &crawler{
-		server:     server,
-		discovered: server.discovered,
-		dedup:      dedup,
-		cfg:        dhtCfg,
-		crawlerCfg: crawlerCfg,
+		server:      server,
+		discovered:  server.discovered,
+		dedup:       dedup,
+		cfg:         dhtCfg,
+		crawlerCfg:  crawlerCfg,
 		rateLimiter: newNodeRateLimiter(2 * time.Second),
 		nodeSampleSupport: pkgcache.New[NodeID, bool](
 			pkgcache.WithCleanup[NodeID, bool](
@@ -111,7 +111,7 @@ func NewCrawler(dhtCfg config.DHT, crawlerCfg config.Crawler) (Crawler, error) {
 	}, nil
 }
 
-// Infohashes returns the channel of discovereded infohash events.
+// Infohashes returns the channel of discovered infohash events.
 func (c *crawler) Infohashes() <-chan DiscoveredPeers {
 	return c.discovered
 }

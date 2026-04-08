@@ -54,6 +54,7 @@ func initConfig() {
 
 	viper.SetDefault("database.url", "")
 
+	viper.SetDefault("gluetun.endpoint", "")
 	viper.SetDefault("indexer.workers", 2)
 	viper.SetDefault("indexer.request_timeout", 6*time.Second)
 	viper.SetDefault("indexer.max_peers", 100)

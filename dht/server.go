@@ -124,7 +124,7 @@ func (s *Server) Stop(ctx context.Context) {
 	s.table.Save(ctx) //nolint:errcheck — best-effort on shutdown
 }
 
-// Infohashes returns the channel of discovereded infohash events.
+// Infohashes returns the channel of discovered infohash events.
 func (s *Server) Infohashes() <-chan DiscoveredPeers {
 	return s.discovered
 }
@@ -327,9 +327,6 @@ func (s *Server) handleFindNode(addr *net.UDPAddr, msg *Msg) {
 	}
 	closest := s.table.Closest(target, s.cfg.BucketSize)
 	maxNodes := s.cfg.MaxNodesPerResponse
-	if maxNodes <= 0 {
-		maxNodes = 256
-	}
 	if len(closest) > maxNodes {
 		closest = closest[:maxNodes]
 	}
@@ -400,7 +397,7 @@ func (s *Server) handleAnnouncePeer(ctx context.Context, addr *net.UDPAddr, msg 
 	log := logger.FromContext(ctx)
 	select {
 	case s.discovered <- event:
-		log.Debug("announce_peer discovereded", "infohash", hex.EncodeToString(h[:]), "from", addr)
+		log.Debug("announce_peer discovered", "infohash", hex.EncodeToString(h[:]), "from", addr)
 	default:
 		log.Debug("announce_peer dropped: discovered channel full", "infohash", hex.EncodeToString(h[:]))
 	}

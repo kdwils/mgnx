@@ -14,6 +14,7 @@ type Config struct {
 	Crawler  Crawler  `mapstructure:"crawler"`
 	Indexer  Indexer  `mapstructure:"indexer"`
 	Scrape   Scrape   `mapstructure:"scrape"`
+	Gluetun  Gluetun  `mapstructure:"gluetun"`
 }
 
 type DHT struct {
@@ -76,6 +77,10 @@ type Server struct {
 	Port     int    `mapstructure:"port"`
 	LogLevel string `mapstructure:"log_level"`
 	APIKey   string `mapstructure:"apiKey"`
+}
+
+type Gluetun struct {
+	Endpoint string `mapstructure:"endpoint"`
 }
 
 func New(v *viper.Viper) (Config, error) {
