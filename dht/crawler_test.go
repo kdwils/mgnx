@@ -17,8 +17,19 @@ func makeCrawler(t *testing.T) *crawler {
 	t.Helper()
 	c, err := NewCrawler(testServerCfg(t), config.Crawler{Workers: 2})
 	require.NoError(t, err)
+	cr := c.(*crawler)
+	cr.discoveryQueue = make(chan discoveryWork, 64)
 	t.Cleanup(func() { c.Stop(t.Context()) })
-	return c.(*crawler)
+	return cr
+}
+
+// startDiscoveryWorkers launches discovery workers for tests that need the full
+// processSamples → discoverPeers → discovered pipeline.
+func startDiscoveryWorkers(t *testing.T, c *crawler) {
+	t.Helper()
+	for range 2 {
+		c.wg.Go(func() { c.discoveryWorker(t.Context()) })
+	}
 }
 
 func makeDiscoveredNode(id byte, port int) *Node {
@@ -191,6 +202,7 @@ func TestCrawler_processSamples(t *testing.T) {
 		defer cancel()
 
 		c := makeCrawler(t)
+		startDiscoveryWorkers(t, c)
 		require.NoError(t, c.server.Start(ctx))
 
 		peerAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9876}
@@ -217,6 +229,7 @@ func TestCrawler_processSamples(t *testing.T) {
 		defer cancel()
 
 		c := makeCrawler(t)
+		startDiscoveryWorkers(t, c)
 		require.NoError(t, c.server.Start(ctx))
 
 		peerAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9877}
@@ -255,13 +268,13 @@ func TestCrawler_processSamples(t *testing.T) {
 		}
 	})
 
-	t.Run("drops silently when discovery channel is full", func(t *testing.T) {
+	t.Run("drops silently when discovery queue is full", func(t *testing.T) {
 		c := makeCrawler(t)
 		node := makeDiscoveredNode(0x01, 1001)
 		item := &traversalItem{node: node}
 
-		for i := range cap(c.discovered) {
-			c.discovered <- DiscoveredPeers{Infohash: [20]byte{byte(i)}}
+		for i := range cap(c.discoveryQueue) {
+			c.discoveryQueue <- discoveryWork{infohash: [20]byte{byte(i)}}
 		}
 
 		var h [20]byte
@@ -275,6 +288,7 @@ func TestCrawler_processSamples(t *testing.T) {
 		defer cancel()
 
 		c := makeCrawler(t)
+		startDiscoveryWorkers(t, c)
 		require.NoError(t, c.server.Start(ctx))
 
 		peerAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9878}

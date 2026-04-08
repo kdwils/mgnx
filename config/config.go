@@ -42,7 +42,9 @@ type DHT struct {
 }
 
 type Crawler struct {
-	Workers int `mapstructure:"crawlers"`
+	Workers            int `mapstructure:"crawlers"`
+	DiscoveryWorkers   int `mapstructure:"discovery_workers"`
+	DiscoveryQueueSize int `mapstructure:"discovery_queue_size"`
 }
 
 type Indexer struct {

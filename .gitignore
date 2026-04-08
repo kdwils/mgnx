@@ -2,3 +2,4 @@ PLAN.md
 config.yaml
 schema.sql
 docs/
+*.dat

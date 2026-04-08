@@ -111,7 +111,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	logger.FromContext(ctx).Info("server started",
 		"service", "dht",
-		"addr", s.conn.LocalAddr(),
+		"addr", s.conn.LocalAddr().String(),
 		"node_id", hex.EncodeToString(s.ourID[:]),
 		"workers", s.cfg.Workers,
 	)

@@ -12,6 +12,7 @@ import (
 	"net"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/kdwils/mgnx/config"
@@ -53,6 +54,14 @@ type crawler struct {
 	wg                sync.WaitGroup
 	rateLimiter       *nodeRateLimiter
 	nodeSampleSupport *pkgcache.Cache[NodeID, bool]
+
+	discoveryQueue     chan discoveryWork
+	droppedDiscoveries atomic.Int64
+}
+
+type discoveryWork struct {
+	infohash   [20]byte
+	sourceNode *Node
 }
 
 // nodeRateLimiter enforces minimum spacing between queries to the same node.
@@ -131,6 +140,12 @@ func (c *crawler) Start(ctx context.Context) error {
 	crawlCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 
+	queueSize := c.crawlerCfg.DiscoveryQueueSize
+	if queueSize <= 0 {
+		queueSize = 256
+	}
+	c.discoveryQueue = make(chan discoveryWork, queueSize)
+
 	c.nodeSampleSupport.StartCleanup(crawlCtx)
 	c.rateLimiter.Start(crawlCtx)
 
@@ -141,7 +156,22 @@ func (c *crawler) Start(ctx context.Context) error {
 		})
 	}
 
-	logger.FromContext(ctx).Info("crawler started", "service", "crawler", "crawler_workers", workers)
+	discoveryWorkers := c.crawlerCfg.DiscoveryWorkers
+	if discoveryWorkers <= 0 {
+		discoveryWorkers = 4
+	}
+	for range discoveryWorkers {
+		c.wg.Go(func() {
+			c.discoveryWorker(crawlCtx)
+		})
+	}
+
+	logger.FromContext(ctx).Info("crawler started",
+		"service", "crawler",
+		"crawler_workers", workers,
+		"discovery_workers", discoveryWorkers,
+		"discovery_queue_size", queueSize,
+	)
 	return nil
 }
 
@@ -278,6 +308,13 @@ func (c *crawler) crawlerWorker(ctx context.Context) {
 				}
 			}
 			c.seedQueue(pq, target)
+			if dropped := c.droppedDiscoveries.Swap(0); dropped > 0 {
+				log.Warn("discovery queue backpressure",
+					"dropped", dropped,
+					"queue_len", len(c.discoveryQueue),
+					"queue_cap", cap(c.discoveryQueue),
+				)
+			}
 			log.Debug("retargeting",
 				"queried", queried,
 				"queue_size", pq.Len(),
@@ -405,7 +442,11 @@ func (c *crawler) processSamples(ctx context.Context, samples string, item *trav
 			continue
 		}
 		new++
-		go c.discoverPeers(ctx, h, item.node)
+		select {
+		case c.discoveryQueue <- discoveryWork{h, item.node}:
+		default:
+			c.droppedDiscoveries.Add(1)
+		}
 	}
 	logger.FromContext(ctx).Debug("samples processed",
 		"service", "crawler",
@@ -415,13 +456,28 @@ func (c *crawler) processSamples(ctx context.Context, samples string, item *trav
 	)
 }
 
+// discoveryWorker consumes infohash work items from the bounded discoveryQueue
+// and runs a get_peers lookup for each. Worker count is the concurrency limit.
+func (c *crawler) discoveryWorker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case work := <-c.discoveryQueue:
+			c.discoverPeers(ctx, work.infohash, work.sourceNode)
+		}
+	}
+}
+
 // discoverPeers performs an iterative BEP-05 get_peers lookup for h.
 // At each iteration it queries up to Alpha nodes in parallel, then trims the
 // shortlist to the k-closest seen so far. It stops early when the closest node
 // stops changing (Kademlia convergence) or no new nodes are returned.
 func (c *crawler) discoverPeers(ctx context.Context, h [20]byte, initialNode *Node) {
 	log := logger.FromContext(ctx).With("service", "crawler", "infohash", hex.EncodeToString(h[:]))
-	log.Debug("discovering peers", "initial_node", initialNode.Addr)
+	if initialNode != nil {
+		log.Debug("discovering peers", "initial_node", initialNode.Addr)
+	}
 
 	target := NodeID(h)
 	shortlist := make(map[NodeID]*Node)
