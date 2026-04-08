@@ -145,6 +145,10 @@ func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
 	// Stop when all bootstrapK closest nodes have been queried.
 	round := 0
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		entries := sortedEntries()
 
 		limit := min(bootstrapK, len(entries))
