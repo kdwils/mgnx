@@ -106,7 +106,10 @@ func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
 	log.Info("bootstrap starting", "bootstrap_nodes", len(resolved))
 
 	bn := newBootstrapNodes()
-	externalIP := s.querySeeds(ctx, resolved, bn)
+	externalIP, err := s.querySeeds(ctx, resolved, bn)
+	if err != nil {
+		return err
+	}
 
 	if s.cfg.NodeID == "" && externalIP != nil {
 		if newID, err := DeriveNodeIDFromIP(externalIP); err == nil {
@@ -115,13 +118,15 @@ func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
 		}
 	}
 
-	s.convergeTable(ctx, bn)
-	s.refreshStaleBuckets(ctx)
+	if err := s.convergeTable(ctx, bn); err != nil {
+		return err
+	}
 
+	s.refreshStaleBuckets(ctx)
 	return nil
 }
 
-func (s *Server) querySeeds(ctx context.Context, addrs []*net.UDPAddr, bn *bootstrapNodes) net.IP {
+func (s *Server) querySeeds(ctx context.Context, addrs []*net.UDPAddr, bn *bootstrapNodes) (net.IP, error) {
 	log := logger.FromContext(ctx).With("service", "dht")
 
 	type seedResult struct {
@@ -175,7 +180,7 @@ func (s *Server) querySeeds(ctx context.Context, addrs []*net.UDPAddr, bn *boots
 	contacted := 0
 	for r := range results {
 		if ctx.Err() != nil {
-			break
+			return nil, ctx.Err()
 		}
 		if r.err != nil {
 			log.Debug("bootstrap node unreachable", "addr", r.addr, "err", r.err)
@@ -193,25 +198,16 @@ func (s *Server) querySeeds(ctx context.Context, addrs []*net.UDPAddr, bn *boots
 		log.Debug("bootstrap node responded", "addr", r.addr, "nodes_returned", len(r.nodes))
 	}
 
-	if ctx.Err() != nil && externalIP == nil {
-		log.Error("bootstrap cancelled", "error", ctx.Err())
-	}
-
 	log.Info("bootstrap phase 1 complete", "contacted", contacted, "shortlist", bn.len())
 
-	return externalIP
+	return externalIP, nil
 }
 
-func (s *Server) convergeTable(ctx context.Context, bn *bootstrapNodes) {
+func (s *Server) convergeTable(ctx context.Context, bn *bootstrapNodes) error {
 	log := logger.FromContext(ctx).With("service", "dht")
 
 	round := 0
 	for {
-		if ctx.Err() != nil {
-			log.Error("bootstrap cancelled", "error", ctx.Err())
-			return
-		}
-
 		toQuery := bn.closestUnqueried(bootstrapK, bootstrapAlpha)
 		if len(toQuery) == 0 {
 			break
@@ -221,11 +217,6 @@ func (s *Server) convergeTable(ctx context.Context, bn *bootstrapNodes) {
 		bn.markQueried(toQuery)
 
 		for _, e := range toQuery {
-			if ctx.Err() != nil {
-				log.Error("bootstrap cancelled", "error", ctx.Err())
-				return
-			}
-
 			resp, err := s.Query(ctx, e.node.Addr, e.node.ID, &Msg{
 				Y: "q",
 				Q: "find_node",
@@ -235,11 +226,10 @@ func (s *Server) convergeTable(ctx context.Context, bn *bootstrapNodes) {
 				},
 			})
 			if err != nil {
-				log.Debug("iterative find_node failed", "addr", e.node.Addr, "err", err)
 				if ctx.Err() != nil {
-					log.Error("bootstrap cancelled", "error", ctx.Err())
-					return
+					return ctx.Err()
 				}
+				log.Debug("iterative find_node failed", "addr", e.node.Addr, "err", err)
 				continue
 			}
 			if resp.R == nil {
@@ -258,14 +248,12 @@ func (s *Server) convergeTable(ctx context.Context, bn *bootstrapNodes) {
 	}
 
 	log.Info("bootstrap complete", "table_nodes", s.table.NodeCount())
+	return nil
 }
 
 func (s *Server) refreshStaleBuckets(ctx context.Context) {
-	log := logger.FromContext(ctx).With("service", "dht")
-
 	for _, b := range s.table.StaleBuckets() {
 		if ctx.Err() != nil {
-			log.Error("bootstrap cancelled", "error", ctx.Err())
 			return
 		}
 		target := randomIDInBucket(b)
