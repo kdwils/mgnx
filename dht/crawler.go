@@ -140,7 +140,7 @@ func (c *crawler) Start(ctx context.Context) error {
 		})
 	}
 
-	logger.FromContext(ctx).Info("DHT crawler started", "crawler_workers", workers)
+	logger.FromContext(ctx).Info("crawler started", "service", "crawler", "crawler_workers", workers)
 	return nil
 }
 
@@ -364,7 +364,8 @@ func (c *crawler) processSamples(ctx context.Context, samples string, item *trav
 		new++
 		go c.discoverPeers(ctx, h, item.node)
 	}
-	logger.FromContext(ctx).Debug("service", "crawler", "samples processed",
+	logger.FromContext(ctx).Debug("samples processed",
+		"service", "crawler",
 		"node", item.node.Addr,
 		"total", total,
 		"new", new,
@@ -376,7 +377,7 @@ func (c *crawler) processSamples(ctx context.Context, samples string, item *trav
 // shortlist to the k-closest seen so far. It stops early when the closest node
 // stops changing (Kademlia convergence) or no new nodes are returned.
 func (c *crawler) discoverPeers(ctx context.Context, h [20]byte, initialNode *Node) {
-	logger.FromContext(ctx).Debug("service", "crawler", "discovering peers", "infohash", hex.EncodeToString(h[:]))
+	logger.FromContext(ctx).Debug("discovering peers", "service", "crawler", "infohash", hex.EncodeToString(h[:]))
 
 	target := NodeID(h)
 	shortlist := make(map[NodeID]*Node)

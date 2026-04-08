@@ -62,7 +62,7 @@ func (bn *bootstrapNodes) closestUnqueried(k, alpha int) []*entry {
 		return bytes.Compare(entries[i].dist[:], entries[j].dist[:]) < 0
 	})
 
-	limit := min(bootstrapK, len(entries))
+	limit := min(k, len(entries))
 	var result []*entry
 	for _, e := range entries[:limit] {
 		if !e.queried {
@@ -73,16 +73,6 @@ func (bn *bootstrapNodes) closestUnqueried(k, alpha int) []*entry {
 		}
 	}
 	return result
-}
-
-func (bn *bootstrapNodes) unqueriedCount() int {
-	count := 0
-	for _, e := range bn.c.Items() {
-		if !e.queried {
-			count++
-		}
-	}
-	return count
 }
 
 func (bn *bootstrapNodes) recomputeDistances(ourID NodeID) {
@@ -110,10 +100,10 @@ func (bn *bootstrapNodes) all() []*entry {
 }
 
 func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
-	log := logger.FromContext(ctx)
+	log := logger.FromContext(ctx).With("service", "dht")
 
 	resolved := s.resolveBootstrapAddrs(ctx, addrs)
-	log.Info("DHT bootstrap starting", "bootstrap_nodes", len(resolved))
+	log.Info("bootstrap starting", "bootstrap_nodes", len(resolved))
 
 	bn := newBootstrapNodes()
 	externalIP := s.querySeeds(ctx, resolved, bn)
@@ -132,7 +122,7 @@ func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
 }
 
 func (s *Server) querySeeds(ctx context.Context, addrs []*net.UDPAddr, bn *bootstrapNodes) net.IP {
-	log := logger.FromContext(ctx)
+	log := logger.FromContext(ctx).With("service", "dht")
 
 	type seedResult struct {
 		addr       *net.UDPAddr
@@ -203,25 +193,22 @@ func (s *Server) querySeeds(ctx context.Context, addrs []*net.UDPAddr, bn *boots
 		log.Debug("bootstrap node responded", "addr", r.addr, "nodes_returned", len(r.nodes))
 	}
 
-	if err := eg.Wait(); err != nil {
-		log.Error("DHT bootstrap cancelled", "error", err)
-	}
 	if ctx.Err() != nil && externalIP == nil {
-		log.Error("DHT bootstrap cancelled", "error", ctx.Err())
+		log.Error("bootstrap cancelled", "error", ctx.Err())
 	}
 
-	log.Info("DHT bootstrap phase 1 complete", "contacted", contacted, "shortlist", bn.len())
+	log.Info("bootstrap phase 1 complete", "contacted", contacted, "shortlist", bn.len())
 
 	return externalIP
 }
 
 func (s *Server) convergeTable(ctx context.Context, bn *bootstrapNodes) {
-	log := logger.FromContext(ctx)
+	log := logger.FromContext(ctx).With("service", "dht")
 
 	round := 0
 	for {
 		if ctx.Err() != nil {
-			log.Error("DHT bootstrap cancelled", "error", ctx.Err())
+			log.Error("bootstrap cancelled", "error", ctx.Err())
 			return
 		}
 
@@ -235,7 +222,7 @@ func (s *Server) convergeTable(ctx context.Context, bn *bootstrapNodes) {
 
 		for _, e := range toQuery {
 			if ctx.Err() != nil {
-				log.Error("DHT bootstrap cancelled", "error", ctx.Err())
+				log.Error("bootstrap cancelled", "error", ctx.Err())
 				return
 			}
 
@@ -250,7 +237,7 @@ func (s *Server) convergeTable(ctx context.Context, bn *bootstrapNodes) {
 			if err != nil {
 				log.Debug("iterative find_node failed", "addr", e.node.Addr, "err", err)
 				if ctx.Err() != nil {
-					log.Error("DHT bootstrap cancelled", "error", ctx.Err())
+					log.Error("bootstrap cancelled", "error", ctx.Err())
 					return
 				}
 				continue
@@ -270,15 +257,15 @@ func (s *Server) convergeTable(ctx context.Context, bn *bootstrapNodes) {
 		log.Debug("bootstrap convergence round", "round", round, "shortlist", bn.len(), "table_nodes", s.table.NodeCount())
 	}
 
-	log.Info("DHT bootstrap complete", "table_nodes", s.table.NodeCount())
+	log.Info("bootstrap complete", "table_nodes", s.table.NodeCount())
 }
 
 func (s *Server) refreshStaleBuckets(ctx context.Context) {
-	log := logger.FromContext(ctx)
+	log := logger.FromContext(ctx).With("service", "dht")
 
 	for _, b := range s.table.StaleBuckets() {
 		if ctx.Err() != nil {
-			log.Error("DHT bootstrap cancelled", "error", ctx.Err())
+			log.Error("bootstrap cancelled", "error", ctx.Err())
 			return
 		}
 		target := randomIDInBucket(b)

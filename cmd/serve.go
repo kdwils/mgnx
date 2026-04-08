@@ -39,7 +39,11 @@ var serveCmd = &cobra.Command{
 		ctx, cancel := context.WithCancel(logger.WithContext(cmd.Context(), l))
 		defer cancel()
 
-		go gluetun.WatchFiles(ctx, cancel, cfg.DHT.ForwardedPortFile, cfg.DHT.ExternalIPFile)
+		go func() {
+			if err := gluetun.WatchFiles(ctx, cancel, cfg.DHT.ForwardedPortFile, cfg.DHT.ExternalIPFile); err != nil {
+				l.Error("gluetun file watcher exited", "err", err)
+			}
+		}()
 
 		if cfg.DHT.ExternalIPFile != "" && cfg.DHT.NodeID != "" {
 			return fmt.Errorf("dht.external_ip_file and dht.node_id are mutually exclusive")

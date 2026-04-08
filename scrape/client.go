@@ -66,24 +66,33 @@ func (c *Client) shuffledAddrs() []string {
 	return addrs
 }
 
-// Scrape queries trackers in a random order and returns results from the first
-// tracker that reports any seeders.
+// Scrape queries trackers in a random order, returning results from the first
+// tracker that reports any seeders. If no tracker reports seeders, the results
+// from the last reachable tracker are returned. An error is returned only when
+// no tracker could be reached or the context was cancelled.
 func (c *Client) Scrape(ctx context.Context, infohashes []string) ([]ScrapeResult, error) {
+	var lastResults []ScrapeResult
+	reachable := 0
 	for _, addr := range c.shuffledAddrs() {
 		if ctx.Err() != nil {
-			break
+			return nil, ctx.Err()
 		}
 		results, err := c.scrapeTracker(ctx, addr, infohashes)
 		if err != nil {
 			continue
 		}
+		reachable++
 		for _, r := range results {
 			if r.Seeders > 0 {
 				return results, nil
 			}
 		}
+		lastResults = results
 	}
-	return nil, nil
+	if reachable == 0 {
+		return nil, fmt.Errorf("all trackers unreachable")
+	}
+	return lastResults, nil
 }
 
 // scrapeTracker performs the BEP-15 connect + scrape sequence against a single
