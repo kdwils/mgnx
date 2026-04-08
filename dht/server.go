@@ -276,9 +276,13 @@ func (s *Server) queryHandlerLoop(ctx context.Context) {
 // processQuery dispatches a single inbound KRPC query (BEP-05 §KRPC Protocol)
 // to the appropriate handler and adds the querying node to the routing table.
 func (s *Server) processQuery(ctx context.Context, in inMsg) {
+	log := logger.FromContext(ctx)
+
 	if !s.ipLimiter.Allow(in.addr.IP) {
 		return
 	}
+
+	log.Debug("processing request", "query", in.msg.Q, "from", in.addr)
 
 	if in.msg.A != nil {
 		if id, err := ParseNodeID(in.msg.A.ID); err == nil {
@@ -290,29 +294,33 @@ func (s *Server) processQuery(ctx context.Context, in inMsg) {
 
 	switch in.msg.Q {
 	case "ping":
-		s.handlePing(in.addr, in.msg)
+		s.handlePing(ctx, in.addr, in.msg)
 	case "find_node":
-		s.handleFindNode(in.addr, in.msg)
+		s.handleFindNode(ctx, in.addr, in.msg)
 	case "get_peers":
-		s.handleGetPeers(in.addr, in.msg)
+		s.handleGetPeers(ctx, in.addr, in.msg)
 	case "announce_peer":
 		s.handleAnnouncePeer(ctx, in.addr, in.msg)
 	case "sample_infohashes":
-		s.handleSampleInfohashes(in.addr, in.msg)
+		s.handleSampleInfohashes(ctx, in.addr, in.msg)
 	default:
-		// Forward-compatibility: treat unknown queries as find_node.
-		s.handleFindNode(in.addr, in.msg)
+		s.handleFindNode(ctx, in.addr, in.msg)
 	}
 }
 
 // handlePing responds to a BEP-05 ping query (BEP-05 §ping).
-func (s *Server) handlePing(addr *net.UDPAddr, msg *Msg) {
+func (s *Server) handlePing(ctx context.Context, addr *net.UDPAddr, msg *Msg) {
+	log := logger.FromContext(ctx)
+	log.Debug("handle_ping", "from", addr)
 	s.respond(addr, msg.T, &Return{ID: string(s.ourID[:])})
 }
 
 // handleFindNode responds to a BEP-05 find_node query (BEP-05 §find node)
 // by returning the k-closest nodes to the requested target.
-func (s *Server) handleFindNode(addr *net.UDPAddr, msg *Msg) {
+func (s *Server) handleFindNode(ctx context.Context, addr *net.UDPAddr, msg *Msg) {
+	log := logger.FromContext(ctx)
+	log.Debug("handle_find_node", "from", addr)
+
 	if msg.A == nil {
 		s.respondError(addr, msg.T, ErrProtocol, "missing arguments")
 		return
@@ -340,13 +348,18 @@ func (s *Server) handleFindNode(addr *net.UDPAddr, msg *Msg) {
 // Since this node is a crawler without a peer store, it always returns the
 // k-closest nodes ("nodes" path) along with a token for future announce_peer.
 // TODO: When peer storage is implemented, use MaxPeersPerResponse to bound Values.
-func (s *Server) handleGetPeers(addr *net.UDPAddr, msg *Msg) {
+func (s *Server) handleGetPeers(ctx context.Context, addr *net.UDPAddr, msg *Msg) {
+	log := logger.FromContext(ctx).With("server", "get_peers").With("addr", addr.String())
+	log.Debug("received request")
+
 	if msg.A == nil {
+		log.Debug("missing arguments")
 		s.respondError(addr, msg.T, ErrProtocol, "missing arguments")
 		return
 	}
 	target, err := ParseNodeID(msg.A.InfoHash)
 	if err != nil {
+		log.Debug("missing info_hash")
 		s.respondError(addr, msg.T, ErrProtocol, "missing info_hash")
 		return
 	}
@@ -365,11 +378,16 @@ func (s *Server) handleGetPeers(addr *net.UDPAddr, msg *Msg) {
 // handleAnnouncePeer handles a BEP-05 announce_peer query (BEP-05 §announce peer).
 // The announcing node's address is emitted as a DiscoveredPeers event for the indexer.
 func (s *Server) handleAnnouncePeer(ctx context.Context, addr *net.UDPAddr, msg *Msg) {
+	log := logger.FromContext(ctx).With("server", "announce_peer").With("addr", addr.String())
+	log.Debug("received request")
+
 	if msg.A == nil {
+		log.Debug("missing arguments")
 		s.respondError(addr, msg.T, ErrProtocol, "missing arguments")
 		return
 	}
 	if !s.token.Validate(addr.IP, msg.A.Token) {
+		log.Debug("invalid token")
 		s.respondError(addr, msg.T, ErrProtocol, "bad token")
 		return
 	}
@@ -394,20 +412,24 @@ func (s *Server) handleAnnouncePeer(ctx context.Context, addr *net.UDPAddr, msg 
 		Peers:    []PeerAddr{{SourceIP: addr.IP, Port: port}},
 		SeenAt:   time.Now(),
 	}
-	log := logger.FromContext(ctx)
+
 	select {
 	case s.discovered <- event:
-		log.Debug("announce_peer discovered", "infohash", hex.EncodeToString(h[:]), "from", addr)
+		log.Debug("peer discovered", "infohash", hex.EncodeToString(h[:]), "from", addr)
 	default:
-		log.Debug("announce_peer dropped: discovered channel full", "infohash", hex.EncodeToString(h[:]))
+		log.Debug("peer dropped due to full discovered channel", "infohash", hex.EncodeToString(h[:]))
 	}
+
 	s.respond(addr, msg.T, &Return{ID: string(s.ourID[:])})
 }
 
 // handleSampleInfohashes handles a BEP-51 sample_infohashes query (BEP-51 §3).
 // As a crawler we hold no stored samples; we respond with closest nodes so the
 // querier can continue its traversal.
-func (s *Server) handleSampleInfohashes(addr *net.UDPAddr, msg *Msg) {
+func (s *Server) handleSampleInfohashes(ctx context.Context, addr *net.UDPAddr, msg *Msg) {
+	log := logger.FromContext(ctx).With("server", "sample_infohashes").With("addr", addr.String())
+	log.Debug("received request")
+
 	if msg.A == nil {
 		s.respondError(addr, msg.T, ErrProtocol, "missing arguments")
 		return
@@ -417,6 +439,7 @@ func (s *Server) handleSampleInfohashes(addr *net.UDPAddr, msg *Msg) {
 		s.respondError(addr, msg.T, ErrProtocol, "missing target")
 		return
 	}
+
 	// As a crawler we have no stored samples; respond with closest nodes.
 	closest := s.table.Closest(target, s.cfg.BucketSize)
 	s.respond(addr, msg.T, &Return{
