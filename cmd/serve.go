@@ -2,11 +2,9 @@ package cmd
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -43,34 +41,25 @@ var serveCmd = &cobra.Command{
 
 		go gluetun.WatchFiles(ctx, cancel, cfg.DHT.ForwardedPortFile, cfg.DHT.ExternalIPFile)
 
-		if cfg.Gluetun.Endpoint != "" && cfg.DHT.NodeID != "" {
-			return fmt.Errorf("gluetun.endpoint and dht.node_id are mutually exclusive")
+		if cfg.DHT.ExternalIPFile != "" && cfg.DHT.NodeID != "" {
+			return fmt.Errorf("dht.external_ip_file and dht.node_id are mutually exclusive")
 		}
 
-		if cfg.Gluetun.Endpoint != "" {
-			gc := gluetun.New(cfg.Gluetun.Endpoint, &http.Client{Timeout: 10 * time.Second})
-			info, err := gc.FetchPublicIP(ctx)
+		if cfg.DHT.ExternalIPFile != "" {
+			data, err := os.ReadFile(cfg.DHT.ExternalIPFile)
 			if err != nil {
-				return fmt.Errorf("gluetun: %w", err)
+				return fmt.Errorf("gluetun: read external IP file: %w", err)
 			}
-			l.Info("gluetun: public IP detected",
-				"public_ip", info.PublicIP,
-				"city", info.City,
-				"region", info.Region,
-				"country", info.Country,
-				"organization", info.Organization,
-				"timezone", info.Timezone,
-			)
-			ip := info.IP()
+			ip := net.ParseIP(strings.TrimSpace(string(data)))
 			if ip == nil {
-				return fmt.Errorf("gluetun: could not parse public IP %q", info.PublicIP)
+				return fmt.Errorf("gluetun: invalid IP in %s", cfg.DHT.ExternalIPFile)
 			}
 			id, err := dht.DeriveNodeIDFromIP(ip)
 			if err != nil {
 				return fmt.Errorf("gluetun: derive node ID: %w", err)
 			}
-			cfg.DHT.NodeID = hex.EncodeToString(id[:])
-			l.Info("gluetun: derived BEP-42 node ID from public IP", "node_id", cfg.DHT.NodeID)
+			cfg.DHT.NodeID = id.String()
+			l.Info("gluetun: derived BEP-42 node ID from public IP", "ip", ip.String(), "node_id", cfg.DHT.NodeID)
 		}
 
 		if cfg.DHT.ForwardedPortFile != "" {
@@ -107,8 +96,6 @@ var serveCmd = &cobra.Command{
 			return fmt.Errorf("crawler start: %w", err)
 		}
 		defer crawler.Stop(ctx)
-
-		go gluetun.WatchFiles(ctx, cancel, cfg.DHT.ForwardedPortFile, cfg.DHT.ExternalIPFile)
 
 		metaClient := metadata.NewClient(
 			metadata.TimeoutDialer{
