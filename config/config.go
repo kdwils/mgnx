@@ -80,7 +80,8 @@ type Server struct {
 }
 
 type Gluetun struct {
-	Endpoint string `mapstructure:"endpoint"`
+	Endpoint          string `mapstructure:"endpoint"`
+	ForwardedPortFile string `mapstructure:"forwarded_port_file"`
 }
 
 func New(v *viper.Viper) (Config, error) {

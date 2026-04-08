@@ -6,6 +6,9 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kdwils/mgnx/config"
@@ -64,6 +67,19 @@ var serveCmd = &cobra.Command{
 			}
 			cfg.DHT.NodeID = hex.EncodeToString(id[:])
 			l.Info("gluetun: derived BEP-42 node ID from public IP", "node_id", cfg.DHT.NodeID)
+		}
+
+		if cfg.Gluetun.ForwardedPortFile != "" {
+			data, err := os.ReadFile(cfg.Gluetun.ForwardedPortFile)
+			if err != nil {
+				return fmt.Errorf("gluetun: read forwarded port file: %w", err)
+			}
+			p, err := strconv.Atoi(strings.TrimSpace(string(data)))
+			if err != nil || p <= 0 || p > 65535 {
+				return fmt.Errorf("gluetun: invalid forwarded port in %s", cfg.Gluetun.ForwardedPortFile)
+			}
+			cfg.DHT.Port = p
+			l.Info("gluetun: using forwarded port", "port", p)
 		}
 
 		pool, err := db.Connect(ctx, cfg.Database.URL)
