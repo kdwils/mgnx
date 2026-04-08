@@ -84,6 +84,9 @@ var serveCmd = &cobra.Command{
 		if err := db.RunMigrations(pool); err != nil {
 			return fmt.Errorf("migrate: %w", err)
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 
 		queries := gen.New(pool)
 
