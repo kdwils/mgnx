@@ -176,7 +176,7 @@ func (s *Server) querySeeds(ctx context.Context, addrs []*net.UDPAddr, bn *boots
 			return nil, ctx.Err()
 		}
 		if r.err != nil {
-			log.Debug("bootstrap node unreachable", "addr", r.addr, "err", r.err)
+			log.Debug("bootstrap node unreachable", "addr", r.addr.String(), "err", r.err)
 			continue
 		}
 		contacted++
@@ -188,7 +188,7 @@ func (s *Server) querySeeds(ctx context.Context, addrs []*net.UDPAddr, bn *boots
 			s.table.Insert(n)
 		}
 		bn.add(r.nodes, s.ourID)
-		log.Debug("bootstrap node responded", "addr", r.addr, "nodes_returned", len(r.nodes))
+		log.Debug("bootstrap node responded", "addr", r.addr.String(), "nodes_returned", len(r.nodes))
 	}
 
 	log.Info("bootstrap phase 1 complete", "contacted", contacted, "shortlist", bn.len())
@@ -222,7 +222,7 @@ func (s *Server) convergeTable(ctx context.Context, bn *bootstrapNodes) error {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				log.Debug("iterative find_node failed", "addr", e.node.Addr, "err", err)
+				log.Debug("iterative find_node failed", "addr", e.node.Addr.String(), "err", err)
 				continue
 			}
 			if resp.R == nil {

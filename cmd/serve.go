@@ -41,8 +41,15 @@ var serveCmd = &cobra.Command{
 
 		go func() {
 			if err := gluetun.WatchFiles(ctx, cancel, cfg.DHT.ForwardedPortFile, cfg.DHT.ExternalIPFile); err != nil {
-				l.Error("gluetun file watcher exited", "err", err)
+				log.Printf("gluetun file watcher exited: %v", err)
 			}
+		}()
+
+		go func() {
+			<-ctx.Done()
+			<-time.After(30 * time.Second)
+			fmt.Println("shutdown: stuck, forcing exit")
+			os.Exit(1)
 		}()
 
 		if cfg.DHT.ExternalIPFile != "" && cfg.DHT.NodeID != "" {
