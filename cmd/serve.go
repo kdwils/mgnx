@@ -41,6 +41,8 @@ var serveCmd = &cobra.Command{
 		ctx, cancel := context.WithCancel(logger.WithContext(cmd.Context(), l))
 		defer cancel()
 
+		go gluetun.WatchFiles(ctx, cancel, cfg.DHT.ForwardedPortFile, cfg.DHT.ExternalIPFile)
+
 		if cfg.Gluetun.Endpoint != "" && cfg.DHT.NodeID != "" {
 			return fmt.Errorf("gluetun.endpoint and dht.node_id are mutually exclusive")
 		}
@@ -129,7 +131,11 @@ var serveCmd = &cobra.Command{
 
 		svc := service.New(queries, cfg)
 		srv := torznab.New(cfg.Server.Port, l, svc)
-		return srv.Serve(ctx)
+		if err := srv.Serve(ctx); err != nil {
+			return err
+		}
+
+		return ctx.Err()
 	},
 }
 
