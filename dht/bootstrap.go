@@ -85,12 +85,6 @@ func (bn *bootstrapNodes) len() int {
 	return bn.c.Size()
 }
 
-func (bn *bootstrapNodes) markQueried(entries []*entry) {
-	for _, e := range entries {
-		e.queried = true
-	}
-}
-
 func (bn *bootstrapNodes) all() []*entry {
 	entries := make([]*entry, 0, bn.c.Size())
 	for _, e := range bn.c.Items() {
@@ -140,7 +134,6 @@ func (s *Server) querySeeds(ctx context.Context, addrs []*net.UDPAddr, bn *boots
 	results := make(chan seedResult, len(addrs))
 
 	for _, addr := range addrs {
-		addr := addr
 		eg.Go(func() error {
 			select {
 			case <-egCtx.Done():

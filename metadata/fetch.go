@@ -168,7 +168,7 @@ func (c *Client) Fetch(ctx context.Context, infohash [20]byte, addr net.TCPAddr)
 	numPieces := (totalSize + pieceSize - 1) / pieceSize
 	assembled := make([]byte, 0, totalSize)
 
-	for i := 0; i < numPieces; i++ {
+	for i := range numPieces {
 		req, err := bencode.Marshal(map[string]any{
 			"msg_type": 0,
 			"piece":    i,

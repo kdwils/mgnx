@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"maps"
 	"net"
 	"sort"
 	"sync"
@@ -411,10 +412,7 @@ func (c *crawler) discoverPeers(ctx context.Context, h [20]byte, initialNode *No
 
 		responses := c.queryParallel(ctx, toQuery, h)
 
-		alpha := c.cfg.Alpha
-		if len(toQuery) < alpha {
-			alpha = len(toQuery)
-		}
+		alpha := min(len(toQuery), c.cfg.Alpha)
 		for i := range alpha {
 			queried[toQuery[i].ID] = true
 		}
@@ -466,10 +464,7 @@ func (c *crawler) sortByDistance(nodes map[NodeID]*Node, target NodeID) []*Node 
 // queryParallel sends BEP-05 get_peers queries to up to Alpha nodes concurrently
 // (BEP-05 §2 alpha-parallel lookup) and returns all successful responses.
 func (c *crawler) queryParallel(ctx context.Context, nodes []*Node, h [20]byte) []*Msg {
-	alpha := c.cfg.Alpha
-	if len(nodes) < alpha {
-		alpha = len(nodes)
-	}
+	alpha := min(len(nodes), c.cfg.Alpha)
 
 	respCh := make(chan *Msg, alpha)
 	var wg sync.WaitGroup
@@ -533,9 +528,7 @@ func (c *crawler) processResponses(responses []*Msg, h [20]byte) (bool, map[Node
 		if newNodes == nil {
 			newNodes = make(map[NodeID]*Node)
 		}
-		for id, node := range extractedNodes {
-			newNodes[id] = node
-		}
+		maps.Copy(newNodes, extractedNodes)
 	}
 
 	return false, newNodes
@@ -578,12 +571,8 @@ func (c *crawler) extractPeers(resp *Msg, h [20]byte) []PeerAddr {
 
 func (c *crawler) mergeNodes(shortlist map[NodeID]*Node, newNodes map[NodeID]*Node) map[NodeID]*Node {
 	result := make(map[NodeID]*Node, len(shortlist)+len(newNodes))
-	for id, node := range shortlist {
-		result[id] = node
-	}
-	for id, node := range newNodes {
-		result[id] = node
-	}
+	maps.Copy(result, shortlist)
+	maps.Copy(result, newNodes)
 	return result
 }
 
