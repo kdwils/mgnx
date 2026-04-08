@@ -72,10 +72,6 @@ func (w *Worker) initTracker(ctx context.Context) int64 {
 // runScrapeLoop polls for due torrents and scrapes them.
 func (w *Worker) runScrapeLoop(ctx context.Context, trackerID int64) {
 	interval := w.cfg.PollInterval
-	if interval <= 0 {
-		interval = 30 * time.Second
-	}
-
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -92,11 +88,7 @@ func (w *Worker) runScrapeLoop(ctx context.Context, trackerID int64) {
 // scrapeOnce fetches a batch of due torrents and scrapes them.
 func (w *Worker) scrapeOnce(ctx context.Context, trackerID int64) {
 	log := logger.FromContext(ctx).With("service", "scraper")
-
 	batchSize := w.cfg.BatchSize
-	if batchSize <= 0 {
-		batchSize = 74
-	}
 
 	rows, err := w.queries.GetTorrentsToScrape(ctx, int32(batchSize))
 	if err != nil {

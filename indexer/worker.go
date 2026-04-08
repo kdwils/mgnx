@@ -55,26 +55,29 @@ func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg
 }
 
 func (w *Worker) Run(ctx context.Context) {
-	workers := w.cfg.Workers
-	sem := make(chan struct{}, workers)
+	logger := logger.FromContext(ctx)
+	// workers := w.cfg.Workers
+	// sem := make(chan struct{}, workers)
 	var wg sync.WaitGroup
 	for {
 		select {
+		case <-ctx.Done():
+			logger.Info("worker context done, waiting on group")
+			wg.Wait()
+			logger.Info("worker context done waiting on group")
+			return
 		case ev, ok := <-w.crawler.Infohashes():
 			if !ok {
 				wg.Wait()
 				return
 			}
-			sem <- struct{}{}
+			// sem <- struct{}{}
 			wg.Add(1)
 			go func(e dht.DiscoveredPeers) {
 				defer wg.Done()
-				defer func() { <-sem }()
+				// defer func() { <-sem }()
 				w.process(ctx, e)
 			}(ev)
-		case <-ctx.Done():
-			wg.Wait()
-			return
 		}
 	}
 }

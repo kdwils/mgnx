@@ -37,7 +37,7 @@ type PeerAddr struct {
 type Crawler interface {
 	Infohashes() <-chan DiscoveredPeers
 	Start(ctx context.Context) error
-	Stop(ctx context.Context)
+	Stop(ctx context.Context) error
 }
 
 // crawler wraps Server and drives two discovered modes:
@@ -149,14 +149,14 @@ func (c *crawler) Start(ctx context.Context) error {
 // the server (closing the socket and persisting the routing table).
 // The caller's context is ignored — it is likely already cancelled at shutdown
 // time. A fresh timeout context is used for the routing table save.
-func (c *crawler) Stop(_ context.Context) {
+func (c *crawler) Stop(_ context.Context) error {
 	if c.cancel != nil {
 		c.cancel()
 	}
 	c.wg.Wait()
 	saveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	c.server.Stop(saveCtx)
+	return c.server.Stop(saveCtx)
 }
 
 // traversalItem is an element of the traversal heap.

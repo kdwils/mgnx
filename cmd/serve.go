@@ -6,8 +6,10 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kdwils/mgnx/config"
@@ -23,6 +25,7 @@ import (
 	"github.com/kdwils/mgnx/torznab"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"golang.org/x/sync/errgroup"
 )
 
 var serveCmd = &cobra.Command{
@@ -37,20 +40,11 @@ var serveCmd = &cobra.Command{
 		l := logger.New(cfg.Server.LogLevel)
 
 		ctx, cancel := context.WithCancel(logger.WithContext(cmd.Context(), l))
-		defer cancel()
 
-		go func() {
-			if err := gluetun.WatchFiles(ctx, cancel, cfg.DHT.ForwardedPortFile, cfg.DHT.ExternalIPFile); err != nil {
-				log.Printf("gluetun file watcher exited: %v", err)
-			}
-		}()
-
-		go func() {
-			<-ctx.Done()
-			<-time.After(30 * time.Second)
-			fmt.Println("shutdown: stuck, forcing exit")
-			os.Exit(1)
-		}()
+		pool, err := db.Connect(ctx, cfg.Database.URL)
+		if err != nil {
+			return fmt.Errorf("db connect: %w", err)
+		}
 
 		if cfg.DHT.ExternalIPFile != "" && cfg.DHT.NodeID != "" {
 			return fmt.Errorf("dht.external_ip_file and dht.node_id are mutually exclusive")
@@ -86,11 +80,19 @@ var serveCmd = &cobra.Command{
 			l.Info("gluetun: using forwarded port", "port", p)
 		}
 
-		pool, err := db.Connect(ctx, cfg.Database.URL)
+		metaClient := metadata.NewClient(
+			metadata.TimeoutDialer{
+				Dialer:      &net.Dialer{KeepAlive: -1},
+				DialTimeout: 3 * time.Second,
+			},
+			cfg.DHT.MaxMessageSize,
+			cfg.DHT.MaxMetadataSize,
+		)
+
+		crawler, err := dht.NewCrawler(cfg.DHT, cfg.Crawler)
 		if err != nil {
-			return fmt.Errorf("db connect: %w", err)
+			return fmt.Errorf("dht crawler: %w", err)
 		}
-		defer pool.Close()
 
 		if err := db.RunMigrations(pool); err != nil {
 			return fmt.Errorf("migrate: %w", err)
@@ -101,42 +103,74 @@ var serveCmd = &cobra.Command{
 
 		queries := gen.New(pool)
 
-		crawler, err := dht.NewCrawler(cfg.DHT, cfg.Crawler)
-		if err != nil {
-			return fmt.Errorf("dht crawler: %w", err)
-		}
+		g, ctx := errgroup.WithContext(ctx)
 
-		if err := crawler.Start(ctx); err != nil {
-			return fmt.Errorf("crawler start: %w", err)
-		}
-		defer crawler.Stop(ctx)
+		g.Go(func() error {
+			err := gluetun.WatchFiles(ctx, cancel, cfg.DHT.ForwardedPortFile, cfg.DHT.ExternalIPFile)
+			l.Info("gluetun watcher done", "error", err)
+			if err != nil {
+				logger.FromContext(ctx).Error("file watcher error", "error", err)
+			}
+			return err
+		})
 
-		metaClient := metadata.NewClient(
-			metadata.TimeoutDialer{
-				Dialer:      &net.Dialer{KeepAlive: -1},
-				DialTimeout: 3 * time.Second,
-			},
-			cfg.DHT.MaxMessageSize,
-			cfg.DHT.MaxMetadataSize,
-		)
+		g.Go(func() error {
+			if err := crawler.Start(ctx); err != nil && err != context.Canceled {
+				logger.FromContext(ctx).Error("crawler start error", "error", err)
+				return err
+			}
+			l.Info("crawler started")
+			<-ctx.Done()
+			l.Info("crawler context done, stopping")
+			err := crawler.Stop(ctx)
+			l.Info("crawler stopped", "error", err)
+			return nil
+		})
+
 		idxWorker := indexer.New(crawler, metaClient, queries, cfg.Indexer)
-		go idxWorker.Run(ctx)
+		g.Go(func() error {
+			idxWorker.Run(ctx)
+			l.Info("indexer stopped")
+			return nil
+		})
 
 		scrapeClient, err := scrape.NewClient(cfg.Scrape.DialTimeout, cfg.Scrape.ReadTimeout, cfg.Scrape.Trackers...)
 		if err != nil {
 			return fmt.Errorf("scrape client: %w", err)
 		}
-
 		scrapeWorker := scrape.New(queries, scrapeClient, cfg.Scrape)
-		go scrapeWorker.Run(ctx)
+		g.Go(func() error {
+			scrapeWorker.Run(ctx)
+			l.Info("scrape worker stopped")
+			return nil
+		})
 
-		svc := service.New(queries, cfg)
-		srv := torznab.New(cfg.Server.Port, l, svc)
-		if err := srv.Serve(ctx); err != nil {
+		g.Go(func() error {
+			svc := service.New(queries, cfg)
+			srv := torznab.New(cfg.Server.Port, l, svc)
+			l.Info("starting torznab server")
+			err := srv.Serve(ctx)
+			l.Info("torznab server done", "error", err)
+			if err != nil && err != context.Canceled {
+				logger.FromContext(ctx).Error("torznab server error", "error", err)
+			}
 			return err
-		}
+		})
 
-		return ctx.Err()
+		signalChan := make(chan os.Signal, 1)
+		signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
+		go func(ctx context.Context) {
+			<-signalChan
+			l.Warn("shutdown signal received, calling cancel()")
+			cancel()
+			l.Warn("cancel() called")
+		}(ctx)
+
+		l.Info("all goroutines started")
+		err = g.Wait()
+		signal.Stop(signalChan)
+		l.Info("returning", "error", err)
+		return nil
 	},
 }
 

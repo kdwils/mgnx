@@ -1,7 +1,15 @@
 package main
 
-import "github.com/kdwils/mgnx/cmd"
+import (
+	"log"
+
+	"github.com/kdwils/mgnx/cmd"
+)
 
 func main() {
-	cmd.Execute()
+	err := cmd.Execute()
+	if err != nil {
+		log.Printf("Execute returned error: %v", err)
+	}
+	log.Println("main: exiting")
 }
