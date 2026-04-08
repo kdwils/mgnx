@@ -283,8 +283,6 @@ func (s *Server) processQuery(ctx context.Context, in inMsg) {
 		return
 	}
 
-	log.Debug("processing request", "query", in.msg.Q, "from", in.addr)
-
 	if in.msg.A != nil {
 		if id, err := ParseNodeID(in.msg.A.ID); err == nil {
 			if isValidNodeID(in.addr.IP, id) {
@@ -305,14 +303,15 @@ func (s *Server) processQuery(ctx context.Context, in inMsg) {
 	case "sample_infohashes":
 		s.handleSampleInfohashes(ctx, in.addr, in.msg)
 	default:
-		s.handleFindNode(ctx, in.addr, in.msg)
+		log.Debug("unknown request", "query", in.msg.Q, "from", in.addr.String())
+		return
 	}
 }
 
 // handlePing responds to a BEP-05 ping query (BEP-05 §ping).
 func (s *Server) handlePing(ctx context.Context, addr *net.UDPAddr, msg *Msg) {
 	log := logger.FromContext(ctx).With("service", "dht")
-	log.Debug("handle_ping", "from", addr)
+	log.Debug("handle_ping", "from", addr.String())
 	s.respond(addr, msg.T, &Return{ID: string(s.ourID[:])})
 }
 
@@ -320,7 +319,7 @@ func (s *Server) handlePing(ctx context.Context, addr *net.UDPAddr, msg *Msg) {
 // by returning the k-closest nodes to the requested target.
 func (s *Server) handleFindNode(ctx context.Context, addr *net.UDPAddr, msg *Msg) {
 	log := logger.FromContext(ctx).With("service", "dht")
-	log.Debug("handle_find_node", "from", addr)
+	log.Debug("handle_find_node", "from", addr.String())
 
 	if msg.A == nil {
 		s.respondError(addr, msg.T, ErrProtocol, "missing arguments")
@@ -416,7 +415,7 @@ func (s *Server) handleAnnouncePeer(ctx context.Context, addr *net.UDPAddr, msg 
 
 	select {
 	case s.discovered <- event:
-		log.Debug("peer discovered", "infohash", hex.EncodeToString(h[:]), "from", addr)
+		log.Debug("peer discovered", "infohash", hex.EncodeToString(h[:]), "from", addr.String())
 	default:
 		log.Debug("peer dropped due to full discovered channel", "infohash", hex.EncodeToString(h[:]))
 	}

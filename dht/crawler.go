@@ -210,11 +210,15 @@ func (c *crawler) getPeers(ctx context.Context, item *traversalItem) (*Msg, erro
 // BEP-51; that fact is cached and get_peers is used as a fallback for routing
 // continuation. Subsequent calls for the same node skip straight to get_peers.
 func (c *crawler) queryForSamples(ctx context.Context, item *traversalItem) (*Msg, error) {
+	log := logger.FromContext(ctx).With("service", "crawler", "node", item.node.Addr, "target", hex.EncodeToString(item.target[:]))
+
 	capable, known := c.nodeSampleSupport.Get(item.node.ID)
 	if known && !capable {
+		log.Debug("sending query", "type", "get_peers")
 		return c.getPeers(ctx, item)
 	}
 
+	log.Debug("sending query", "type", "sample_infohashes")
 	resp, err := c.server.Query(ctx, item.node.Addr, item.node.ID, &Msg{
 		Y: "q", Q: "sample_infohashes",
 		A: &MsgArgs{
@@ -231,6 +235,7 @@ func (c *crawler) queryForSamples(ctx context.Context, item *traversalItem) (*Ms
 	}
 
 	c.nodeSampleSupport.Set(item.node.ID, false)
+	log.Debug("sending query", "type", "get_peers", "reason", "bep51_fallback")
 	return c.getPeers(ctx, item)
 }
 
@@ -244,6 +249,8 @@ const retargetEvery = 200
 // When the queue is exhausted the worker picks a new random target and
 // re-seeds from the routing table.
 func (c *crawler) crawlerWorker(ctx context.Context) {
+	log := logger.FromContext(ctx).With("service", "crawler")
+
 	var target NodeID
 	rand.Read(target[:])
 
@@ -262,11 +269,30 @@ func (c *crawler) crawlerWorker(ctx context.Context) {
 
 		if queried > 0 && queried%retargetEvery == 0 {
 			rand.Read(target[:])
+			// Prune seen entries whose cooldown has already expired; long-interval
+			// BEP-51 nodes (up to 6 h) are retained so we honour their interval.
+			now := time.Now()
+			for id, t := range seen {
+				if now.After(t) {
+					delete(seen, id)
+				}
+			}
 			c.seedQueue(pq, target)
+			log.Debug("retargeting",
+				"queried", queried,
+				"queue_size", pq.Len(),
+				"routing_table_nodes", c.server.table.NodeCount(),
+				"seen_cooldowns", len(seen),
+				"target", hex.EncodeToString(target[:]),
+			)
 		}
 
 		item := c.nextEligible(pq, seen)
 		if item == nil {
+			log.Debug("queue exhausted, reseeding",
+				"routing_table_nodes", c.server.table.NodeCount(),
+				"seen_cooldowns", len(seen),
+			)
 			rand.Read(target[:])
 			c.seedQueue(pq, target)
 			if pq.Len() == 0 {
@@ -279,14 +305,13 @@ func (c *crawler) crawlerWorker(ctx context.Context) {
 			continue
 		}
 
-		// Per-node rate limiting to avoid overwhelming responsive nodes
+		// Per-node rate limiting to avoid overwhelming responsive nodes.
+		// On throttle, record a short cooldown in seen so nextEligible skips
+		// this node on subsequent passes without spinning.
 		if c.rateLimiter.throttle(item.node.ID) {
+			log.Debug("rate limited", "node", item.node.ID)
+			seen[item.node.ID] = time.Now().Add(c.rateLimiter.minSpacing)
 			heap.Push(pq, item)
-			select {
-			case <-time.After(100 * time.Millisecond):
-			case <-ctx.Done():
-				return
-			}
 			continue
 		}
 
@@ -315,6 +340,12 @@ func (c *crawler) crawlerWorker(ctx context.Context) {
 		}
 
 		seen[item.node.ID] = time.Now().Add(interval)
+		log.Debug("query complete",
+			"node", item.node.Addr,
+			"err", err,
+			"interval", interval,
+			"queue_size", pq.Len(),
+		)
 	}
 }
 
@@ -334,15 +365,26 @@ func (c *crawler) seedQueue(pq *traversalHeap, target NodeID) {
 }
 
 // nextEligible pops items from pq until it finds one not in the cooldown
-// window. Returns nil if the queue is empty.
+// window, then re-pushes any skipped items so they are not lost.
+// Per BEP-51, nodes that return an interval must be respected but should
+// remain in the traversal queue until their cooldown expires.
+// Returns nil if the queue is empty or all items are in cooldown.
 func (c *crawler) nextEligible(pq *traversalHeap, seen map[NodeID]time.Time) *traversalItem {
+	var deferred []*traversalItem
+	var result *traversalItem
+	now := time.Now()
 	for pq.Len() > 0 {
 		item := heap.Pop(pq).(*traversalItem)
-		if t, ok := seen[item.node.ID]; !ok || time.Now().After(t) {
-			return item
+		if t, ok := seen[item.node.ID]; !ok || now.After(t) {
+			result = item
+			break
 		}
+		deferred = append(deferred, item)
 	}
-	return nil
+	for _, item := range deferred {
+		heap.Push(pq, item)
+	}
+	return result
 }
 
 // processSamples decodes the raw 20-byte infohash samples from a BEP-51
@@ -378,7 +420,8 @@ func (c *crawler) processSamples(ctx context.Context, samples string, item *trav
 // shortlist to the k-closest seen so far. It stops early when the closest node
 // stops changing (Kademlia convergence) or no new nodes are returned.
 func (c *crawler) discoverPeers(ctx context.Context, h [20]byte, initialNode *Node) {
-	logger.FromContext(ctx).Debug("discovering peers", "service", "crawler", "infohash", hex.EncodeToString(h[:]))
+	log := logger.FromContext(ctx).With("service", "crawler", "infohash", hex.EncodeToString(h[:]))
+	log.Debug("discovering peers", "initial_node", initialNode.Addr)
 
 	target := NodeID(h)
 	shortlist := make(map[NodeID]*Node)
@@ -392,10 +435,12 @@ func (c *crawler) discoverPeers(ctx context.Context, h [20]byte, initialNode *No
 	for iter := 0; iter < c.cfg.MaxIterations; iter++ {
 		entries := c.sortByDistance(shortlist, target)
 		if len(entries) == 0 {
+			log.Debug("peer discovery complete", "iterations", iter, "result", "empty_shortlist")
 			return
 		}
 
 		if iter > 0 && entries[0].ID == prevClosest {
+			log.Debug("peer discovery complete", "iterations", iter, "result", "converged")
 			return
 		}
 		prevClosest = entries[0].ID
@@ -407,6 +452,7 @@ func (c *crawler) discoverPeers(ctx context.Context, h [20]byte, initialNode *No
 			}
 		}
 		if len(toQuery) == 0 {
+			log.Debug("peer discovery complete", "iterations", iter, "result", "all_queried")
 			return
 		}
 
@@ -417,16 +463,19 @@ func (c *crawler) discoverPeers(ctx context.Context, h [20]byte, initialNode *No
 			queried[toQuery[i].ID] = true
 		}
 
-		foundPeers, newNodes := c.processResponses(responses, h)
+		foundPeers, newNodes := c.processResponses(ctx, responses, h)
 		if foundPeers {
+			log.Debug("peer discovery complete", "iterations", iter+1, "result", "peers_found")
 			return
 		}
 		if len(newNodes) == 0 {
+			log.Debug("peer discovery complete", "iterations", iter+1, "result", "no_new_nodes")
 			return
 		}
 
 		shortlist = c.trimToKClosest(c.mergeNodes(shortlist, newNodes), target)
 	}
+	log.Debug("peer discovery complete", "iterations", c.cfg.MaxIterations, "result", "max_iterations")
 }
 
 // trimToKClosest returns a new map containing only the k nodes closest to target.
@@ -507,19 +556,21 @@ func (c *crawler) queryNodeAsync(ctx context.Context, node *Node, h [20]byte, re
 }
 
 // processResponses inspects get_peers responses per BEP-05 §4.2: if any
-// response carries peer Values, extract them and signal discovery; otherwise
-// collect the returned Nodes for the next iteration of the shortlist.
-func (c *crawler) processResponses(responses []*Msg, h [20]byte) (bool, map[NodeID]*Node) {
+// response carries peer Values, all peer addresses are collected across every
+// response and emitted as a single DiscoveredPeers event (more peers increases
+// the chance of a successful metadata fetch given the high failure rate observed
+// in production). Nodes are returned for the next shortlist iteration.
+func (c *crawler) processResponses(ctx context.Context, responses []*Msg, h [20]byte) (bool, map[NodeID]*Node) {
+	log := logger.FromContext(ctx).With("service", "crawler", "infohash", hex.EncodeToString(h[:]))
 	var newNodes map[NodeID]*Node
+	var allPeers []PeerAddr
 
 	for _, resp := range responses {
 		if resp == nil || resp.R == nil {
 			continue
 		}
 
-		if peers := c.extractPeers(resp, h); peers != nil {
-			return true, nil
-		}
+		allPeers = append(allPeers, c.extractPeers(resp, h)...)
 
 		extractedNodes := c.extractNodes(resp)
 		if extractedNodes == nil {
@@ -531,12 +582,24 @@ func (c *crawler) processResponses(responses []*Msg, h [20]byte) (bool, map[Node
 		maps.Copy(newNodes, extractedNodes)
 	}
 
+	if len(allPeers) > 0 {
+		select {
+		case c.discovered <- DiscoveredPeers{Infohash: h, Peers: allPeers, SeenAt: time.Now()}:
+			log.Debug("peers emitted", "count", len(allPeers))
+		default:
+			log.Debug("discovered channel full, peers dropped", "count", len(allPeers))
+		}
+		return true, nil
+	}
+
 	return false, newNodes
 }
 
 // extractPeers decodes the compact 6-byte peer list from a BEP-05 get_peers
 // response (BEP-05 §4.2 "values" field). Each entry is a TCP address for the
 // BitTorrent peer protocol — not a DHT UDP node address.
+// The caller (processResponses) is responsible for aggregating results across
+// multiple parallel responses and emitting a single DiscoveredPeers event.
 func (c *crawler) extractPeers(resp *Msg, h [20]byte) []PeerAddr {
 	if len(resp.R.Values) == 0 {
 		return nil
@@ -555,15 +618,6 @@ func (c *crawler) extractPeers(resp *Msg, h [20]byte) []PeerAddr {
 				Port:     tcpAddr.Port,
 			})
 		}
-	}
-
-	if len(peerAddrs) == 0 {
-		return nil
-	}
-
-	select {
-	case c.discovered <- DiscoveredPeers{Infohash: h, Peers: peerAddrs, SeenAt: time.Now()}:
-	default:
 	}
 
 	return peerAddrs
