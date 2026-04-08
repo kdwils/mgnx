@@ -14,7 +14,6 @@ type Config struct {
 	Crawler  Crawler  `mapstructure:"crawler"`
 	Indexer  Indexer  `mapstructure:"indexer"`
 	Scrape   Scrape   `mapstructure:"scrape"`
-	Gluetun  Gluetun  `mapstructure:"gluetun"`
 }
 
 type DHT struct {
@@ -38,6 +37,8 @@ type DHT struct {
 	MaxPeersPerResponse int           `mapstructure:"max_peers_per_response"`
 	MaxMessageSize      int           `mapstructure:"max_message_size"`
 	MaxMetadataSize     int           `mapstructure:"max_metadata_size"`
+	ForwardedPortFile   string        `mapstructure:"forwarded_port_file"`
+	ExternalIPFile      string        `mapstructure:"external_ip_file"`
 }
 
 type Crawler struct {
@@ -77,11 +78,6 @@ type Server struct {
 	Port     int    `mapstructure:"port"`
 	LogLevel string `mapstructure:"log_level"`
 	APIKey   string `mapstructure:"apiKey"`
-}
-
-type Gluetun struct {
-	Endpoint          string `mapstructure:"endpoint"`
-	ForwardedPortFile string `mapstructure:"forwarded_port_file"`
 }
 
 func New(v *viper.Viper) (Config, error) {
