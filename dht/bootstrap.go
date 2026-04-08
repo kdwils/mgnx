@@ -214,7 +214,6 @@ func (s *Server) convergeTable(ctx context.Context, bn *bootstrapNodes) error {
 		}
 
 		round++
-		bn.markQueried(toQuery)
 
 		for _, e := range toQuery {
 			resp, err := s.Query(ctx, e.node.Addr, e.node.ID, &Msg{
@@ -225,6 +224,7 @@ func (s *Server) convergeTable(ctx context.Context, bn *bootstrapNodes) error {
 					Target: string(s.ourID[:]),
 				},
 			})
+			e.queried = true
 			if err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()

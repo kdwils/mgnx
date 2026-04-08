@@ -44,7 +44,7 @@ func WatchFiles(ctx context.Context, cancel context.CancelFunc, portFile, ipFile
 			if !event.Has(fsnotify.Write) && !event.Has(fsnotify.Create) {
 				continue
 			}
-			log.Info("file changed shutting down for restart", "file", event.Name)
+			log.Info("file changed, shutting down for restart", "file", event.Name)
 			cancel()
 			return nil
 		case err, ok := <-w.Errors:
