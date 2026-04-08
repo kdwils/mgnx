@@ -2,6 +2,7 @@ package gluetun
 
 import (
 	"context"
+	"errors"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/kdwils/mgnx/logger"
@@ -11,17 +12,17 @@ import (
 // Gluetun. When either file changes it calls cancel so the server shuts down
 // gracefully; Kubernetes then restarts the pod and picks up the new values.
 // It is a no-op when both paths are empty.
-func WatchFiles(ctx context.Context, cancel context.CancelFunc, portFile, ipFile string) {
+func WatchFiles(ctx context.Context, cancel context.CancelFunc, portFile, ipFile string) error {
 	if portFile == "" && ipFile == "" {
-		return
+		return nil
 	}
 
-	log := logger.FromContext(ctx)
+	log := logger.FromContext(ctx).With("service", "file watcher")
 
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
-		log.Warn("gluetun file watcher: could not create watcher", "err", err)
-		return
+		log.Error("could not create watcher", "err", err)
+		return err
 	}
 	defer w.Close()
 
@@ -30,7 +31,7 @@ func WatchFiles(ctx context.Context, cancel context.CancelFunc, portFile, ipFile
 			continue
 		}
 		if err := w.Add(path); err != nil {
-			log.Warn("gluetun file watcher: could not watch file", "path", path, "err", err)
+			log.Warn("could not add file", "path", path, "err", err)
 		}
 	}
 
@@ -38,21 +39,21 @@ func WatchFiles(ctx context.Context, cancel context.CancelFunc, portFile, ipFile
 		select {
 		case event, ok := <-w.Events:
 			if !ok {
-				return
+				return errors.New("watcher event channel closed")
 			}
 			if !event.Has(fsnotify.Write) && !event.Has(fsnotify.Create) {
 				continue
 			}
-			log.Info("gluetun file changed, shutting down for restart", "file", event.Name)
+			log.Info("file changed shutting down for restart", "file", event.Name)
 			cancel()
-			return
+			return nil
 		case err, ok := <-w.Errors:
 			if !ok {
-				return
+				return errors.New("watcher error channel closed")
 			}
-			log.Warn("gluetun file watcher error", "err", err)
+			log.Warn("file watcher error", "err", err)
 		case <-ctx.Done():
-			return
+			return nil
 		}
 	}
 }

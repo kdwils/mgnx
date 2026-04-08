@@ -157,7 +157,7 @@ func (w *Worker) applyResult(ctx context.Context, r ScrapeResult, trackerID int6
 		lastSeen = pgtype.Timestamptz{Time: time.Now(), Valid: true}
 	}
 
-	log := logger.FromContext(ctx)
+	log := logger.FromContext(ctx).With("service", "scraper")
 	nextState := newState(m.state, seeders)
 	if nextState != m.state {
 		log.InfoContext(ctx, "torrent state transition",

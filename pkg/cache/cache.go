@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"time"
 )
@@ -76,6 +77,14 @@ func (c *Cache[K, T]) Keys() []K {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+func (c *Cache[K, T]) Items() map[K]T {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	result := make(map[K]T, len(c.entries))
+	maps.Copy(result, c.entries)
+	return result
 }
 
 func (c *Cache[K, T]) StartCleanup(ctx context.Context) {

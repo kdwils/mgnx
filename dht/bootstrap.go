@@ -12,9 +12,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"sync"
 
 	"github.com/kdwils/mgnx/logger"
+	"github.com/kdwils/mgnx/pkg/cache"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -27,64 +28,131 @@ type Resolver interface {
 	LookupHost(ctx context.Context, host string) (addrs []string, err error)
 }
 
-// Bootstrap performs the BEP-05 iterative find_node self-lookup convergence
-// starting from addrs. It inserts discovered nodes into the routing table and
-// triggers a bucket refresh for any stale buckets after convergence.
-//
-// If dht.node_id is configured, that ID is used directly (user-managed, must be
-// BEP-42 compliant). Otherwise, the BEP-42 node ID is derived from the external IP
-// returned by the first successful bootstrap response.
-func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
-	resolved := s.resolveBootstrapAddrs(ctx, addrs)
-	log := logger.FromContext(ctx)
-	log.Info("DHT bootstrap starting", "bootstrap_nodes", len(resolved))
+type bootstrapNodes struct {
+	c *cache.Cache[NodeID, *entry]
+}
 
-	type entry struct {
-		node    *Node
-		dist    NodeID
-		queried bool
+type entry struct {
+	node    *Node
+	dist    NodeID
+	queried bool
+}
+
+func newBootstrapNodes() *bootstrapNodes {
+	return &bootstrapNodes{c: cache.New[NodeID, *entry]()}
+}
+
+func (bn *bootstrapNodes) add(nodes []*Node, ourID NodeID) {
+	for _, n := range nodes {
+		if _, ok := bn.c.Get(n.ID); !ok {
+			bn.c.Set(n.ID, &entry{
+				node: n,
+				dist: ourID.XOR(n.ID),
+			})
+		}
 	}
+}
 
-	shortlistMap := make(map[NodeID]*entry)
+func (bn *bootstrapNodes) closestUnqueried(k, alpha int) []*entry {
+	entries := make([]*entry, 0, bn.c.Size())
+	for _, e := range bn.c.Items() {
+		entries = append(entries, e)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return bytes.Compare(entries[i].dist[:], entries[j].dist[:]) < 0
+	})
 
-	addNodes := func(nodes []*Node) {
-		for _, n := range nodes {
-			if _, ok := shortlistMap[n.ID]; !ok {
-				shortlistMap[n.ID] = &entry{
-					node: n,
-					dist: s.ourID.XOR(n.ID),
-				}
+	limit := min(bootstrapK, len(entries))
+	var result []*entry
+	for _, e := range entries[:limit] {
+		if !e.queried {
+			result = append(result, e)
+			if len(result) == alpha {
+				break
 			}
 		}
 	}
+	return result
+}
 
-	sortedEntries := func() []*entry {
-		entries := make([]*entry, 0, len(shortlistMap))
-		for _, e := range shortlistMap {
-			entries = append(entries, e)
+func (bn *bootstrapNodes) unqueriedCount() int {
+	count := 0
+	for _, e := range bn.c.Items() {
+		if !e.queried {
+			count++
 		}
-		sort.Slice(entries, func(i, j int) bool {
-			return bytes.Compare(entries[i].dist[:], entries[j].dist[:]) < 0
-		})
-		return entries
+	}
+	return count
+}
+
+func (bn *bootstrapNodes) recomputeDistances(ourID NodeID) {
+	for _, e := range bn.c.Items() {
+		e.dist = ourID.XOR(e.node.ID)
+	}
+}
+
+func (bn *bootstrapNodes) len() int {
+	return bn.c.Size()
+}
+
+func (bn *bootstrapNodes) markQueried(entries []*entry) {
+	for _, e := range entries {
+		e.queried = true
+	}
+}
+
+func (bn *bootstrapNodes) all() []*entry {
+	entries := make([]*entry, 0, bn.c.Size())
+	for _, e := range bn.c.Items() {
+		entries = append(entries, e)
+	}
+	return entries
+}
+
+func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
+	log := logger.FromContext(ctx)
+
+	resolved := s.resolveBootstrapAddrs(ctx, addrs)
+	log.Info("DHT bootstrap starting", "bootstrap_nodes", len(resolved))
+
+	bn := newBootstrapNodes()
+	externalIP := s.querySeeds(ctx, resolved, bn)
+
+	if s.cfg.NodeID == "" && externalIP != nil {
+		if newID, err := DeriveNodeIDFromIP(externalIP); err == nil {
+			s.SetNodeID(newID)
+			bn.recomputeDistances(s.ourID)
+		}
 	}
 
-	type phase1Result struct {
+	s.convergeTable(ctx, bn)
+	s.refreshStaleBuckets(ctx)
+
+	return nil
+}
+
+func (s *Server) querySeeds(ctx context.Context, addrs []*net.UDPAddr, bn *bootstrapNodes) net.IP {
+	log := logger.FromContext(ctx)
+
+	type seedResult struct {
 		addr       *net.UDPAddr
 		nodes      []*Node
 		externalIP net.IP
 		err        error
 	}
 
-	// Phase 1: query all bootstrap nodes concurrently.
-	log.Info("querying bootstrap nodes concurrently", "count", len(resolved))
-	results := make(chan phase1Result, len(resolved))
-	var wg sync.WaitGroup
-	for _, addr := range resolved {
-		wg.Add(1)
-		go func(addr *net.UDPAddr) {
-			defer wg.Done()
-			resp, err := s.Query(ctx, addr, NodeID{}, &Msg{
+	eg, egCtx := errgroup.WithContext(ctx)
+	results := make(chan seedResult, len(addrs))
+
+	for _, addr := range addrs {
+		addr := addr
+		eg.Go(func() error {
+			select {
+			case <-egCtx.Done():
+				return egCtx.Err()
+			default:
+			}
+			resp, err := s.Query(egCtx, addr, NodeID{}, &Msg{
 				Y: "q",
 				Q: "find_node",
 				A: &MsgArgs{
@@ -93,10 +161,10 @@ func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
 				},
 			})
 			if err != nil {
-				results <- phase1Result{addr: addr, err: err}
-				return
+				results <- seedResult{addr: addr, err: err}
+				return nil
 			}
-			r := phase1Result{addr: addr}
+			r := seedResult{addr: addr}
 			if len(resp.IP) == 4 {
 				r.externalIP = net.IP([]byte(resp.IP))
 			}
@@ -104,14 +172,21 @@ func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
 				r.nodes, _ = DecodeNodes(resp.R.Nodes)
 			}
 			results <- r
-		}(addr)
+			return nil
+		})
 	}
-	wg.Wait()
-	close(results)
+
+	go func() {
+		eg.Wait()
+		close(results)
+	}()
 
 	var externalIP net.IP
 	contacted := 0
 	for r := range results {
+		if ctx.Err() != nil {
+			break
+		}
 		if r.err != nil {
 			log.Debug("bootstrap node unreachable", "addr", r.addr, "err", r.err)
 			continue
@@ -124,52 +199,46 @@ func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
 		for _, n := range r.nodes {
 			s.table.Insert(n)
 		}
-		addNodes(r.nodes)
+		bn.add(r.nodes, s.ourID)
 		log.Debug("bootstrap node responded", "addr", r.addr, "nodes_returned", len(r.nodes))
 	}
-	log.Info("DHT bootstrap phase 1 complete", "contacted", contacted, "shortlist", len(shortlistMap))
 
-	// BEP-42: derive a compliant node ID from our external IP if not already set via config.
-	// Skip if dht.node_id was provided (user-managed, already BEP-42 compliant).
-	if s.cfg.NodeID == "" && externalIP != nil {
-		if newID, err := DeriveNodeIDFromIP(externalIP); err == nil {
-			s.SetNodeID(newID)
-			// Recompute distances with the new ID.
-			for _, e := range shortlistMap {
-				e.dist = s.ourID.XOR(e.node.ID)
-			}
-		}
+	if err := eg.Wait(); err != nil {
+		log.Error("DHT bootstrap cancelled", "error", err)
+	}
+	if ctx.Err() != nil && externalIP == nil {
+		log.Error("DHT bootstrap cancelled", "error", ctx.Err())
 	}
 
-	// Phase 2: iterative find_node until convergence.
-	// Stop when all bootstrapK closest nodes have been queried.
+	log.Info("DHT bootstrap phase 1 complete", "contacted", contacted, "shortlist", bn.len())
+
+	return externalIP
+}
+
+func (s *Server) convergeTable(ctx context.Context, bn *bootstrapNodes) {
+	log := logger.FromContext(ctx)
+
 	round := 0
 	for {
-		if err := ctx.Err(); err != nil {
-			return err
+		if ctx.Err() != nil {
+			log.Error("DHT bootstrap cancelled", "error", ctx.Err())
+			return
 		}
 
-		entries := sortedEntries()
-
-		limit := min(bootstrapK, len(entries))
-
-		var toQuery []*entry
-		for _, e := range entries[:limit] {
-			if !e.queried {
-				toQuery = append(toQuery, e)
-				if len(toQuery) == bootstrapAlpha {
-					break
-				}
-			}
-		}
-
+		toQuery := bn.closestUnqueried(bootstrapK, bootstrapAlpha)
 		if len(toQuery) == 0 {
 			break
 		}
 
 		round++
+		bn.markQueried(toQuery)
+
 		for _, e := range toQuery {
-			e.queried = true
+			if ctx.Err() != nil {
+				log.Error("DHT bootstrap cancelled", "error", ctx.Err())
+				return
+			}
+
 			resp, err := s.Query(ctx, e.node.Addr, e.node.ID, &Msg{
 				Y: "q",
 				Q: "find_node",
@@ -180,6 +249,10 @@ func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
 			})
 			if err != nil {
 				log.Debug("iterative find_node failed", "addr", e.node.Addr, "err", err)
+				if ctx.Err() != nil {
+					log.Error("DHT bootstrap cancelled", "error", ctx.Err())
+					return
+				}
 				continue
 			}
 			if resp.R == nil {
@@ -192,15 +265,22 @@ func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
 			for _, n := range nodes {
 				s.table.Insert(n)
 			}
-			addNodes(nodes)
+			bn.add(nodes, s.ourID)
 		}
-		log.Debug("bootstrap convergence round", "round", round, "shortlist", len(shortlistMap), "table_nodes", s.table.NodeCount())
+		log.Debug("bootstrap convergence round", "round", round, "shortlist", bn.len(), "table_nodes", s.table.NodeCount())
 	}
 
 	log.Info("DHT bootstrap complete", "table_nodes", s.table.NodeCount())
+}
 
-	// Phase 3: refresh any stale buckets after convergence.
+func (s *Server) refreshStaleBuckets(ctx context.Context) {
+	log := logger.FromContext(ctx)
+
 	for _, b := range s.table.StaleBuckets() {
+		if ctx.Err() != nil {
+			log.Error("DHT bootstrap cancelled", "error", ctx.Err())
+			return
+		}
 		target := randomIDInBucket(b)
 		for _, n := range s.table.Closest(target, s.cfg.BucketSize) {
 			go func() {
@@ -217,12 +297,8 @@ func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
 			}()
 		}
 	}
-
-	return nil
 }
 
-// resolveBootstrapAddrs resolves "host:port" strings to UDP addresses,
-// accepting multiple A records per hostname.
 func (s *Server) resolveBootstrapAddrs(ctx context.Context, addrs []string) []*net.UDPAddr {
 	var result []*net.UDPAddr
 	for _, addr := range addrs {
@@ -245,28 +321,14 @@ func (s *Server) resolveBootstrapAddrs(ctx context.Context, addrs []string) []*n
 	return result
 }
 
-// DeriveNodeIDFromIP generates a BEP-42 compliant node ID for the given IPv4
-// address. Implements BEP-42 (DHT Security Extension) §Node ID.
-// See https://www.bittorrent.org/beps/bep_0042.html
-//
-// Derivation (IPv4):
-//
-//	r          = random 0–7
-//	masked_ip  = ip_uint32 & 0x030f3fff
-//	seed       = masked_ip | (r << 29)   (4 bytes, big-endian)
-//	crc        = crc32c(seed)
-//	id[0..1]   = top 16 bits of crc
-//	id[2]      = (crc >> 8) & 0xf8 | random_3_bits
-//	id[3..18]  = random
-//	id[19]     = random_5_bits | r
 func DeriveNodeIDFromIP(ip net.IP) (NodeID, error) {
 	ip4 := ip.To4()
 	if ip4 == nil {
-		return NodeID{}, nil // IPv6 out of scope per project charter
+		return NodeID{}, nil
 	}
 
 	var rBuf [1]byte
-	rand.Read(rBuf[:]) //nolint:errcheck
+	rand.Read(rBuf[:])
 	r := rBuf[0] & 0x07
 
 	ipUint32 := binary.BigEndian.Uint32(ip4)
@@ -279,21 +341,16 @@ func DeriveNodeIDFromIP(ip net.IP) (NodeID, error) {
 	crc := crc32.Checksum(seedBuf[:], table)
 
 	var id NodeID
-	rand.Read(id[:]) //nolint:errcheck
+	rand.Read(id[:])
 
-	// Top 21 bits of id must equal top 21 bits of crc.
 	id[0] = byte(crc >> 24)
 	id[1] = byte(crc >> 16)
 	id[2] = (byte(crc>>8) & 0xf8) | (id[2] & 0x07)
-	// id[3..18] already random
 	id[19] = (id[19] & 0xf8) | r
 
 	return id, nil
 }
 
-// ValidateNodeIDForIP verifies that id satisfies the BEP-42 node ID invariant
-// for the given IPv4 address. Implements BEP-42 §Node ID verification.
-// Returns nil if valid, or an error describing the failure.
 func ValidateNodeIDForIP(ip net.IP, id NodeID) error {
 	ip4 := ip.To4()
 	if ip4 == nil {
@@ -318,7 +375,6 @@ func ValidateNodeIDForIP(ip net.IP, id NodeID) error {
 	return nil
 }
 
-// saveNodeID writes id to path atomically (temp file + rename).
 func saveNodeID(path string, id NodeID) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return
@@ -327,5 +383,5 @@ func saveNodeID(path string, id NodeID) {
 	if err := os.WriteFile(tmp, id[:], 0o600); err != nil {
 		return
 	}
-	os.Rename(tmp, path) //nolint:errcheck
+	os.Rename(tmp, path)
 }

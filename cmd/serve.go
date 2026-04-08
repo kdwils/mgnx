@@ -111,7 +111,7 @@ var serveCmd = &cobra.Command{
 		idxWorker := indexer.New(crawler, metaClient, queries, cfg.Indexer)
 		go idxWorker.Run(ctx)
 
-		scrapeClient, err := scrape.NewClient(cfg.Scrape.Trackers[0], cfg.Scrape.DialTimeout, cfg.Scrape.ReadTimeout)
+		scrapeClient, err := scrape.NewClient(cfg.Scrape.DialTimeout, cfg.Scrape.ReadTimeout, cfg.Scrape.Trackers...)
 		if err != nil {
 			return fmt.Errorf("scrape client: %w", err)
 		}
