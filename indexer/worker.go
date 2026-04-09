@@ -18,6 +18,7 @@ import (
 	"github.com/kdwils/mgnx/dht"
 	"github.com/kdwils/mgnx/logger"
 	"github.com/kdwils/mgnx/metadata"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 )
 
@@ -30,18 +31,19 @@ type Crawler interface {
 }
 
 type Worker struct {
-	crawler              Crawler
-	fetcher              metadata.Fetcher
-	queries              gen.Querier
-	allowedExts          map[string]struct{}
-	peerTimeout          time.Duration
-	maxPeers             int
-	rateLimiter          *rate.Limiter
-	minSize              int64
-	maxSize              int64
-	workers              int
-	enableExtFilter      bool
-	excludeAdultContent  bool
+	crawler             Crawler
+	fetcher             metadata.Fetcher
+	queries             gen.Querier
+	allowedExts         map[string]struct{}
+	peerTimeout         time.Duration
+	maxPeers            int
+	maxConcurrentPeers  int
+	rateLimiter         *rate.Limiter
+	minSize             int64
+	maxSize             int64
+	workers             int
+	enableExtFilter     bool
+	excludeAdultContent bool
 }
 
 func New(crawler Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg config.Indexer) *Worker {
@@ -56,6 +58,7 @@ func New(crawler Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg con
 		allowedExts:         allowed,
 		peerTimeout:         cfg.RequestTimeout,
 		maxPeers:            cfg.MaxPeers,
+		maxConcurrentPeers:  cfg.MaxConcurrentPeers,
 		rateLimiter:         rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateBurst),
 		minSize:             cfg.MinSize,
 		maxSize:             cfg.MaxSize,
@@ -90,6 +93,8 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 	log := logger.FromContext(ctx)
 	infohashHex := hex.EncodeToString(ev.Infohash[:])
 
+	log.DebugContext(ctx, "processing infohash", "infohash", infohashHex, "peers", len(ev.Peers))
+
 	_, err := w.queries.GetTorrentByInfohash(ctx, infohashHex)
 	if err == nil {
 		return
@@ -99,32 +104,55 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		return
 	}
 
-	retries := min(len(ev.Peers), w.maxPeers)
+	maxPeers := min(len(ev.Peers), w.maxPeers)
 
 	var info *metadata.TorrentInfo
-	for i := 0; i < retries; i++ {
-		// Rate limit between peer attempts (after first peer)
-		if i > 0 {
-			if err := w.rateLimiter.Wait(ctx); err != nil {
-				break
-			}
-		}
 
-		peer := ev.Peers[i]
-		addr := net.TCPAddr{IP: peer.SourceIP, Port: peer.Port}
-
-		fetchCtx, cancel := context.WithTimeout(ctx, w.peerTimeout)
-		info, err = w.fetcher.Fetch(fetchCtx, ev.Infohash, addr)
-		cancel()
-		if err == nil {
-			break
-		}
-		log.DebugContext(ctx, "metadata fetch failed", "infohash", infohashHex, "addr", addr.String(), "err", err)
-	}
-
-	if info == nil {
+	if maxPeers == 0 {
 		return
 	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(w.maxConcurrentPeers)
+
+	resultCh := make(chan *metadata.TorrentInfo, 1)
+
+	for i := 0; i < maxPeers; i++ {
+		if err := w.rateLimiter.Wait(gctx); err != nil {
+			break
+		}
+		peer := ev.Peers[i]
+		g.Go(func() error {
+			fetchCtx, fetchCancel := context.WithTimeout(gctx, w.peerTimeout)
+			defer fetchCancel()
+			addr := net.TCPAddr{IP: peer.SourceIP, Port: peer.Port}
+			info, err := w.fetcher.Fetch(fetchCtx, ev.Infohash, addr)
+			if err != nil {
+				return nil
+			}
+			select {
+			case resultCh <- info:
+			default:
+			}
+			return nil
+		})
+	}
+
+	go func() {
+		g.Wait()
+		close(resultCh)
+	}()
+
+	info = <-resultCh
+	if info == nil {
+		log.DebugContext(ctx, "no metadata fetched", "infohash", infohashHex)
+		return
+	}
+
+	log.DebugContext(ctx, "metadata fetched", "infohash", infohashHex, "name", info.Name, "files", len(info.Files))
 
 	info.Name = strings.ToValidUTF8(info.Name, "")
 
@@ -144,28 +172,37 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 	}
 
 	classifyFiles := make([]classify.File, len(info.Files))
+	infohashes := make([]string, len(info.Files))
+	paths := make([]string, len(info.Files))
+	sizes := make([]int64, len(info.Files))
+	extensions := make([]string, len(info.Files))
+	isVideos := make([]bool, len(info.Files))
+
 	for i, f := range info.Files {
 		f.Path = strings.ToValidUTF8(f.Path, "")
 		ext := filepath.Ext(f.Path)
-		var extension pgtype.Text
-		if ext != "" {
-			extension = pgtype.Text{String: ext, Valid: true}
-		}
-
-		if err := w.queries.InsertTorrentFile(ctx, gen.InsertTorrentFileParams{
-			Infohash:  infohashHex,
-			Path:      f.Path,
-			Size:      f.Size,
-			Extension: extension,
-			IsVideo:   classify.IsVideoExt(ext),
-		}); err != nil {
-			log.ErrorContext(ctx, "insert torrent file failed", "infohash", infohashHex, "path", f.Path, "err", err)
-		}
-
+		infohashes[i] = infohashHex
+		paths[i] = f.Path
+		sizes[i] = f.Size
+		extensions[i] = ext
+		isVideos[i] = classify.IsVideoExt(ext)
 		classifyFiles[i] = classify.File{Path: f.Path, Size: f.Size}
 	}
 
+	if err := w.queries.InsertTorrentFiles(ctx, gen.InsertTorrentFilesParams{
+		Infohash:  infohashes,
+		Path:      paths,
+		Size:      sizes,
+		Extension: extensions,
+		IsVideo:   isVideos,
+	}); err != nil {
+		log.ErrorContext(ctx, "insert torrent files failed", "infohash", infohashHex, "err", err)
+		return
+	}
+
 	result := classify.Classify(info.Name, classifyFiles, info.TotalSize, w.minSize, w.maxSize, w.allowedExts, w.enableExtFilter, w.excludeAdultContent)
+	log.DebugContext(ctx, "classified torrent", "infohash", infohashHex, "state", result.State, "content_type", result.ContentType)
+
 	if err := w.queries.UpdateTorrentClassified(ctx, gen.UpdateTorrentClassifiedParams{
 		Infohash:          infohashHex,
 		State:             result.State,

@@ -20,7 +20,7 @@ type Querier interface {
 	GetTorrentByInfohash(ctx context.Context, infohash string) (GetTorrentByInfohashRow, error)
 	GetTorrentsToScrape(ctx context.Context, limit int32) ([]GetTorrentsToScrapeRow, error)
 	InsertScrapeHistory(ctx context.Context, arg InsertScrapeHistoryParams) error
-	InsertTorrentFile(ctx context.Context, arg InsertTorrentFileParams) error
+	InsertTorrentFiles(ctx context.Context, arg InsertTorrentFilesParams) error
 	PruneScrapeHistory(ctx context.Context, cutoff pgtype.Timestamptz) error
 	// General search across all active torrents. Used for t=search.
 	SearchAll(ctx context.Context, arg SearchAllParams) ([]SearchAllRow, error)

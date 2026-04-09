@@ -108,14 +108,15 @@ func TestEndToEnd(t *testing.T) {
 
 	cfg := config.Config{
 		Indexer: config.Indexer{
-			Workers:           4,
-			RequestTimeout:    6 * time.Second,
-			MaxPeers:          1,
-			RateLimit:         2.0,
-			RateBurst:         4,
-			MinSize:           50 * 1024 * 1024,
-			MaxSize:           150 * 1024 * 1024 * 1024,
-			AllowedExtensions: []string{".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".ts", ".m2ts", ".vob", ".flv", ".webm", ".srt", ".ass", ".ssa"},
+			Workers:            4,
+			MaxConcurrentPeers: 5,
+			RequestTimeout:     6 * time.Second,
+			MaxPeers:           1,
+			RateLimit:          2.0,
+			RateBurst:          4,
+			MinSize:            50 * 1024 * 1024,
+			MaxSize:            150 * 1024 * 1024 * 1024,
+			AllowedExtensions:  []string{".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".ts", ".m2ts", ".vob", ".flv", ".webm", ".srt", ".ass", ".ssa"},
 		},
 		Scrape: config.Scrape{
 			PollInterval: 200 * time.Millisecond,
@@ -133,14 +134,7 @@ func TestEndToEnd(t *testing.T) {
 	scrapeWorker := scrape.New(queries, scraper, cfg.Scrape)
 	go scrapeWorker.Run(ctx)
 
-	ln, err := net.Listen("tcp", ":0")
-	require.NoError(t, err)
-
-	svc := service.New(queries, cfg)
-	srv := torznab.New(0, logger.New("error"), svc)
-	go srv.ServeListener(ctx, ln)
-
-	serverURL := "http://127.0.0.1:" + strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	time.Sleep(100 * time.Millisecond)
 
 	discoveredCh <- dht.DiscoveredPeers{
 		Infohash: movieHash,
@@ -154,6 +148,15 @@ func TestEndToEnd(t *testing.T) {
 		Infohash: rejHash,
 		Peers:    []dht.PeerAddr{{SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}},
 	}
+
+	ln, err := net.Listen("tcp", ":0")
+	require.NoError(t, err)
+
+	svc := service.New(queries, cfg)
+	srv := torznab.New(0, logger.New("error"), svc)
+	go srv.ServeListener(ctx, ln)
+
+	serverURL := "http://127.0.0.1:" + strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
 
 	if !t.Run("IndexMovie", func(t *testing.T) {
 		waitForState(t, ctx, queries, movieHex, gen.TorrentStateActive, 30*time.Second)
