@@ -244,8 +244,7 @@ func (c *crawler) queryForSamples(ctx context.Context, item *traversalItem) (*Ms
 
 	capable, known := c.nodeSampleSupport.Get(item.node.ID)
 	if known && !capable {
-		log.Debug("sending query", "type", "get_peers")
-		return c.getPeers(ctx, item)
+		return nil, nil
 	}
 
 	log.Debug("sending query", "type", "sample_infohashes")
@@ -265,8 +264,7 @@ func (c *crawler) queryForSamples(ctx context.Context, item *traversalItem) (*Ms
 	}
 
 	c.nodeSampleSupport.Set(item.node.ID, false)
-	log.Debug("sending query", "type", "get_peers", "reason", "bep51_fallback")
-	return c.getPeers(ctx, item)
+	return nil, nil
 }
 
 // retargetEvery is the number of queries each worker issues before
