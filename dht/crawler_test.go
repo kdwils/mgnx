@@ -15,7 +15,7 @@ import (
 
 func makeCrawler(t *testing.T) *crawler {
 	t.Helper()
-	cr, err := NewCrawler(config.Crawler{Crawlers: 2, Alpha: 3, MaxIterations: 4}, testServerCfg(t))
+	cr, err := NewCrawler(config.Crawler{Crawlers: 2, Alpha: 3, MaxIterations: 4, TraversalWidth: 20}, testServerCfg(t))
 	require.NoError(t, err)
 	cr.discoveryQueue = make(chan discoveryWork, 64)
 	t.Cleanup(func() { cr.Stop(t.Context()) })

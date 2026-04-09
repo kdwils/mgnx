@@ -48,6 +48,7 @@ type Crawler struct {
 	BootstrapNodes     []string `mapstructure:"bootstrap_nodes"`
 	Alpha              int      `mapstructure:"alpha"`
 	MaxIterations      int      `mapstructure:"max_iterations"`
+	TraversalWidth     int      `mapstructure:"traversal_width"`
 }
 
 type Indexer struct {

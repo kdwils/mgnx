@@ -94,6 +94,7 @@ func initConfig() {
 	viper.SetDefault("crawler.bootstrap_nodes", []string{})
 	viper.SetDefault("crawler.alpha", 3)
 	viper.SetDefault("crawler.max_iterations", 4)
+	viper.SetDefault("crawler.traversal_width", 20)
 
 	viper.SetDefault("server.health_port", 8080)
 

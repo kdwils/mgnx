@@ -51,7 +51,7 @@ type crawler struct {
 	discoveryWorkers   int
 	crawlers           int
 	transactionTimeout time.Duration
-	bucketSize         int
+	traversalWidth         int
 	alpha              int
 	maxIterations      int
 }
@@ -111,7 +111,7 @@ func NewCrawler(cfg config.Crawler, dhtCfg config.DHT) (*crawler, error) {
 		discoveryWorkers:   cfg.DiscoveryWorkers,
 		rateLimiter:        newNodeRateLimiter(2 * time.Second),
 		discoveryQueue:     make(chan discoveryWork, cfg.DiscoveryQueueSize),
-		bucketSize:         dhtCfg.BucketSize,
+		traversalWidth:         cfg.TraversalWidth,
 		transactionTimeout: dhtCfg.TransactionTimeout,
 		alpha:              cfg.Alpha,
 		maxIterations:      cfg.MaxIterations,
@@ -386,7 +386,7 @@ func (c *crawler) crawlerWorker(ctx context.Context) {
 
 // seedQueue pushes the k closest routing-table nodes to target onto pq.
 func (c *crawler) seedQueue(pq *traversalHeap, target NodeID) {
-	for _, n := range c.server.table.Closest(target, c.bucketSize) {
+	for _, n := range c.server.table.Closest(target, c.traversalWidth) {
 		heap.Push(pq, &traversalItem{
 			node:   n,
 			target: target,
@@ -530,12 +530,12 @@ func (c *crawler) discoverPeers(ctx context.Context, h [20]byte, initialNode *No
 
 // trimToKClosest returns a new map containing only the k nodes closest to target.
 func (c *crawler) trimToKClosest(nodes map[NodeID]*Node, target NodeID) map[NodeID]*Node {
-	if len(nodes) <= c.bucketSize {
+	if len(nodes) <= c.traversalWidth {
 		return nodes
 	}
 	sorted := c.sortByDistance(nodes, target)
-	result := make(map[NodeID]*Node, c.bucketSize)
-	for _, n := range sorted[:c.bucketSize] {
+	result := make(map[NodeID]*Node, c.traversalWidth)
+	for _, n := range sorted[:c.traversalWidth] {
 		result[n.ID] = n
 	}
 	return result
