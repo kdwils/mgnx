@@ -180,7 +180,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		return
 	}
 
-	log.InfoContext(ctx, "torrent ingested",
+	log.InfoContext(ctx, "torrent indexed",
 		"infohash", infohashHex,
 		"name", info.Name,
 		"state", result.State,
