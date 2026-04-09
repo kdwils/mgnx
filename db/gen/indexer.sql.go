@@ -12,36 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const insertTorrentFile = `-- name: InsertTorrentFile :exec
-INSERT INTO torrent_files (infohash, path, size, extension, is_video)
-VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5
-)
-`
-
-type InsertTorrentFileParams struct {
-	Infohash  string      `json:"infohash"`
-	Path      string      `json:"path"`
-	Size      int64       `json:"size"`
-	Extension pgtype.Text `json:"extension"`
-	IsVideo   bool        `json:"is_video"`
-}
-
-func (q *Queries) InsertTorrentFile(ctx context.Context, arg InsertTorrentFileParams) error {
-	_, err := q.db.Exec(ctx, insertTorrentFile,
-		arg.Infohash,
-		arg.Path,
-		arg.Size,
-		arg.Extension,
-		arg.IsVideo,
-	)
-	return err
-}
-
 const insertTorrentFiles = `-- name: InsertTorrentFiles :exec
 INSERT INTO torrent_files (infohash, path, size, extension, is_video)
 SELECT

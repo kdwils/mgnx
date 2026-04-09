@@ -102,11 +102,10 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		return
 	}
 
-	retries := min(len(ev.Peers), w.maxPeers)
+	maxPeers := min(len(ev.Peers), w.maxPeers)
 
 	var info *metadata.TorrentInfo
 
-	maxPeers := retries
 	if maxPeers == 0 {
 		return
 	}
@@ -147,10 +146,11 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 	}()
 
 	select {
-	case info, ok := <-resultCh:
-		if !ok || info == nil {
+	case result, ok := <-resultCh:
+		if !ok || result == nil {
 			return
 		}
+		info = result
 	case <-ctx.Done():
 		return
 	}

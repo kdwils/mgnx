@@ -8,16 +8,6 @@ VALUES (
 )
 ON CONFLICT (infohash) DO NOTHING;
 
--- name: InsertTorrentFile :exec
-INSERT INTO torrent_files (infohash, path, size, extension, is_video)
-VALUES (
-    sqlc.arg('infohash'),
-    sqlc.arg('path'),
-    sqlc.arg('size'),
-    sqlc.narg('extension'),
-    sqlc.arg('is_video')
-);
-
 -- name: InsertTorrentFiles :exec
 INSERT INTO torrent_files (infohash, path, size, extension, is_video)
 SELECT
