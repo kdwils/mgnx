@@ -126,9 +126,11 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		return
 	}
 
+	info.Name = strings.ToValidUTF8(info.Name, "")
+
 	tag, err := w.queries.UpsertTorrentPending(ctx, gen.UpsertTorrentPendingParams{
 		Infohash:  infohashHex,
-		Name:      strings.ToValidUTF8(info.Name, ""),
+		Name:      info.Name,
 		TotalSize: info.TotalSize,
 		FileCount: int64(len(info.Files)),
 	})
