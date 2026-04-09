@@ -48,22 +48,17 @@ func New(crawler Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg con
 	for _, ext := range cfg.AllowedExtensions {
 		allowed[ext] = struct{}{}
 	}
-	workers := cfg.Workers
-	if workers <= 0 {
-		workers = 1
-	}
 	return &Worker{
 		crawler:     crawler,
 		fetcher:     fetcher,
 		queries:     queries,
-		cfg:         cfg,
 		allowedExts: allowed,
 		peerTimeout: cfg.RequestTimeout,
 		maxPeers:    cfg.MaxPeers,
 		rateLimiter: rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateBurst),
 		minSize:     cfg.MinSize,
 		maxSize:     cfg.MaxSize,
-		workers:     workers,
+		workers:     cfg.Workers,
 	}
 }
 
