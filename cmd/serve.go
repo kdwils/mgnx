@@ -7,8 +7,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -17,6 +15,7 @@ import (
 	"github.com/kdwils/mgnx/db/gen"
 	"github.com/kdwils/mgnx/dht"
 	"github.com/kdwils/mgnx/gluetun"
+	"github.com/kdwils/mgnx/health"
 	"github.com/kdwils/mgnx/indexer"
 	"github.com/kdwils/mgnx/logger"
 	"github.com/kdwils/mgnx/metadata"
@@ -38,46 +37,70 @@ var serveCmd = &cobra.Command{
 		}
 
 		l := logger.New(cfg.Server.LogLevel)
-
 		ctx, cancel := context.WithCancel(logger.WithContext(cmd.Context(), l))
+
+		g, ctx := errgroup.WithContext(ctx)
+		if cfg.DHT.ExternalIPFile != "" || cfg.DHT.ForwardedPortFile != "" {
+			g.Go(func() error {
+				return gluetun.WatchFiles(ctx, cancel, cfg.DHT.ExternalIPFile, cfg.DHT.ForwardedPortFile)
+			})
+		}
+
+		if cfg.DHT.ExternalIPFile != "" {
+			fileCtx, fileCancel := context.WithTimeout(ctx, cfg.DHT.FileWaitTimeout)
+			ip, err := gluetun.ReadIp(fileCtx, cfg.DHT.ExternalIPFile)
+			fileCancel()
+			if err != nil {
+				return err
+			}
+
+			nodeID, err := dht.DeriveNodeIDFromIP(ip)
+			if err != nil {
+				return fmt.Errorf("failed to derive node ID from ip address: %w", err)
+			}
+
+			cfg.DHT.NodeID = nodeID.String()
+			l.Info("derived node ID from ip", "id", nodeID.String())
+		}
+
+		if cfg.DHT.ForwardedPortFile != "" {
+			fileCtx, fileCancel := context.WithTimeout(ctx, cfg.DHT.FileWaitTimeout)
+			port, err := gluetun.ReadForwardedPort(fileCtx, cfg.DHT.ForwardedPortFile)
+			fileCancel()
+			if err != nil {
+				return err
+			}
+			cfg.DHT.Port = port
+			l.Info("using forwarded port from file", "port", port)
+		}
 
 		pool, err := db.Connect(ctx, cfg.Database.URL)
 		if err != nil {
 			return fmt.Errorf("db connect: %w", err)
 		}
+		queries := gen.New(pool)
 
-		if cfg.DHT.ExternalIPFile != "" && cfg.DHT.NodeID != "" {
-			return fmt.Errorf("dht.external_ip_file and dht.node_id are mutually exclusive")
+		crawler, err := dht.NewCrawler(cfg.Crawler, cfg.DHT)
+		if err != nil {
+			return fmt.Errorf("dht crawler: %w", err)
 		}
 
-		if cfg.DHT.ExternalIPFile != "" {
-			data, err := os.ReadFile(cfg.DHT.ExternalIPFile)
-			if err != nil {
-				return fmt.Errorf("gluetun: read external IP file: %w", err)
-			}
-			ip := net.ParseIP(strings.TrimSpace(string(data)))
-			if ip == nil {
-				return fmt.Errorf("gluetun: invalid IP in %s", cfg.DHT.ExternalIPFile)
-			}
-			id, err := dht.DeriveNodeIDFromIP(ip)
-			if err != nil {
-				return fmt.Errorf("gluetun: derive node ID: %w", err)
-			}
-			cfg.DHT.NodeID = id.String()
-			l.Info("gluetun: derived BEP-42 node ID from public IP", "ip", ip.String(), "node_id", cfg.DHT.NodeID)
+		scrapeClient, err := scrape.NewClient(cfg.Scrape.DialTimeout, cfg.Scrape.ReadTimeout, cfg.Scrape.Trackers...)
+		if err != nil {
+			return fmt.Errorf("scrape client: %w", err)
 		}
+		scrapeWorker := scrape.New(queries, scrapeClient, cfg.Scrape)
 
-		if cfg.DHT.ForwardedPortFile != "" {
-			data, err := os.ReadFile(cfg.DHT.ForwardedPortFile)
-			if err != nil {
-				return fmt.Errorf("gluetun: read forwarded port file: %w", err)
-			}
-			p, err := strconv.Atoi(strings.TrimSpace(string(data)))
-			if err != nil || p <= 0 || p > 65535 {
-				return fmt.Errorf("gluetun: invalid forwarded port in %s", cfg.DHT.ForwardedPortFile)
-			}
-			cfg.DHT.Port = p
-			l.Info("gluetun: using forwarded port", "port", p)
+		hs := health.New(cfg.Server.HealthPort, pool, crawler)
+		g.Go(func() error {
+			return hs.Start(ctx)
+		})
+
+		if err := db.RunMigrations(pool); err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 
 		metaClient := metadata.NewClient(
@@ -89,68 +112,35 @@ var serveCmd = &cobra.Command{
 			cfg.DHT.MaxMetadataSize,
 		)
 
-		crawler, err := dht.NewCrawler(cfg.DHT, cfg.Crawler)
-		if err != nil {
-			return fmt.Errorf("dht crawler: %w", err)
-		}
-
-		if err := db.RunMigrations(pool); err != nil {
-			return fmt.Errorf("migrate: %w", err)
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		queries := gen.New(pool)
-
-		g, ctx := errgroup.WithContext(ctx)
-
 		g.Go(func() error {
 			err := gluetun.WatchFiles(ctx, cancel, cfg.DHT.ForwardedPortFile, cfg.DHT.ExternalIPFile)
-			l.Info("gluetun watcher done", "error", err)
 			if err != nil {
 				logger.FromContext(ctx).Error("file watcher error", "error", err)
 			}
 			return err
 		})
-
 		g.Go(func() error {
 			if err := crawler.Start(ctx); err != nil && err != context.Canceled {
 				logger.FromContext(ctx).Error("crawler start error", "error", err)
 				return err
 			}
-			l.Info("crawler started")
 			<-ctx.Done()
-			l.Info("crawler context done, stopping")
 			err := crawler.Stop(ctx)
-			l.Info("crawler stopped", "error", err)
-			return nil
+			return err
 		})
-
 		idxWorker := indexer.New(crawler, metaClient, queries, cfg.Indexer)
 		g.Go(func() error {
 			idxWorker.Run(ctx)
-			l.Info("indexer stopped")
 			return nil
 		})
-
-		scrapeClient, err := scrape.NewClient(cfg.Scrape.DialTimeout, cfg.Scrape.ReadTimeout, cfg.Scrape.Trackers...)
-		if err != nil {
-			return fmt.Errorf("scrape client: %w", err)
-		}
-		scrapeWorker := scrape.New(queries, scrapeClient, cfg.Scrape)
 		g.Go(func() error {
 			scrapeWorker.Run(ctx)
-			l.Info("scrape worker stopped")
 			return nil
 		})
-
 		g.Go(func() error {
 			svc := service.New(queries, cfg)
 			srv := torznab.New(cfg.Server.Port, l, svc)
-			l.Info("starting torznab server")
 			err := srv.Serve(ctx)
-			l.Info("torznab server done", "error", err)
 			if err != nil && err != context.Canceled {
 				logger.FromContext(ctx).Error("torznab server error", "error", err)
 			}
@@ -161,15 +151,13 @@ var serveCmd = &cobra.Command{
 		signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
 		go func(ctx context.Context) {
 			<-signalChan
-			l.Warn("shutdown signal received, calling cancel()")
 			cancel()
-			l.Warn("cancel() called")
 		}(ctx)
 
-		l.Info("all goroutines started")
+		l.Info("all services started")
 		err = g.Wait()
 		signal.Stop(signalChan)
-		l.Info("returning", "error", err)
+		l.Info("all services stopped")
 		return nil
 	},
 }

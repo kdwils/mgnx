@@ -36,8 +36,6 @@ func testServerCfg(t *testing.T) config.DHT {
 		StaleThreshold:      15 * time.Minute,
 		NodeID:              bep42NodeID(t),
 		NodesPath:           t.TempDir() + "/dht_nodes.dat",
-		Alpha:               3,
-		MaxIterations:       4,
 		RateLimit:           1000,
 		RateBurst:           1000,
 		Workers:             2,

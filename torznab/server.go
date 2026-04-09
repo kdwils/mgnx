@@ -73,7 +73,6 @@ func (s *Server) ServeListener(ctx context.Context, l net.Listener) error {
 func (s *Server) gracefullyListenAndServe(ctx context.Context, srv *http.Server, l net.Listener) error {
 	go func() {
 		<-ctx.Done()
-		s.logger.Info("shutting down HTTP server")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -81,7 +80,7 @@ func (s *Server) gracefullyListenAndServe(ctx context.Context, srv *http.Server,
 		}
 	}()
 
-	s.logger.Info("HTTP server listening", "addr", srv.Addr)
+	s.logger.Info("torznab server listening", "addr", srv.Addr)
 
 	if l != nil {
 		if err := srv.Serve(l); err != nil && err != http.ErrServerClosed {

@@ -55,6 +55,20 @@ func (mr *MockCrawlerMockRecorder) Infohashes() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Infohashes", reflect.TypeOf((*MockCrawler)(nil).Infohashes))
 }
 
+// NodeCount mocks base method.
+func (m *MockCrawler) NodeCount() int {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "NodeCount")
+	ret0, _ := ret[0].(int)
+	return ret0
+}
+
+// NodeCount indicates an expected call of NodeCount.
+func (mr *MockCrawlerMockRecorder) NodeCount() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NodeCount", reflect.TypeOf((*MockCrawler)(nil).NodeCount))
+}
+
 // Start mocks base method.
 func (m *MockCrawler) Start(ctx context.Context) error {
 	m.ctrl.T.Helper()

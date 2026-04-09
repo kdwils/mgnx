@@ -15,11 +15,10 @@ import (
 
 func makeCrawler(t *testing.T) *crawler {
 	t.Helper()
-	c, err := NewCrawler(testServerCfg(t), config.Crawler{Workers: 2})
+	cr, err := NewCrawler(config.Crawler{Crawlers: 2, Alpha: 3, MaxIterations: 4}, testServerCfg(t))
 	require.NoError(t, err)
-	cr := c.(*crawler)
 	cr.discoveryQueue = make(chan discoveryWork, 64)
-	t.Cleanup(func() { c.Stop(t.Context()) })
+	t.Cleanup(func() { cr.Stop(t.Context()) })
 	return cr
 }
 
