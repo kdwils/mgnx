@@ -60,6 +60,7 @@ type Indexer struct {
 	EnableExtensionFilter bool          `mapstructure:"enable_extension_filter"`
 	MinSize               int64         `mapstructure:"min_size"`
 	MaxSize               int64         `mapstructure:"max_size"`
+	ExcludeAdultContent   bool          `mapstructure:"exclude_adult_content"`
 }
 
 type Scrape struct {

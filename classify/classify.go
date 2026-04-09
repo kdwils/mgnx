@@ -76,6 +76,9 @@ var (
 	// Release group: last hyphen-prefixed token at end of name (before any extension).
 	reReleaseGroup = regexp.MustCompile(`-([A-Za-z0-9]{2,15})$`)
 
+	// Adult content: scene names commonly contain .XXX. as a genre tag.
+	reAdult = regexp.MustCompile(`(?i)\bXXX\b`)
+
 	// Patterns used to find where the title ends in a normalized name.
 	titleCutPatterns = []*regexp.Regexp{
 		episodePattern, seasonNumberPattern, seasonPackPattern,
@@ -167,11 +170,14 @@ func IsVideoExt(ext string) bool {
 	return false
 }
 
-func shouldReject(ct gen.ContentType, files []File, totalSize int64, minSize, maxSize int64, allowed map[string]struct{}, enableExtensionFilter bool) bool {
+func shouldReject(ct gen.ContentType, name string, files []File, totalSize int64, minSize, maxSize int64, allowed map[string]struct{}, enableExtensionFilter, excludeAdultContent bool) bool {
 	if totalSize < minSize || totalSize > maxSize {
 		return true
 	}
 	if ct == gen.ContentTypeUnknown {
+		return true
+	}
+	if excludeAdultContent && reAdult.MatchString(name) {
 		return true
 	}
 	videoCount, badCount := analyzeFiles(files, allowed)
@@ -197,7 +203,8 @@ func stripVideoExt(name string) string {
 // Classify analyzes a torrent name and file list to produce a classification result.
 // allowed is a pre-built set of allowed file extensions (built once at startup from config).
 // enableExtensionFilter controls whether to reject torrents with non-allowed file extensions.
-func Classify(name string, files []File, totalSize int64, minSize, maxSize int64, allowed map[string]struct{}, enableExtensionFilter bool) Result {
+// excludeAdultContent controls whether to reject torrents whose name contains XXX.
+func Classify(name string, files []File, totalSize int64, minSize, maxSize int64, allowed map[string]struct{}, enableExtensionFilter, excludeAdultContent bool) Result {
 	result := Result{
 		SceneName:   name,
 		ContentType: gen.ContentTypeUnknown,
@@ -232,7 +239,7 @@ func Classify(name string, files []File, totalSize int64, minSize, maxSize int64
 		result.ReleaseGroup = m[1]
 	}
 
-	if shouldReject(result.ContentType, files, totalSize, minSize, maxSize, allowed, enableExtensionFilter) {
+	if shouldReject(result.ContentType, name, files, totalSize, minSize, maxSize, allowed, enableExtensionFilter, excludeAdultContent) {
 		result.State = gen.TorrentStateRejected
 		return result
 	}

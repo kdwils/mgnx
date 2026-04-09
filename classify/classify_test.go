@@ -31,11 +31,12 @@ func video(n int, sizeEach int64) []classify.File {
 
 func TestClassify(t *testing.T) {
 	tests := []struct {
-		name      string
-		torrent   string
-		files     []classify.File
-		totalSize int64
-		want      classify.Result
+		name                string
+		torrent             string
+		files               []classify.File
+		totalSize           int64
+		excludeAdultContent bool
+		want                classify.Result
 	}{
 		{
 			name:      "standard movie",
@@ -885,11 +886,43 @@ func TestClassify(t *testing.T) {
 				SceneName:   "Movie.2005.360p.DVDRip.x264",
 			},
 		},
+		{
+			name:                "adult content rejected when exclude_adult_content enabled",
+			torrent:             "Some.Title.XXX.1080p.WEB-DL-GROUP",
+			files:               video(1, 2*gb),
+			totalSize:           2 * gb,
+			excludeAdultContent: true,
+			want: classify.Result{
+				State:        gen.TorrentStateRejected,
+				ContentType:  gen.ContentTypeMovie,
+				Quality:      "1080p",
+				Source:       "WEB-DL",
+				ReleaseGroup: "GROUP",
+				SceneName:    "Some.Title.XXX.1080p.WEB-DL-GROUP",
+				Title:        "Some Title XXX",
+			},
+		},
+		{
+			name:                "adult content allowed when exclude_adult_content disabled",
+			torrent:             "Some.Title.XXX.1080p.WEB-DL-GROUP",
+			files:               video(1, 2*gb),
+			totalSize:           2 * gb,
+			excludeAdultContent: false,
+			want: classify.Result{
+				State:        gen.TorrentStateClassified,
+				ContentType:  gen.ContentTypeMovie,
+				Quality:      "1080p",
+				Source:       "WEB-DL",
+				ReleaseGroup: "GROUP",
+				SceneName:    "Some.Title.XXX.1080p.WEB-DL-GROUP",
+				Title:        "Some Title XXX",
+			},
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := classify.Classify(tc.torrent, tc.files, tc.totalSize, testMinSize, testMaxSize, testAllowed, true)
+			got := classify.Classify(tc.torrent, tc.files, tc.totalSize, testMinSize, testMaxSize, testAllowed, true, tc.excludeAdultContent)
 			assert.Equal(t, tc.want, got)
 		})
 	}
