@@ -40,12 +40,17 @@ type Worker struct {
 	rateLimiter *rate.Limiter
 	minSize     int64
 	maxSize     int64
+	workers     int
 }
 
 func New(crawler Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg config.Indexer) *Worker {
 	allowed := make(map[string]struct{}, len(cfg.AllowedExtensions))
 	for _, ext := range cfg.AllowedExtensions {
 		allowed[ext] = struct{}{}
+	}
+	workers := cfg.Workers
+	if workers <= 0 {
+		workers = 1
 	}
 	return &Worker{
 		crawler:     crawler,
@@ -58,28 +63,29 @@ func New(crawler Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg con
 		rateLimiter: rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateBurst),
 		minSize:     cfg.MinSize,
 		maxSize:     cfg.MaxSize,
+		workers:     workers,
 	}
 }
 
 func (w *Worker) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	for {
-		select {
-		case <-ctx.Done():
-			wg.Wait()
-			return
-		case ev, ok := <-w.crawler.Infohashes():
-			if !ok {
-				wg.Wait()
-				return
+	ch := w.crawler.Infohashes()
+	for range w.workers {
+		wg.Go(func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case ev, ok := <-ch:
+					if !ok {
+						return
+					}
+					w.process(ctx, ev)
+				}
 			}
-			wg.Add(1)
-			go func(e dht.DiscoveredPeers) {
-				defer wg.Done()
-				w.process(ctx, e)
-			}(ev)
-		}
+		})
 	}
+	wg.Wait()
 }
 
 func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
