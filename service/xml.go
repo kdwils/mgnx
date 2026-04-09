@@ -97,9 +97,10 @@ func newXMLCaps(caps CapsResponse) XMLCaps {
 // --- RSS feed response ---
 
 type XMLRSS struct {
-	XMLName xml.Name   `xml:"rss"`
-	Version string     `xml:"version,attr"`
-	Channel XMLChannel `xml:"channel"`
+	XMLName   xml.Name   `xml:"rss"`
+	Version   string     `xml:"version,attr,omitempty"`
+	TorznabNS string     `xml:"xmlns:torznab,attr"`
+	Channel   XMLChannel `xml:"channel"`
 }
 
 type XMLChannel struct {
@@ -109,11 +110,12 @@ type XMLChannel struct {
 }
 
 type XMLItem struct {
-	Title   string  `xml:"title"`
-	GUID    XMLGUID `xml:"guid"`
-	Link    string  `xml:"link"`
-	Size    int64   `xml:"size"`
-	PubDate string  `xml:"pubDate"`
+	XMLName xml.Name `xml:"item"`
+	Title   string   `xml:"title"`
+	GUID    XMLGUID  `xml:"guid"`
+	Link    string   `xml:"link"`
+	Size    int64    `xml:"size"`
+	PubDate string   `xml:"pubDate"`
 	Attrs   []XMLTorznabAttr
 }
 
@@ -124,7 +126,7 @@ type XMLGUID struct {
 
 // XMLTorznabAttr encodes as <torznab:attr name="..." value="..."/>.
 type XMLTorznabAttr struct {
-	XMLName xml.Name `xml:"http://torznab.com/schemas/2015/feed attr"`
+	XMLName xml.Name `xml:"torznab:attr"`
 	Name    string   `xml:"name,attr"`
 	Value   string   `xml:"value,attr"`
 }
@@ -135,7 +137,8 @@ func newXMLRSS(items []TorrentItem) XMLRSS {
 		xmlItems = append(xmlItems, newXMLItem(item))
 	}
 	return XMLRSS{
-		Version: "2.0",
+		Version:   "2.0",
+		TorznabNS: "http://torznab.com/schemas/2015/feed",
 		Channel: XMLChannel{
 			Title:       "mgnx",
 			Description: "mgnx Torznab indexer",
