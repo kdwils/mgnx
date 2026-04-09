@@ -3,3 +3,4 @@ config.yaml
 schema.sql
 docs/
 *.dat
+scripts/

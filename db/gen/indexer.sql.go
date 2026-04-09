@@ -42,6 +42,35 @@ func (q *Queries) InsertTorrentFile(ctx context.Context, arg InsertTorrentFilePa
 	return err
 }
 
+const insertTorrentFiles = `-- name: InsertTorrentFiles :exec
+INSERT INTO torrent_files (infohash, path, size, extension, is_video)
+SELECT
+    unnest($1::text[]),
+    unnest($2::text[]),
+    unnest($3::bigint[]),
+    nullif(unnest($4::text[]), ''),
+    unnest($5::boolean[])
+`
+
+type InsertTorrentFilesParams struct {
+	Infohash  []string `json:"infohash"`
+	Path      []string `json:"path"`
+	Size      []int64  `json:"size"`
+	Extension []string `json:"extension"`
+	IsVideo   []bool   `json:"is_video"`
+}
+
+func (q *Queries) InsertTorrentFiles(ctx context.Context, arg InsertTorrentFilesParams) error {
+	_, err := q.db.Exec(ctx, insertTorrentFiles,
+		arg.Infohash,
+		arg.Path,
+		arg.Size,
+		arg.Extension,
+		arg.IsVideo,
+	)
+	return err
+}
+
 const updateTorrentClassified = `-- name: UpdateTorrentClassified :exec
 UPDATE torrents
 SET

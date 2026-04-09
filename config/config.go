@@ -53,6 +53,7 @@ type Crawler struct {
 
 type Indexer struct {
 	Workers               int           `mapstructure:"workers"`
+	MaxConcurrentPeers    int           `mapstructure:"max_concurrent_peers"`
 	RateLimit             float64       `mapstructure:"rate_limit"`
 	RateBurst             int           `mapstructure:"rate_burst"`
 	RequestTimeout        time.Duration `mapstructure:"request_timeout"`
