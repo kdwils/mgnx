@@ -30,17 +30,18 @@ type Crawler interface {
 }
 
 type Worker struct {
-	crawler     Crawler
-	fetcher     metadata.Fetcher
-	queries     gen.Querier
-	cfg         config.Indexer
-	allowedExts map[string]struct{}
-	peerTimeout time.Duration
-	maxPeers    int
-	rateLimiter *rate.Limiter
-	minSize     int64
-	maxSize     int64
-	workers     int
+	crawler              Crawler
+	fetcher              metadata.Fetcher
+	queries              gen.Querier
+	allowedExts          map[string]struct{}
+	peerTimeout          time.Duration
+	maxPeers             int
+	rateLimiter          *rate.Limiter
+	minSize              int64
+	maxSize              int64
+	workers              int
+	enableExtFilter      bool
+	excludeAdultContent  bool
 }
 
 func New(crawler Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg config.Indexer) *Worker {
@@ -49,16 +50,18 @@ func New(crawler Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg con
 		allowed[ext] = struct{}{}
 	}
 	return &Worker{
-		crawler:     crawler,
-		fetcher:     fetcher,
-		queries:     queries,
-		allowedExts: allowed,
-		peerTimeout: cfg.RequestTimeout,
-		maxPeers:    cfg.MaxPeers,
-		rateLimiter: rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateBurst),
-		minSize:     cfg.MinSize,
-		maxSize:     cfg.MaxSize,
-		workers:     cfg.Workers,
+		crawler:             crawler,
+		fetcher:             fetcher,
+		queries:             queries,
+		allowedExts:         allowed,
+		peerTimeout:         cfg.RequestTimeout,
+		maxPeers:            cfg.MaxPeers,
+		rateLimiter:         rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateBurst),
+		minSize:             cfg.MinSize,
+		maxSize:             cfg.MaxSize,
+		workers:             cfg.Workers,
+		enableExtFilter:     cfg.EnableExtensionFilter,
+		excludeAdultContent: cfg.ExcludeAdultContent,
 	}
 }
 
@@ -160,7 +163,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		classifyFiles[i] = classify.File{Path: f.Path, Size: f.Size}
 	}
 
-	result := classify.Classify(info.Name, classifyFiles, info.TotalSize, w.minSize, w.maxSize, w.allowedExts, w.cfg.EnableExtensionFilter, w.cfg.ExcludeAdultContent)
+	result := classify.Classify(info.Name, classifyFiles, info.TotalSize, w.minSize, w.maxSize, w.allowedExts, w.enableExtFilter, w.excludeAdultContent)
 	if err := w.queries.UpdateTorrentClassified(ctx, gen.UpdateTorrentClassifiedParams{
 		Infohash:          infohashHex,
 		State:             result.State,
