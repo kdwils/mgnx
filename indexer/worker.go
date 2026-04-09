@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -22,8 +21,16 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// Crawler is the public interface for the DHT crawler.
+type Crawler interface {
+	Infohashes() <-chan dht.DiscoveredPeers
+	NodeCount() int
+	Start(ctx context.Context) error
+	Stop(ctx context.Context) error
+}
+
 type Worker struct {
-	crawler     dht.Crawler
+	crawler     Crawler
 	fetcher     metadata.Fetcher
 	queries     gen.Querier
 	cfg         config.Indexer
@@ -35,7 +42,7 @@ type Worker struct {
 	maxSize     int64
 }
 
-func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg config.Indexer) *Worker {
+func New(crawler Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg config.Indexer) *Worker {
 	allowed := make(map[string]struct{}, len(cfg.AllowedExtensions))
 	for _, ext := range cfg.AllowedExtensions {
 		allowed[ext] = struct{}{}
@@ -55,27 +62,20 @@ func New(crawler dht.Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg
 }
 
 func (w *Worker) Run(ctx context.Context) {
-	logger := logger.FromContext(ctx)
-	// workers := w.cfg.Workers
-	// sem := make(chan struct{}, workers)
 	var wg sync.WaitGroup
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Info("worker context done, waiting on group")
 			wg.Wait()
-			logger.Info("worker context done waiting on group")
 			return
 		case ev, ok := <-w.crawler.Infohashes():
 			if !ok {
 				wg.Wait()
 				return
 			}
-			// sem <- struct{}{}
 			wg.Add(1)
 			go func(e dht.DiscoveredPeers) {
 				defer wg.Done()
-				// defer func() { <-sem }()
 				w.process(ctx, e)
 			}(ev)
 		}
@@ -139,6 +139,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 
 	classifyFiles := make([]classify.File, len(info.Files))
 	for i, f := range info.Files {
+		f.Path = strings.ToValidUTF8(f.Path, "")
 		ext := filepath.Ext(f.Path)
 		var extension pgtype.Text
 		if ext != "" {
@@ -147,7 +148,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 
 		if err := w.queries.InsertTorrentFile(ctx, gen.InsertTorrentFileParams{
 			Infohash:  infohashHex,
-			Path:      sanitizePath(f.Path),
+			Path:      f.Path,
 			Size:      f.Size,
 			Extension: extension,
 			IsVideo:   classify.IsVideoExt(ext),
@@ -200,11 +201,4 @@ func nullInt4(n int) pgtype.Int4 {
 		return pgtype.Int4{}
 	}
 	return pgtype.Int4{Int32: int32(n), Valid: true}
-}
-
-func sanitizePath(path string) string {
-	if !utf8.ValidString(path) {
-		return strings.ToValidUTF8(path, string(utf8.RuneError))
-	}
-	return path
 }

@@ -396,8 +396,6 @@ func testDHTConfig(t *testing.T) config.DHT {
 		StaleThreshold:      15 * time.Minute,
 		NodeID:              generateTestNodeID(),
 		NodesPath:           t.TempDir() + "/dht_nodes.dat",
-		Alpha:               3,
-		MaxIterations:       4,
 		RateLimit:           100,
 		RateBurst:           100,
 		Workers:             2,

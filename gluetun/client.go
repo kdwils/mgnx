@@ -8,8 +8,8 @@ import (
 	"net/http"
 )
 
-// HTTPDoer is satisfied by *http.Client and any test double.
-type HTTPDoer interface {
+// HTTP is satisfied by *http.Client
+type HTTP interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
@@ -33,11 +33,11 @@ func (r *PublicIPResponse) IP() net.IP {
 // Client fetches public IP information from a Gluetun instance.
 type Client struct {
 	endpoint string
-	http     HTTPDoer
+	http     HTTP
 }
 
-// New returns a Client that calls endpoint using the provided HTTPDoer.
-func New(endpoint string, http HTTPDoer) *Client {
+// New returns a Client that calls endpoint using the provided HTTP.
+func New(endpoint string, http HTTP) *Client {
 	return &Client{endpoint: endpoint, http: http}
 }
 

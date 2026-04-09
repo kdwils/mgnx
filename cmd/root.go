@@ -66,7 +66,6 @@ func initConfig() {
 	viper.SetDefault("indexer.allowed_extensions", []string{})
 	viper.SetDefault("indexer.enable_extension_filter", false)
 
-	viper.SetDefault("dht.bootstrap_nodes", []string{})
 	viper.SetDefault("dht.nodes_path", "./dht_nodes.dat")
 	viper.SetDefault("dht.node_id", "")
 	viper.SetDefault("dht.port", 6881)
@@ -80,14 +79,22 @@ func initConfig() {
 	viper.SetDefault("dht.stale_threshold", 15*time.Minute)
 	viper.SetDefault("dht.transaction_timeout", 10*time.Second)
 	viper.SetDefault("dht.token_rotation", 5*time.Minute)
-	viper.SetDefault("dht.alpha", 3)
-	viper.SetDefault("dht.max_iterations", 4)
 	viper.SetDefault("dht.max_nodes_per_response", 256)
 	viper.SetDefault("dht.max_peers_per_response", 50)
 	viper.SetDefault("dht.max_message_size", 16*1024*1024)
 	viper.SetDefault("dht.max_metadata_size", 10*1024*1024)
 
+	viper.SetDefault("dht.bootstrap_retry_interval", 30*time.Second)
+	viper.SetDefault("dht.file_wait_timeout", 5*time.Minute)
+
 	viper.SetDefault("crawler.crawlers", 2)
+	viper.SetDefault("crawler.discovery_workers", 4)
+	viper.SetDefault("crawler.discovery_queue_size", 256)
+	viper.SetDefault("crawler.bootstrap_nodes", []string{})
+	viper.SetDefault("crawler.alpha", 3)
+	viper.SetDefault("crawler.max_iterations", 4)
+
+	viper.SetDefault("server.health_port", 8080)
 
 	viper.SetDefault("scrape.workers", 5)
 	viper.SetDefault("scrape.rate_limit", 2.0)
