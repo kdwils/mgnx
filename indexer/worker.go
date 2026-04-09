@@ -93,6 +93,8 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 	log := logger.FromContext(ctx)
 	infohashHex := hex.EncodeToString(ev.Infohash[:])
 
+	log.DebugContext(ctx, "processing infohash", "infohash", infohashHex, "peers", len(ev.Peers))
+
 	_, err := w.queries.GetTorrentByInfohash(ctx, infohashHex)
 	if err == nil {
 		return
@@ -133,7 +135,6 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 			}
 			select {
 			case resultCh <- info:
-				cancel()
 			default:
 			}
 			return nil
@@ -147,8 +148,11 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 
 	info = <-resultCh
 	if info == nil {
+		log.DebugContext(ctx, "no metadata fetched", "infohash", infohashHex)
 		return
 	}
+
+	log.DebugContext(ctx, "metadata fetched", "infohash", infohashHex, "name", info.Name, "files", len(info.Files))
 
 	info.Name = strings.ToValidUTF8(info.Name, "")
 
@@ -197,6 +201,8 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 	}
 
 	result := classify.Classify(info.Name, classifyFiles, info.TotalSize, w.minSize, w.maxSize, w.allowedExts, w.enableExtFilter, w.excludeAdultContent)
+	log.DebugContext(ctx, "classified torrent", "infohash", infohashHex, "state", result.State, "content_type", result.ContentType)
+
 	if err := w.queries.UpdateTorrentClassified(ctx, gen.UpdateTorrentClassifiedParams{
 		Infohash:          infohashHex,
 		State:             result.State,
