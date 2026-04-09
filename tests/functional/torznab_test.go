@@ -108,14 +108,15 @@ func TestEndToEnd(t *testing.T) {
 
 	cfg := config.Config{
 		Indexer: config.Indexer{
-			Workers:           4,
-			RequestTimeout:    6 * time.Second,
-			MaxPeers:          1,
-			RateLimit:         2.0,
-			RateBurst:         4,
-			MinSize:           50 * 1024 * 1024,
-			MaxSize:           150 * 1024 * 1024 * 1024,
-			AllowedExtensions: []string{".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".ts", ".m2ts", ".vob", ".flv", ".webm", ".srt", ".ass", ".ssa"},
+			Workers:            4,
+			MaxConcurrentPeers: 5,
+			RequestTimeout:     6 * time.Second,
+			MaxPeers:           1,
+			RateLimit:          2.0,
+			RateBurst:          4,
+			MinSize:            50 * 1024 * 1024,
+			MaxSize:            150 * 1024 * 1024 * 1024,
+			AllowedExtensions:  []string{".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".ts", ".m2ts", ".vob", ".flv", ".webm", ".srt", ".ass", ".ssa"},
 		},
 		Scrape: config.Scrape{
 			PollInterval: 200 * time.Millisecond,
