@@ -145,16 +145,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		close(resultCh)
 	}()
 
-	select {
-	case result, ok := <-resultCh:
-		if !ok || result == nil {
-			return
-		}
-		info = result
-	case <-ctx.Done():
-		return
-	}
-
+	info = <-resultCh
 	if info == nil {
 		return
 	}
