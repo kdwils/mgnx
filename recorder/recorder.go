@@ -1,6 +1,8 @@
 package recorder
 
 import (
+	"fmt"
+	"log"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -12,24 +14,20 @@ var buckets = prometheus.ExponentialBuckets(0.001, 2, 12)
 
 type Metrics struct {
 	DHTNodesDiscoveredTotal       *prometheus.CounterVec
-	DHTQueueDepth                 prometheus.Gauge
+	DHTDiscoveryQueueDepth        prometheus.Gauge
 	DHTQueueCapacity              prometheus.Gauge
 	DHTDiscoveryQueueDroppedTotal prometheus.Counter
 	DiscoveryWorkItemsTotal       *prometheus.CounterVec
-	DiscoveryWorkerBusy           prometheus.Gauge
 	DiscoveryDurationSeconds      prometheus.Histogram
-	CrawlerQueriesTotal           *prometheus.CounterVec
-	CrawlerTraversalQueueSize     prometheus.Gauge
-	CrawlerCooldownsActive        prometheus.Gauge
-	CrawlerRoutingTableSize       prometheus.Gauge
 
-	DHTMessagesInTotal          *prometheus.CounterVec
-	DHTPacketsInTotal           prometheus.Counter
-	DHTPacketsOutTotal          prometheus.Counter
-	DHTTransactionsActive       prometheus.Gauge
-	DHTTransactionTimeoutsTotal prometheus.Counter
-	DHTRoutingTableSize         prometheus.Gauge
-	DHTErrorsTotal              *prometheus.CounterVec
+	CrawlerQueriesTotal       *prometheus.CounterVec
+	CrawlerTraversalQueueSize *prometheus.GaugeVec
+	CrawlerCooldownsActive    *prometheus.GaugeVec
+
+	DHTMessagesInTotal  *prometheus.CounterVec
+	DHTPacketsInTotal   prometheus.Counter
+	DHTPacketsOutTotal  prometheus.Counter
+	DHTRoutingTableSize prometheus.Gauge
 
 	IndexerWorkersActive        prometheus.Gauge
 	IndexerPeersProcessedTotal  *prometheus.CounterVec
@@ -37,7 +35,7 @@ type Metrics struct {
 	IndexerMetadataFailedTotal  *prometheus.CounterVec
 	IndexerFetchDurationSeconds prometheus.Histogram
 	IndexerDBUpsertsTotal       prometheus.Counter
-	IndexerClassificationsTotal *prometheus.CounterVec
+	TorrentsIndexedTotal        *prometheus.CounterVec
 
 	ScrapeCyclesTotal          prometheus.Counter
 	ScrapeTorrentsUpdatedTotal prometheus.Counter
@@ -46,10 +44,8 @@ type Metrics struct {
 	ScrapeDurationSeconds      prometheus.Histogram
 	ScrapeHistoryPrunedTotal   prometheus.Counter
 
-	TorznabRequestsTotal          *prometheus.CounterVec
-	TorznabRequestDurationSeconds *prometheus.HistogramVec
-	TorznabErrorsTotal            *prometheus.CounterVec
-	TorznabResultsTotal           prometheus.Counter
+	TorznabRequestsTotal          prometheus.Counter
+	TorznabRequestDurationSeconds prometheus.Histogram
 
 	MetadataFetchAttemptsTotal   prometheus.Counter
 	MetadataFetchSuccessTotal    prometheus.Counter
@@ -73,9 +69,9 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name:      "dht_nodes_discovered_total",
 			Help:      "Nodes discovered from responses.",
 		}, []string{"result"}),
-		DHTQueueDepth: prometheus.NewGauge(prometheus.GaugeOpts{
+		DHTDiscoveryQueueDepth: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
-			Name:      "dht_queue_depth",
+			Name:      "dht_discovery_queue_depth",
 			Help:      "Current discovery queue length.",
 		}),
 		DHTQueueCapacity: prometheus.NewGauge(prometheus.GaugeOpts{
@@ -93,11 +89,6 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name:      "discovery_work_items_total",
 			Help:      "Discovery worker completions.",
 		}, []string{"result"}),
-		DiscoveryWorkerBusy: prometheus.NewGauge(prometheus.GaugeOpts{
-			Namespace: namespace,
-			Name:      "discovery_worker_busy",
-			Help:      "Number of busy discovery workers.",
-		}),
 		DiscoveryDurationSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Namespace: namespace,
 			Name:      "discovery_duration_seconds",
@@ -108,22 +99,17 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Namespace: namespace,
 			Name:      "crawler_queries_total",
 			Help:      "Queries issued by crawler.",
-		}, []string{"type"}),
-		CrawlerTraversalQueueSize: prometheus.NewGauge(prometheus.GaugeOpts{
+		}, []string{"type", "mode", "worker"}),
+		CrawlerTraversalQueueSize: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: namespace,
 			Name:      "crawler_traversal_queue_size",
 			Help:      "Size of crawler traversal heap.",
-		}),
-		CrawlerCooldownsActive: prometheus.NewGauge(prometheus.GaugeOpts{
+		}, []string{"worker"}),
+		CrawlerCooldownsActive: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: namespace,
 			Name:      "crawler_cooldowns_active",
 			Help:      "Number of nodes in cooldown.",
-		}),
-		CrawlerRoutingTableSize: prometheus.NewGauge(prometheus.GaugeOpts{
-			Namespace: namespace,
-			Name:      "crawler_routing_table_size",
-			Help:      "Number of nodes in routing table.",
-		}),
+		}, []string{"worker"}),
 
 		DHTMessagesInTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace,
@@ -140,26 +126,11 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name:      "dht_packets_out_total",
 			Help:      "UDP packets sent.",
 		}),
-		DHTTransactionsActive: prometheus.NewGauge(prometheus.GaugeOpts{
-			Namespace: namespace,
-			Name:      "dht_transactions_active",
-			Help:      "Active transactions.",
-		}),
-		DHTTransactionTimeoutsTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Namespace: namespace,
-			Name:      "dht_transaction_timeouts_total",
-			Help:      "Transaction timeouts.",
-		}),
 		DHTRoutingTableSize: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
 			Name:      "dht_routing_table_size",
 			Help:      "Routing table node count.",
 		}),
-		DHTErrorsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: namespace,
-			Name:      "dht_errors_total",
-			Help:      "Errors by type.",
-		}, []string{"type"}),
 
 		IndexerWorkersActive: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
@@ -192,10 +163,10 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name:      "indexer_db_upserts_total",
 			Help:      "DB upsert operations.",
 		}),
-		IndexerClassificationsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+		TorrentsIndexedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace,
-			Name:      "indexer_classifications_total",
-			Help:      "Torrent classifications.",
+			Name:      "torrents_indexed_total",
+			Help:      "Torrents indexed.",
 		}, []string{"type"}),
 
 		ScrapeCyclesTotal: prometheus.NewCounter(prometheus.CounterOpts{
@@ -230,26 +201,16 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Help:      "Scrape history records pruned.",
 		}),
 
-		TorznabRequestsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+		TorznabRequestsTotal: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace,
 			Name:      "torznab_requests_total",
-			Help:      "HTTP requests by endpoint.",
-		}, []string{"endpoint"}),
-		TorznabRequestDurationSeconds: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Help:      "Total HTTP requests.",
+		}),
+		TorznabRequestDurationSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Namespace: namespace,
 			Name:      "torznab_request_duration_seconds",
 			Help:      "Request latency.",
 			Buckets:   buckets,
-		}, []string{"endpoint"}),
-		TorznabErrorsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: namespace,
-			Name:      "torznab_errors_total",
-			Help:      "Errors by type.",
-		}, []string{"type"}),
-		TorznabResultsTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Namespace: namespace,
-			Name:      "torznab_results_total",
-			Help:      "Total results returned.",
 		}),
 
 		MetadataFetchAttemptsTotal: prometheus.NewCounter(prometheus.CounterOpts{
@@ -277,30 +238,25 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 
 	collectors := []prometheus.Collector{
 		m.DHTNodesDiscoveredTotal,
-		m.DHTQueueDepth,
+		m.DHTDiscoveryQueueDepth,
 		m.DHTQueueCapacity,
 		m.DHTDiscoveryQueueDroppedTotal,
 		m.DiscoveryWorkItemsTotal,
-		m.DiscoveryWorkerBusy,
 		m.DiscoveryDurationSeconds,
 		m.CrawlerQueriesTotal,
 		m.CrawlerTraversalQueueSize,
 		m.CrawlerCooldownsActive,
-		m.CrawlerRoutingTableSize,
 		m.DHTMessagesInTotal,
 		m.DHTPacketsInTotal,
 		m.DHTPacketsOutTotal,
-		m.DHTTransactionsActive,
-		m.DHTTransactionTimeoutsTotal,
 		m.DHTRoutingTableSize,
-		m.DHTErrorsTotal,
 		m.IndexerWorkersActive,
 		m.IndexerPeersProcessedTotal,
 		m.IndexerMetadataFetchedTotal,
 		m.IndexerMetadataFailedTotal,
 		m.IndexerFetchDurationSeconds,
 		m.IndexerDBUpsertsTotal,
-		m.IndexerClassificationsTotal,
+		m.TorrentsIndexedTotal,
 		m.ScrapeCyclesTotal,
 		m.ScrapeTorrentsUpdatedTotal,
 		m.ScrapeDeadDetectedTotal,
@@ -309,8 +265,6 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.ScrapeHistoryPrunedTotal,
 		m.TorznabRequestsTotal,
 		m.TorznabRequestDurationSeconds,
-		m.TorznabErrorsTotal,
-		m.TorznabResultsTotal,
 		m.MetadataFetchAttemptsTotal,
 		m.MetadataFetchSuccessTotal,
 		m.MetadataFetchFailedTotal,
@@ -318,6 +272,9 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 	}
 
 	for _, c := range collectors {
+		if c == nil {
+			log.Fatal(c)
+		}
 		if err := reg.Register(c); err != nil {
 			return nil, err
 		}
@@ -350,11 +307,11 @@ func (r *Recorder) IncDHTNodesDiscoveredTotal(result string) {
 	r.m.DHTNodesDiscoveredTotal.WithLabelValues(result).Inc()
 }
 
-func (r *Recorder) SetDHTQueueDepth(v float64) {
+func (r *Recorder) SetDHTDiscoveryQueueDepth(v float64) {
 	if r.m == nil {
 		return
 	}
-	r.m.DHTQueueDepth.Set(v)
+	r.m.DHTDiscoveryQueueDepth.Set(v)
 }
 
 func (r *Recorder) SetDHTQueueCapacity(v float64) {
@@ -378,13 +335,6 @@ func (r *Recorder) IncDiscoveryWorkItemsTotal(result string) {
 	r.m.DiscoveryWorkItemsTotal.WithLabelValues(result).Inc()
 }
 
-func (r *Recorder) SetDiscoveryWorkerBusy(v float64) {
-	if r.m == nil {
-		return
-	}
-	r.m.DiscoveryWorkerBusy.Set(v)
-}
-
 func (r *Recorder) ObserveDiscoveryDurationSeconds(v float64) {
 	if r.m == nil {
 		return
@@ -392,32 +342,25 @@ func (r *Recorder) ObserveDiscoveryDurationSeconds(v float64) {
 	r.m.DiscoveryDurationSeconds.Observe(v)
 }
 
-func (r *Recorder) IncCrawlerQueriesTotal(queryType string) {
+func (r *Recorder) IncCrawlerQueriesTotal(queryType string, mode string, worker int) {
 	if r.m == nil {
 		return
 	}
-	r.m.CrawlerQueriesTotal.WithLabelValues(queryType).Inc()
+	r.m.CrawlerQueriesTotal.WithLabelValues(queryType, mode, fmt.Sprintf("%d", worker)).Inc()
 }
 
-func (r *Recorder) SetCrawlerTraversalQueueSize(v float64) {
+func (r *Recorder) SetCrawlerTraversalQueueSize(worker int, v float64) {
 	if r.m == nil {
 		return
 	}
-	r.m.CrawlerTraversalQueueSize.Set(v)
+	r.m.CrawlerTraversalQueueSize.WithLabelValues(fmt.Sprintf("%d", worker)).Set(v)
 }
 
-func (r *Recorder) SetCrawlerCooldownsActive(v float64) {
+func (r *Recorder) SetCrawlerCooldownsActive(worker int, v float64) {
 	if r.m == nil {
 		return
 	}
-	r.m.CrawlerCooldownsActive.Set(v)
-}
-
-func (r *Recorder) SetCrawlerRoutingTableSize(v float64) {
-	if r.m == nil {
-		return
-	}
-	r.m.CrawlerRoutingTableSize.Set(v)
+	r.m.CrawlerCooldownsActive.WithLabelValues(fmt.Sprintf("%d", worker)).Set(v)
 }
 
 func (r *Recorder) IncDHTMessagesInTotal(msgType string) {
@@ -441,32 +384,11 @@ func (r *Recorder) IncDHTPacketsOutTotal() {
 	r.m.DHTPacketsOutTotal.Inc()
 }
 
-func (r *Recorder) SetDHTTransactionsActive(v float64) {
-	if r.m == nil {
-		return
-	}
-	r.m.DHTTransactionsActive.Set(v)
-}
-
-func (r *Recorder) IncDHTTransactionTimeoutsTotal() {
-	if r.m == nil {
-		return
-	}
-	r.m.DHTTransactionTimeoutsTotal.Inc()
-}
-
 func (r *Recorder) SetDHTRoutingTableSize(v float64) {
 	if r.m == nil {
 		return
 	}
 	r.m.DHTRoutingTableSize.Set(v)
-}
-
-func (r *Recorder) IncDHTErrorsTotal(errType string) {
-	if r.m == nil {
-		return
-	}
-	r.m.DHTErrorsTotal.WithLabelValues(errType).Inc()
 }
 
 func (r *Recorder) SetIndexerWorkersActive(v float64) {
@@ -511,11 +433,11 @@ func (r *Recorder) IncIndexerDBUpsertsTotal() {
 	r.m.IndexerDBUpsertsTotal.Inc()
 }
 
-func (r *Recorder) IncIndexerClassificationsTotal(classType string) {
+func (r *Recorder) IncTorrentsIndexedTotal(classType string) {
 	if r.m == nil {
 		return
 	}
-	r.m.IndexerClassificationsTotal.WithLabelValues(classType).Inc()
+	r.m.TorrentsIndexedTotal.WithLabelValues(classType).Inc()
 }
 
 func (r *Recorder) IncScrapeCyclesTotal() {
@@ -560,34 +482,6 @@ func (r *Recorder) IncScrapeHistoryPrunedTotal() {
 	r.m.ScrapeHistoryPrunedTotal.Inc()
 }
 
-func (r *Recorder) IncTorznabRequestsTotal(endpoint string) {
-	if r.m == nil {
-		return
-	}
-	r.m.TorznabRequestsTotal.WithLabelValues(endpoint).Inc()
-}
-
-func (r *Recorder) ObserveTorznabRequestDurationSeconds(endpoint string, v float64) {
-	if r.m == nil {
-		return
-	}
-	r.m.TorznabRequestDurationSeconds.WithLabelValues(endpoint).Observe(v)
-}
-
-func (r *Recorder) IncTorznabErrorsTotal(errType string) {
-	if r.m == nil {
-		return
-	}
-	r.m.TorznabErrorsTotal.WithLabelValues(errType).Inc()
-}
-
-func (r *Recorder) IncTorznabResultsTotal() {
-	if r.m == nil {
-		return
-	}
-	r.m.TorznabResultsTotal.Inc()
-}
-
 func (r *Recorder) IncMetadataFetchAttemptsTotal() {
 	if r.m == nil {
 		return
@@ -614,4 +508,18 @@ func (r *Recorder) ObserveMetadataFetchDurationSeconds(v float64) {
 		return
 	}
 	r.m.MetadataFetchDurationSeconds.Observe(v)
+}
+
+func (r *Recorder) IncTorznabRequestsTotal() {
+	if r.m == nil {
+		return
+	}
+	r.m.TorznabRequestsTotal.Inc()
+}
+
+func (r *Recorder) ObserveTorznabRequestDurationSeconds(v float64) {
+	if r.m == nil {
+		return
+	}
+	r.m.TorznabRequestDurationSeconds.Observe(v)
 }

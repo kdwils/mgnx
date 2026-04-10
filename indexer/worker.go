@@ -227,10 +227,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 
 	result := classify.Classify(info.Name, classifyFiles, info.TotalSize, w.minSize, w.maxSize, w.allowedExts, w.enableExtFilter, w.excludeAdultContent)
 	log.DebugContext(ctx, "classified torrent", "infohash", infohashHex, "state", result.State, "content_type", result.ContentType)
-
-	if w.rec != nil {
-		w.rec.IncIndexerClassificationsTotal(string(result.ContentType))
-	}
+	w.rec.IncTorrentsIndexedTotal(string(result.ContentType))
 
 	if err := w.queries.UpdateTorrentClassified(ctx, gen.UpdateTorrentClassifiedParams{
 		Infohash:          infohashHex,

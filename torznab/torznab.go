@@ -14,35 +14,26 @@ import (
 
 func (s *Server) handleAPI() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
 		log := logger.FromContext(r.Context())
 		t := r.URL.Query().Get("t")
 
-		log.Info("torznab request", "t", t, "query", r.URL.RawQuery)
+		log.Debug("torznab request", "t", t, "query", r.URL.RawQuery)
+		s.rec.IncTorznabRequestsTotal()
 
-		var endpoint string
+		start := time.Now()
 		switch t {
 		case "caps":
-			endpoint = "caps"
 			s.handleCaps(w, r)
 		case "search":
-			endpoint = "search"
 			s.handleSearch(w, r)
 		case "movie":
-			endpoint = "movie"
 			s.handleMovieSearch(w, r)
 		case "tvsearch":
-			endpoint = "tv"
 			s.handleTVSearch(w, r)
 		default:
-			endpoint = "unknown"
 			writeXMLError(w, http.StatusBadRequest, 202, fmt.Sprintf("unknown function: %s", t))
 		}
-
-		if s.rec != nil {
-			s.rec.IncTorznabRequestsTotal(endpoint)
-			s.rec.ObserveTorznabRequestDurationSeconds(endpoint, time.Since(start).Seconds())
-		}
+		s.rec.ObserveTorznabRequestDurationSeconds(time.Since(start).Seconds())
 	}
 }
 
@@ -62,17 +53,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		log.Error("search failed", "error", err)
-		if s.rec != nil {
-			s.rec.IncTorznabErrorsTotal("search")
-		}
 		writeXMLError(w, http.StatusInternalServerError, 300, "search failed")
 		return
 	}
 
 	writeXML(w, http.StatusOK, resp)
-	if s.rec != nil {
-		s.rec.IncTorznabResultsTotal()
-	}
 }
 
 func (s *Server) handleMovieSearch(w http.ResponseWriter, r *http.Request) {
@@ -88,17 +73,11 @@ func (s *Server) handleMovieSearch(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		log.Error("movie search failed", "error", err)
-		if s.rec != nil {
-			s.rec.IncTorznabErrorsTotal("movie")
-		}
 		writeXMLError(w, http.StatusInternalServerError, 300, "search failed")
 		return
 	}
 
 	writeXML(w, http.StatusOK, resp)
-	if s.rec != nil {
-		s.rec.IncTorznabResultsTotal()
-	}
 }
 
 func (s *Server) handleTVSearch(w http.ResponseWriter, r *http.Request) {
@@ -124,17 +103,11 @@ func (s *Server) handleTVSearch(w http.ResponseWriter, r *http.Request) {
 	resp, err := s.svc.SearchTV(r.Context(), req)
 	if err != nil {
 		log.Error("tv search failed", "error", err)
-		if s.rec != nil {
-			s.rec.IncTorznabErrorsTotal("tv")
-		}
 		writeXMLError(w, http.StatusInternalServerError, 300, "search failed")
 		return
 	}
 
 	writeXML(w, http.StatusOK, resp)
-	if s.rec != nil {
-		s.rec.IncTorznabResultsTotal()
-	}
 }
 
 func parseCats(s string) []int {

@@ -112,6 +112,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.txns.Start(ctx)
 	s.token.Start(ctx)
 	s.ipLimiter.Start(ctx)
+	s.rec.SetDHTRoutingTableSize(float64(s.table.NodeCount()))
 
 	go s.readLoop(ctx)
 	go s.writeLoop(ctx)
@@ -230,10 +231,7 @@ func (s *Server) readLoop(ctx context.Context) {
 		data := make([]byte, n)
 		copy(data, buf[:n])
 		s.bufPool.Put(buf)
-
-		if s.rec != nil {
-			s.rec.IncDHTPacketsInTotal()
-		}
+		s.rec.IncDHTPacketsInTotal()
 
 		var msg Msg
 		if err := bencode.Unmarshal(data, &msg); err != nil {
@@ -273,6 +271,7 @@ func (s *Server) updateTableFromResponse(addr *net.UDPAddr, msg *Msg) {
 	}
 	s.table.Insert(&Node{ID: id, Addr: addr, LastSeen: time.Now()})
 	s.table.MarkSuccess(id)
+	s.rec.SetDHTRoutingTableSize(float64(s.table.NodeCount()))
 }
 
 // isValidNodeID reports whether id satisfies the BEP-42 security constraint
@@ -303,9 +302,7 @@ func (s *Server) queryHandlerLoop(ctx context.Context) {
 func (s *Server) processQuery(ctx context.Context, in inMsg) {
 	log := logger.FromContext(ctx).With("service", "dht")
 
-	if s.rec != nil {
-		s.rec.IncDHTMessagesInTotal(in.msg.Q)
-	}
+	s.rec.IncDHTMessagesInTotal(in.msg.Q)
 
 	if !s.ipLimiter.Allow(in.addr.IP) {
 		return
@@ -506,9 +503,8 @@ func (s *Server) writeLoop(ctx context.Context) {
 				continue
 			}
 			s.conn.WriteToUDP(data, out.addr) //nolint:errcheck
-			if s.rec != nil {
-				s.rec.IncDHTPacketsOutTotal()
-			}
+			s.rec.IncDHTPacketsOutTotal()
+
 		case <-ctx.Done():
 			return
 		}
