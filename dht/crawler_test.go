@@ -23,10 +23,6 @@ func makeCrawler(t *testing.T) *crawler {
 	return cr
 }
 
-func (c *crawler) wrapInstance() *crawlerInstance {
-	return &crawlerInstance{id: 0, crawler: c}
-}
-
 func (c *crawler) wrapDiscoveryWorker(id int) *discoveryWorker {
 	return &discoveryWorker{id: id, crawler: c}
 }
@@ -163,46 +159,64 @@ func TestBep51PQ_ordering(t *testing.T) {
 func TestCrawler_nextEligible(t *testing.T) {
 	t.Run("returns nil for empty queue", func(t *testing.T) {
 		c := makeCrawler(t)
+		w := crawlerInstance{
+			crawler: c,
+			heap:    make(traversalHeap, 0),
+			seen:    make(map[NodeID]time.Time),
+		}
 		pq := &traversalHeap{}
 		heap.Init(pq)
-		assert.Nil(t, c.wrapInstance().nextEligible(pq, make(map[NodeID]time.Time)))
+		assert.Nil(t, w.nextEligible())
 	})
 
 	t.Run("skips nodes within cooldown", func(t *testing.T) {
-		c := makeCrawler(t)
 		var target NodeID
 		node := makeDiscoveredNode(0x01, 1001)
-		pq := &traversalHeap{}
-		heap.Init(pq)
-		heap.Push(pq, &traversalItem{node: node, target: target, dist: target.XOR(node.ID)})
+		c := makeCrawler(t)
+		w := crawlerInstance{
+			crawler: c,
+			heap:    make(traversalHeap, 0),
+			seen:    map[NodeID]time.Time{node.ID: time.Now().Add(time.Hour)},
+		}
 
-		seen := map[NodeID]time.Time{node.ID: time.Now().Add(time.Hour)}
-		assert.Nil(t, c.wrapInstance().nextEligible(pq, seen))
+		heap.Init(&w.heap)
+		heap.Push(&w.heap, &traversalItem{node: node, target: target, dist: target.XOR(node.ID)})
+		assert.Nil(t, w.nextEligible())
 	})
 
 	t.Run("returns node whose cooldown has expired", func(t *testing.T) {
-		c := makeCrawler(t)
 		var target NodeID
 		node := makeDiscoveredNode(0x01, 1001)
-		pq := &traversalHeap{}
-		heap.Init(pq)
-		heap.Push(pq, &traversalItem{node: node, target: target, dist: target.XOR(node.ID)})
+		c := makeCrawler(t)
+		w := crawlerInstance{
+			crawler: c,
+			heap:    make(traversalHeap, 0),
+			seen:    map[NodeID]time.Time{node.ID: time.Now().Add(-time.Second)},
+		}
 
-		seen := map[NodeID]time.Time{node.ID: time.Now().Add(-time.Second)}
-		item := c.wrapInstance().nextEligible(pq, seen)
+		heap.Init(&w.heap)
+		heap.Push(&w.heap, &traversalItem{node: node, target: target, dist: target.XOR(node.ID)})
+
+		item := w.nextEligible()
 		require.NotNil(t, item)
 		assert.Equal(t, node.ID, item.node.ID)
 	})
 
 	t.Run("returns unseen node immediately", func(t *testing.T) {
 		c := makeCrawler(t)
+		w := crawlerInstance{
+			crawler: c,
+			heap:    make(traversalHeap, 0),
+			seen:    make(map[NodeID]time.Time),
+		}
+
 		var target NodeID
 		node := makeDiscoveredNode(0x02, 1002)
-		pq := &traversalHeap{}
-		heap.Init(pq)
-		heap.Push(pq, &traversalItem{node: node, target: target, dist: target.XOR(node.ID)})
 
-		item := c.wrapInstance().nextEligible(pq, make(map[NodeID]time.Time))
+		heap.Init(&w.heap)
+		heap.Push(&w.heap, &traversalItem{node: node, target: target, dist: target.XOR(node.ID)})
+
+		item := w.nextEligible()
 		require.NotNil(t, item)
 		assert.Equal(t, node.ID, item.node.ID)
 	})
@@ -224,7 +238,11 @@ func TestCrawler_processSamples(t *testing.T) {
 
 		var h [20]byte
 		h[0] = 0xAB
-		c.wrapInstance().processSamples(ctx, string(h[:]), item)
+
+		w := crawlerInstance{
+			crawler: c,
+		}
+		w.processSamples(ctx, string(h[:]), item)
 
 		select {
 		case event := <-c.discovered:
@@ -251,8 +269,12 @@ func TestCrawler_processSamples(t *testing.T) {
 
 		var h [20]byte
 		h[0] = 0xCD
-		c.wrapInstance().processSamples(ctx, string(h[:]), item)
-		c.wrapInstance().processSamples(ctx, string(h[:]), item)
+
+		w := crawlerInstance{
+			crawler: c,
+		}
+		w.processSamples(ctx, string(h[:]), item)
+		w.processSamples(ctx, string(h[:]), item)
 
 		select {
 		case <-c.discovered:
@@ -271,7 +293,10 @@ func TestCrawler_processSamples(t *testing.T) {
 		node := makeDiscoveredNode(0x01, 1001)
 		item := &traversalItem{node: node}
 
-		c.wrapInstance().processSamples(context.Background(), string(make([]byte, 19)), item)
+		w := crawlerInstance{
+			crawler: c,
+		}
+		w.processSamples(context.Background(), string(make([]byte, 19)), item)
 
 		select {
 		case <-c.discovered:
@@ -292,7 +317,11 @@ func TestCrawler_processSamples(t *testing.T) {
 		var h [20]byte
 		h[0] = 0xFF
 		h[1] = 0xFF
-		c.wrapInstance().processSamples(context.Background(), string(h[:]), item) // must not block
+		w := crawlerInstance{
+			crawler: c,
+		}
+
+		w.processSamples(context.Background(), string(h[:]), item) // must not block
 	})
 
 	t.Run("decodes multiple hashes from one samples string", func(t *testing.T) {
@@ -312,7 +341,10 @@ func TestCrawler_processSamples(t *testing.T) {
 		buf[0] = 0x01
 		buf[20] = 0x02
 		buf[40] = 0x03
-		c.wrapInstance().processSamples(ctx, string(buf[:]), item)
+		w := crawlerInstance{
+			crawler: c,
+		}
+		w.processSamples(ctx, string(buf[:]), item)
 
 		count := 0
 		timeout := time.After(2 * time.Second)
@@ -329,49 +361,59 @@ func TestCrawler_processSamples(t *testing.T) {
 
 func TestCrawler_processNodes(t *testing.T) {
 	t.Run("inserts decoded nodes into routing table and queue", func(t *testing.T) {
-		c := makeCrawler(t)
+		w := crawlerInstance{
+			crawler: makeCrawler(t),
+			heap:    make(traversalHeap, 0),
+			seen:    make(map[NodeID]time.Time),
+		}
 		var target NodeID
 
 		node := makeDiscoveredNode(0x10, 2000)
 		encoded := EncodeNodes([]*Node{node})
 
-		pq := &traversalHeap{}
-		heap.Init(pq)
-		c.processNodes(encoded, target, pq)
+		heap.Init(&w.heap)
+		w.processNodes(encoded, target)
 
-		assert.Equal(t, 1, pq.Len())
-		item := heap.Pop(pq).(*traversalItem)
+		assert.Equal(t, 1, w.heap.Len())
+		item := heap.Pop(&w.heap).(*traversalItem)
 		assert.Equal(t, node.ID, item.node.ID)
 		assert.Equal(t, target.XOR(node.ID), item.dist)
 	})
 
 	t.Run("ignores invalid encoded input", func(t *testing.T) {
-		c := makeCrawler(t)
+		w := crawlerInstance{
+			crawler: makeCrawler(t),
+			heap:    make(traversalHeap, 0),
+			seen:    make(map[NodeID]time.Time),
+		}
 		var target NodeID
 
 		pq := &traversalHeap{}
 		heap.Init(pq)
-		c.processNodes("bad", target, pq)
+		w.processNodes("bad", target)
 		assert.Equal(t, 0, pq.Len())
 	})
 }
 
 func TestCrawler_seedQueue(t *testing.T) {
 	t.Run("pushes closest routing table nodes onto queue", func(t *testing.T) {
-		c := makeCrawler(t)
+		w := crawlerInstance{
+			crawler: makeCrawler(t),
+			heap:    make(traversalHeap, 0),
+			seen:    make(map[NodeID]time.Time),
+		}
 
 		var target NodeID
 		target[0] = 0x50
 
 		node := makeDiscoveredNode(0x10, 2000)
-		c.server.table.Insert(node)
+		w.server.table.Insert(node)
 
-		pq := &traversalHeap{}
-		heap.Init(pq)
-		c.seedQueue(pq, target)
+		heap.Init(&w.heap)
+		w.seedQueue(target)
 
-		assert.Equal(t, 1, pq.Len())
-		item := heap.Pop(pq).(*traversalItem)
+		assert.Equal(t, 1, w.heap.Len())
+		item := heap.Pop(&w.heap).(*traversalItem)
 		assert.Equal(t, target, item.target)
 		assert.Equal(t, target.XOR(item.node.ID), item.dist)
 	})
