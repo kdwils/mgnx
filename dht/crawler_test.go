@@ -157,68 +157,77 @@ func TestBep51PQ_ordering(t *testing.T) {
 }
 
 func TestCrawler_nextEligible(t *testing.T) {
-	t.Run("returns nil for empty queue", func(t *testing.T) {
+	t.Run("returns nil for empty queues", func(t *testing.T) {
 		c := makeCrawler(t)
 		w := crawlerInstance{
-			crawler: c,
-			heap:    make(traversalHeap, 0),
-			seen:    make(map[NodeID]time.Time),
+			crawler:  c,
+			ready:    make(traversalHeap, 0),
+			cooldown: make(cooldownHeap, 0),
+			seen:     make(map[NodeID]time.Time),
 		}
-		pq := &traversalHeap{}
-		heap.Init(pq)
-		assert.Nil(t, w.nextEligible())
+		heap.Init(&w.ready)
+		heap.Init(&w.cooldown)
+		assert.Nil(t, w.nextEligible(time.Now()))
 	})
 
 	t.Run("skips nodes within cooldown", func(t *testing.T) {
 		var target NodeID
 		node := makeDiscoveredNode(0x01, 1001)
 		c := makeCrawler(t)
+		nextAllowed := time.Now().Add(time.Hour)
+		item := &traversalItem{node: node, target: target, dist: target.XOR(node.ID)}
 		w := crawlerInstance{
-			crawler: c,
-			heap:    make(traversalHeap, 0),
-			seen:    map[NodeID]time.Time{node.ID: time.Now().Add(time.Hour)},
+			crawler:  c,
+			ready:    make(traversalHeap, 0),
+			cooldown: make(cooldownHeap, 0),
+			seen:     map[NodeID]time.Time{node.ID: nextAllowed},
 		}
-
-		heap.Init(&w.heap)
-		heap.Push(&w.heap, &traversalItem{node: node, target: target, dist: target.XOR(node.ID)})
-		assert.Nil(t, w.nextEligible())
+		heap.Init(&w.ready)
+		heap.Init(&w.cooldown)
+		heap.Push(&w.cooldown, &cooldownItem{item: item, nextAllowed: nextAllowed})
+		assert.Nil(t, w.nextEligible(time.Now()))
 	})
 
 	t.Run("returns node whose cooldown has expired", func(t *testing.T) {
 		var target NodeID
 		node := makeDiscoveredNode(0x01, 1001)
 		c := makeCrawler(t)
+		nextAllowed := time.Now().Add(-time.Second)
+		item := &traversalItem{node: node, target: target, dist: target.XOR(node.ID)}
 		w := crawlerInstance{
-			crawler: c,
-			heap:    make(traversalHeap, 0),
-			seen:    map[NodeID]time.Time{node.ID: time.Now().Add(-time.Second)},
+			crawler:  c,
+			ready:    make(traversalHeap, 0),
+			cooldown: make(cooldownHeap, 0),
+			seen:     map[NodeID]time.Time{node.ID: nextAllowed},
 		}
+		heap.Init(&w.ready)
+		heap.Init(&w.cooldown)
+		heap.Push(&w.cooldown, &cooldownItem{item: item, nextAllowed: nextAllowed})
 
-		heap.Init(&w.heap)
-		heap.Push(&w.heap, &traversalItem{node: node, target: target, dist: target.XOR(node.ID)})
-
-		item := w.nextEligible()
-		require.NotNil(t, item)
-		assert.Equal(t, node.ID, item.node.ID)
+		got := w.nextEligible(time.Now())
+		require.NotNil(t, got)
+		assert.Equal(t, node.ID, got.node.ID)
 	})
 
 	t.Run("returns unseen node immediately", func(t *testing.T) {
 		c := makeCrawler(t)
 		w := crawlerInstance{
-			crawler: c,
-			heap:    make(traversalHeap, 0),
-			seen:    make(map[NodeID]time.Time),
+			crawler:  c,
+			ready:    make(traversalHeap, 0),
+			cooldown: make(cooldownHeap, 0),
+			seen:     make(map[NodeID]time.Time),
 		}
 
 		var target NodeID
 		node := makeDiscoveredNode(0x02, 1002)
 
-		heap.Init(&w.heap)
-		heap.Push(&w.heap, &traversalItem{node: node, target: target, dist: target.XOR(node.ID)})
+		heap.Init(&w.ready)
+		heap.Init(&w.cooldown)
+		heap.Push(&w.ready, &traversalItem{node: node, target: target, dist: target.XOR(node.ID)})
 
-		item := w.nextEligible()
-		require.NotNil(t, item)
-		assert.Equal(t, node.ID, item.node.ID)
+		got := w.nextEligible(time.Now())
+		require.NotNil(t, got)
+		assert.Equal(t, node.ID, got.node.ID)
 	})
 }
 
@@ -362,45 +371,49 @@ func TestCrawler_processSamples(t *testing.T) {
 func TestCrawler_processNodes(t *testing.T) {
 	t.Run("inserts decoded nodes into routing table and queue", func(t *testing.T) {
 		w := crawlerInstance{
-			crawler: makeCrawler(t),
-			heap:    make(traversalHeap, 0),
-			seen:    make(map[NodeID]time.Time),
+			crawler:  makeCrawler(t),
+			ready:    make(traversalHeap, 0),
+			cooldown: make(cooldownHeap, 0),
+			seen:     make(map[NodeID]time.Time),
 		}
 		var target NodeID
 
 		node := makeDiscoveredNode(0x10, 2000)
 		encoded := EncodeNodes([]*Node{node})
 
-		heap.Init(&w.heap)
+		heap.Init(&w.ready)
+		heap.Init(&w.cooldown)
 		w.processNodes(encoded, target)
 
-		assert.Equal(t, 1, w.heap.Len())
-		item := heap.Pop(&w.heap).(*traversalItem)
+		assert.Equal(t, 1, w.ready.Len())
+		item := heap.Pop(&w.ready).(*traversalItem)
 		assert.Equal(t, node.ID, item.node.ID)
 		assert.Equal(t, target.XOR(node.ID), item.dist)
 	})
 
 	t.Run("ignores invalid encoded input", func(t *testing.T) {
 		w := crawlerInstance{
-			crawler: makeCrawler(t),
-			heap:    make(traversalHeap, 0),
-			seen:    make(map[NodeID]time.Time),
+			crawler:  makeCrawler(t),
+			ready:    make(traversalHeap, 0),
+			cooldown: make(cooldownHeap, 0),
+			seen:     make(map[NodeID]time.Time),
 		}
 		var target NodeID
 
-		pq := &traversalHeap{}
-		heap.Init(pq)
+		heap.Init(&w.ready)
+		heap.Init(&w.cooldown)
 		w.processNodes("bad", target)
-		assert.Equal(t, 0, pq.Len())
+		assert.Equal(t, 0, w.ready.Len())
 	})
 }
 
 func TestCrawler_seedQueue(t *testing.T) {
 	t.Run("pushes closest routing table nodes onto queue", func(t *testing.T) {
 		w := crawlerInstance{
-			crawler: makeCrawler(t),
-			heap:    make(traversalHeap, 0),
-			seen:    make(map[NodeID]time.Time),
+			crawler:  makeCrawler(t),
+			ready:    make(traversalHeap, 0),
+			cooldown: make(cooldownHeap, 0),
+			seen:     make(map[NodeID]time.Time),
 		}
 
 		var target NodeID
@@ -409,11 +422,12 @@ func TestCrawler_seedQueue(t *testing.T) {
 		node := makeDiscoveredNode(0x10, 2000)
 		w.server.table.Insert(node)
 
-		heap.Init(&w.heap)
+		heap.Init(&w.ready)
+		heap.Init(&w.cooldown)
 		w.seedQueue(target)
 
-		assert.Equal(t, 1, w.heap.Len())
-		item := heap.Pop(&w.heap).(*traversalItem)
+		assert.Equal(t, 1, w.ready.Len())
+		item := heap.Pop(&w.ready).(*traversalItem)
 		assert.Equal(t, target, item.target)
 		assert.Equal(t, target.XOR(item.node.ID), item.dist)
 	})
