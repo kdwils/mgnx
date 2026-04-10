@@ -558,9 +558,20 @@ func (s *Server) bucketRefreshLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			for _, b := range s.table.StaleBuckets() {
+			staleBuckets := s.table.StaleBuckets()
+			if len(staleBuckets) == 0 {
+				continue
+			}
+			queried := make(map[NodeID]bool)
+			skipped := 0
+			for _, b := range staleBuckets {
 				target := randomIDInBucket(b)
 				for _, n := range s.table.Closest(target, s.bucketSize) {
+					if queried[n.ID] {
+						skipped++
+						continue
+					}
+					queried[n.ID] = true
 					go func() {
 						resp, err := s.Query(ctx, n.Addr, n.ID, &Msg{
 							Y: "q",
@@ -577,6 +588,13 @@ func (s *Server) bucketRefreshLoop(ctx context.Context) {
 					}()
 				}
 			}
+			logger.FromContext(ctx).Debug("bucket refresh tick",
+				"service", "dht",
+				"stale_buckets", len(staleBuckets),
+				"queried", len(queried),
+				"skipped_duplicates", skipped,
+				"table_size", s.table.NodeCount(),
+			)
 		case <-ctx.Done():
 			return
 		}

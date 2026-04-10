@@ -136,6 +136,9 @@ func (rt *RoutingTable) Closest(target NodeID, n int) []*Node {
 }
 
 // MarkSuccess updates a node's LastSeen and resets its FailureCount.
+// LastChanged is not updated here — it tracks membership changes (adds/evictions)
+// only, so that StaleBuckets correctly identifies buckets that need a find_node
+// refresh to discover new nodes.
 func (rt *RoutingTable) MarkSuccess(id NodeID) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
@@ -147,7 +150,6 @@ func (rt *RoutingTable) MarkSuccess(id NodeID) {
 		}
 		n.LastSeen = time.Now()
 		n.FailureCount = 0
-		b.LastChanged = time.Now()
 		return
 	}
 }
