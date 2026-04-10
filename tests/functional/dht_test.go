@@ -13,6 +13,7 @@ import (
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/kdwils/mgnx/config"
 	"github.com/kdwils/mgnx/dht"
+	"github.com/kdwils/mgnx/recorder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -169,7 +170,7 @@ func TestDHTBEPProtocol(t *testing.T) {
 		cfg.RateLimit = 2
 		cfg.RateBurst = 2
 
-		srv2, err := dht.NewServer(cfg)
+		srv2, err := dht.NewServer(cfg, recorder.NewNoOp())
 		require.NoError(t, err)
 		require.NoError(t, srv2.Start(ctx))
 		t.Cleanup(func() { srv2.Stop(ctx) })
@@ -281,7 +282,7 @@ func TestDHTBEPProtocol(t *testing.T) {
 		cfg.RateBurst = 100
 		cfg.MaxNodesPerResponse = 8
 
-		srv2, err := dht.NewServer(cfg)
+		srv2, err := dht.NewServer(cfg, recorder.NewNoOp())
 		require.NoError(t, err)
 		require.NoError(t, srv2.Start(ctx))
 		t.Cleanup(func() { srv2.Stop(ctx) })
@@ -378,7 +379,7 @@ func (m *mockNode) sendQuery(ctx context.Context, addr *net.UDPAddr, query *dht.
 
 func setupDHTServer(t *testing.T) (*dht.Server, *mockNode) {
 	cfg := testDHTConfig(t)
-	srv, err := dht.NewServer(cfg)
+	srv, err := dht.NewServer(cfg, recorder.NewNoOp())
 	require.NoError(t, err)
 	return srv, newMockNode()
 }

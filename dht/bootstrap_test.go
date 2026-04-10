@@ -13,6 +13,7 @@ import (
 
 	"github.com/anacrolix/torrent/bencode"
 	dMocks "github.com/kdwils/mgnx/dht/mocks"
+	"github.com/kdwils/mgnx/recorder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -114,7 +115,7 @@ func TestSaveNodeID(t *testing.T) {
 
 func serverWithMockResolver(t *testing.T, resolver Resolver) *Server {
 	t.Helper()
-	s, err := NewServer(testServerCfg(t))
+	s, err := NewServer(testServerCfg(t), recorder.NewNoOp())
 	require.NoError(t, err)
 	t.Cleanup(func() { s.Stop(t.Context()) })
 	s.Resolver = resolver
@@ -179,7 +180,7 @@ func TestServer_Bootstrap_noAddrs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	s, err := NewServer(testServerCfg(t))
+	s, err := NewServer(testServerCfg(t), recorder.NewNoOp())
 	require.NoError(t, err)
 	defer s.Stop(t.Context())
 	require.NoError(t, s.Start(ctx))
@@ -192,12 +193,12 @@ func TestServer_Bootstrap_seedNode(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		seed, err := NewServer(testServerCfg(t))
+		seed, err := NewServer(testServerCfg(t), recorder.NewNoOp())
 		require.NoError(t, err)
 		defer seed.Stop(t.Context())
 		require.NoError(t, seed.Start(ctx))
 
-		client, err := NewServer(testServerCfg(t))
+		client, err := NewServer(testServerCfg(t), recorder.NewNoOp())
 		require.NoError(t, err)
 		defer client.Stop(t.Context())
 		require.NoError(t, client.Start(ctx))
@@ -222,12 +223,13 @@ func TestServer_Bootstrap_ipBasedNodeID(t *testing.T) {
 
 		cfg := testServerCfg(t)
 		cfg.NodeID = "" // force random ID so BEP-42 derivation runs
-		client, err := NewServer(cfg)
+		client, err := NewServer(cfg, recorder.NewNoOp())
+		originalID := client.ourID
+		client.ourID = NodeID{}
 		require.NoError(t, err)
 		defer client.Stop(t.Context())
 		require.NoError(t, client.Start(ctx))
 
-		originalID := client.ourID
 		seedAddr := fmt.Sprintf("127.0.0.1:%d", seed.LocalAddr().(*net.UDPAddr).Port)
 		require.NoError(t, client.Bootstrap(ctx, []string{seedAddr}))
 

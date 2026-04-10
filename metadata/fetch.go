@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/anacrolix/torrent/bencode"
+	"github.com/kdwils/mgnx/recorder"
 )
 
 // Fetcher fetches torrent metadata from a remote peer.
@@ -45,15 +46,17 @@ type Client struct {
 	dialer          Dialer
 	maxMsgSize      int
 	maxMetadataSize int
+	rec             *recorder.Recorder
 }
 
 // NewClient creates a Client using the provided Dialer.
 // maxMsgSize and maxMetadataSize should be set from config (e.g., cfg.DHT from viper).
-func NewClient(dialer Dialer, maxMsgSize, maxMetadataSize int) *Client {
+func NewClient(dialer Dialer, maxMsgSize, maxMetadataSize int, rec *recorder.Recorder) *Client {
 	return &Client{
 		dialer:          dialer,
 		maxMsgSize:      maxMsgSize,
 		maxMetadataSize: maxMetadataSize,
+		rec:             rec,
 	}
 }
 
@@ -69,6 +72,17 @@ type TorrentInfo struct {
 }
 
 func (c *Client) Fetch(ctx context.Context, infohash [20]byte, addr net.TCPAddr) (*TorrentInfo, error) {
+	if c.rec != nil {
+		c.rec.IncMetadataFetchAttemptsTotal()
+	}
+
+	start := time.Now()
+	defer func() {
+		if c.rec != nil {
+			c.rec.ObserveMetadataFetchDurationSeconds(time.Since(start).Seconds())
+		}
+	}()
+
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		deadline = time.Now().Add(6 * time.Second)
@@ -76,6 +90,9 @@ func (c *Client) Fetch(ctx context.Context, infohash [20]byte, addr net.TCPAddr)
 
 	conn, err := c.dialer.DialContext(ctx, "tcp4", addr.String())
 	if err != nil {
+		if c.rec != nil {
+			c.rec.IncMetadataFetchFailedTotal("connect")
+		}
 		return nil, err
 	}
 
@@ -94,18 +111,30 @@ func (c *Client) Fetch(ctx context.Context, infohash [20]byte, addr net.TCPAddr)
 	rand.Read(peerID[:]) //nolint:errcheck
 
 	if err := sendHandshake(rw.Writer, infohash, peerID); err != nil {
+		if c.rec != nil {
+			c.rec.IncMetadataFetchFailedTotal("protocol")
+		}
 		return nil, err
 	}
 	if err := rw.Flush(); err != nil {
+		if c.rec != nil {
+			c.rec.IncMetadataFetchFailedTotal("protocol")
+		}
 		return nil, err
 	}
 
 	peerReserved, peerInfohash, err := readHandshake(rw.Reader)
 	if err != nil {
+		if c.rec != nil {
+			c.rec.IncMetadataFetchFailedTotal("protocol")
+		}
 		return nil, err
 	}
 
 	if peerReserved[5]&0x10 == 0 {
+		if c.rec != nil {
+			c.rec.IncMetadataFetchFailedTotal("protocol")
+		}
 		return nil, errors.New("peer does not support extension protocol")
 	}
 	if peerInfohash != infohash {
@@ -135,6 +164,9 @@ func (c *Client) Fetch(ctx context.Context, infohash [20]byte, addr net.TCPAddr)
 	for {
 		msgType, payload, err := c.readMsg(rw.Reader)
 		if err != nil {
+			if c.rec != nil {
+				c.rec.IncMetadataFetchFailedTotal("protocol")
+			}
 			return nil, err
 		}
 		if msgType != 20 {
@@ -156,9 +188,15 @@ func (c *Client) Fetch(ctx context.Context, infohash [20]byte, addr net.TCPAddr)
 	}
 
 	if peerUTMetadataID == 0 {
+		if c.rec != nil {
+			c.rec.IncMetadataFetchFailedTotal("protocol")
+		}
 		return nil, errors.New("peer does not support ut_metadata")
 	}
 	if totalSize <= 0 || totalSize > c.maxMetadataSize {
+		if c.rec != nil {
+			c.rec.IncMetadataFetchFailedTotal("protocol")
+		}
 		return nil, fmt.Errorf("invalid metadata size: %d", totalSize)
 	}
 
@@ -172,16 +210,25 @@ func (c *Client) Fetch(ctx context.Context, infohash [20]byte, addr net.TCPAddr)
 			"piece":    i,
 		})
 		if err != nil {
+			if c.rec != nil {
+				c.rec.IncMetadataFetchFailedTotal("protocol")
+			}
 			return nil, err
 		}
 
 		if err := sendMsg(rw.Writer, 20, byte(peerUTMetadataID), req); err != nil {
+			if c.rec != nil {
+				c.rec.IncMetadataFetchFailedTotal("protocol")
+			}
 			return nil, err
 		}
 
 		for {
 			msgType, payload, err := c.readMsg(rw.Reader)
 			if err != nil {
+				if c.rec != nil {
+					c.rec.IncMetadataFetchFailedTotal("timeout")
+				}
 				return nil, err
 			}
 			if msgType != 20 {
@@ -223,7 +270,14 @@ func (c *Client) Fetch(ctx context.Context, infohash [20]byte, addr net.TCPAddr)
 
 	hash := sha1.Sum(assembled)
 	if hash != infohash {
+		if c.rec != nil {
+			c.rec.IncMetadataFetchFailedTotal("protocol")
+		}
 		return nil, errors.New("metadata sha1 mismatch")
+	}
+
+	if c.rec != nil {
+		c.rec.IncMetadataFetchSuccessTotal()
 	}
 
 	return decodeInfo(assembled)

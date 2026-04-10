@@ -9,13 +9,14 @@ import (
 
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/kdwils/mgnx/config"
+	"github.com/kdwils/mgnx/recorder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func makeCrawler(t *testing.T) *crawler {
 	t.Helper()
-	cr, err := NewCrawler(config.Crawler{Crawlers: 2, Alpha: 3, MaxIterations: 4, TraversalWidth: 20}, testServerCfg(t))
+	cr, err := NewCrawler(config.Crawler{Crawlers: 2, Alpha: 3, MaxIterations: 4, TraversalWidth: 20}, testServerCfg(t), recorder.NewNoOp())
 	require.NoError(t, err)
 	cr.discoveryQueue = make(chan discoveryWork, 64)
 	t.Cleanup(func() { cr.Stop(t.Context()) })

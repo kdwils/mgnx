@@ -83,10 +83,11 @@ type Database struct {
 }
 
 type Server struct {
-	Port       int    `mapstructure:"port"`
-	HealthPort int    `mapstructure:"health_port"`
-	LogLevel   string `mapstructure:"log_level"`
-	APIKey     string `mapstructure:"apiKey"`
+	TorznabPort int    `mapstructure:"torznab_port"`
+	HealthPort  int    `mapstructure:"health_port"`
+	MetricsPort int    `mapstructure:"metrics_port"`
+	LogLevel    string `mapstructure:"log_level"`
+	APIKey      string `mapstructure:"apiKey"`
 }
 
 func New(v *viper.Viper) (Config, error) {
