@@ -432,6 +432,9 @@ func (c *crawlerInstance) nextEligible(pq *traversalHeap, seen map[NodeID]time.T
 	for pq.Len() > 0 {
 		item := heap.Pop(pq).(*traversalItem)
 		if t, ok := seen[item.node.ID]; !ok || now.After(t) {
+			if ok {
+				delete(seen, item.node.ID)
+			}
 			result = item
 			break
 		}
