@@ -78,7 +78,6 @@ func (rt *RoutingTable) insert(node *Node) {
 			n.Addr = node.Addr
 			n.LastSeen = node.LastSeen
 			n.FailureCount = 0
-			b.LastChanged = time.Now()
 			return
 		}
 
@@ -148,7 +147,6 @@ func (rt *RoutingTable) MarkSuccess(id NodeID) {
 		}
 		n.LastSeen = time.Now()
 		n.FailureCount = 0
-		b.LastChanged = time.Now()
 		return
 	}
 }

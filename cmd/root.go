@@ -76,7 +76,7 @@ func initConfig() {
 	viper.SetDefault("dht.rate_burst", 25)
 	viper.SetDefault("dht.discovery_buffer", 10000)
 	viper.SetDefault("dht.bad_failure_threshold", 2)
-	viper.SetDefault("dht.bucket_size", 8)
+	viper.SetDefault("dht.bucket_size", 80)
 	viper.SetDefault("dht.stale_threshold", 15*time.Minute)
 	viper.SetDefault("dht.transaction_timeout", 10*time.Second)
 	viper.SetDefault("dht.token_rotation", 5*time.Minute)

@@ -190,6 +190,41 @@ func TestServer_bucketRefreshLoop_insertsNodes(t *testing.T) {
 	})
 }
 
+// TestServer_processQuery_insertsNonCompliantNode verifies that BEP-42 is NOT
+// enforced at routing-table insertion: the spec scopes enforcement to token
+// validity and lookup-termination counting only.
+func TestServer_processQuery_insertsNonCompliantNode(t *testing.T) {
+	s, err := NewServer(testServerCfg(t), recorder.NewNoOp())
+	require.NoError(t, err)
+	defer s.Stop(t.Context())
+
+	// All-zeros is not BEP-42 compliant for 127.0.0.1, but must still be inserted.
+	nonCompliantID := string(make([]byte, 20))
+	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9999}
+
+	s.processQuery(context.Background(), inMsg{
+		addr: addr,
+		msg:  &Msg{T: "aa", Y: "q", Q: "ping", A: &MsgArgs{ID: nonCompliantID}},
+	})
+
+	assert.Equal(t, 1, s.table.NodeCount())
+}
+
+// TestServer_updateTableFromResponse_insertsNonCompliantNode verifies that
+// BEP-42 is not enforced when learning a node from its response.
+func TestServer_updateTableFromResponse_insertsNonCompliantNode(t *testing.T) {
+	s, err := NewServer(testServerCfg(t), recorder.NewNoOp())
+	require.NoError(t, err)
+	defer s.Stop(t.Context())
+
+	nonCompliantID := string(make([]byte, 20))
+	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9999}
+
+	s.updateTableFromResponse(addr, &Msg{R: &Return{ID: nonCompliantID}})
+
+	assert.Equal(t, 1, s.table.NodeCount())
+}
+
 func TestServer_insertNodesFromFindNode_decodeFails(t *testing.T) {
 	t.Run("malformed nodes field logs error and inserts nothing", func(t *testing.T) {
 		ctx := context.Background()
