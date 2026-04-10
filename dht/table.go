@@ -147,6 +147,7 @@ func (rt *RoutingTable) MarkSuccess(id NodeID) {
 		}
 		n.LastSeen = time.Now()
 		n.FailureCount = 0
+		b.LastChanged = time.Now()
 		return
 	}
 }
