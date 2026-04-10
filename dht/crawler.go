@@ -201,10 +201,10 @@ type cooldownItem struct {
 // cooldownHeap is a min-heap of *cooldownItem ordered by nextAllowed time.
 type cooldownHeap []*cooldownItem
 
-func (h cooldownHeap) Len() int            { return len(h) }
-func (h cooldownHeap) Less(i, j int) bool  { return h[i].nextAllowed.Before(h[j].nextAllowed) }
-func (h cooldownHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
-func (h *cooldownHeap) Push(x any)         { *h = append(*h, x.(*cooldownItem)) }
+func (h cooldownHeap) Len() int           { return len(h) }
+func (h cooldownHeap) Less(i, j int) bool { return h[i].nextAllowed.Before(h[j].nextAllowed) }
+func (h cooldownHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *cooldownHeap) Push(x any)        { *h = append(*h, x.(*cooldownItem)) }
 func (h *cooldownHeap) Pop() any {
 	old := *h
 	n := len(old)
@@ -285,9 +285,9 @@ func (c *crawlerInstance) queryForSamples(ctx context.Context, item *traversalIt
 }
 
 const (
-	defaultCooldown  = 2 * time.Second  // retry interval after a failed/timed-out query
-	defaultInterval  = 10 * time.Second // re-query interval when BEP-51 response carries no Interval
-	maxNodeFailures  = 3                // evict node after this many consecutive failures
+	defaultCooldown = 2 * time.Second  // retry interval after a failed/timed-out query
+	defaultInterval = 10 * time.Second // re-query interval when BEP-51 response carries no Interval
+	maxNodeFailures = 3                // evict node after this many consecutive failures
 )
 
 // computeInterval returns the re-query interval for a node.
@@ -409,7 +409,7 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 				c.processSamples(ctx, resp.R.Samples, item)
 			}
 			if len(resp.R.Nodes) > 0 {
-				c.processNodes(resp.R.Nodes, item.target)
+				c.processNodes(ctx, resp.R.Nodes, item.target)
 			}
 		}
 
@@ -418,10 +418,16 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 		c.seen[item.node.ID] = next
 		heap.Push(&c.cooldown, &cooldownItem{item: item, nextAllowed: next})
 
+		nodesReturned := 0
+		if resp != nil && resp.R != nil {
+			nodesReturned = len(resp.R.Nodes) / 26
+		}
 		log.Debug("query complete",
 			"node", item.node.Addr.String(),
 			"ready_size", c.ready.Len(),
 			"cooldown_size", c.cooldown.Len(),
+			"nodes_returned", nodesReturned,
+			"table_size", c.server.table.NodeCount(),
 		)
 	}
 }
@@ -529,9 +535,7 @@ func (c *discoveryWorker) discoverPeers(ctx context.Context, h [20]byte, initial
 
 	start := time.Now()
 	defer func() {
-		if c.rec != nil {
-			c.rec.ObserveDiscoveryDurationSeconds(time.Since(start).Seconds())
-		}
+		c.rec.ObserveDiscoveryDurationSeconds(time.Since(start).Seconds())
 	}()
 
 	target := NodeID(h)
@@ -785,9 +789,6 @@ func (c *crawler) extractNodes(resp *Msg) map[NodeID]*Node {
 
 	result := make(map[NodeID]*Node)
 	for _, n := range nodes {
-		if !isValidNodeID(n.Addr.IP, n.ID) {
-			continue
-		}
 		result[n.ID] = n
 		c.server.table.Insert(n)
 	}
@@ -798,16 +799,15 @@ func (c *crawler) extractNodes(resp *Msg) map[NodeID]*Node {
 // response ("nodes" field, BEP-51 §4), inserts them into the routing table,
 // and enqueues eligible nodes onto the ready heap.
 // Nodes already in seen (currently in cooldownHeap) are skipped.
-func (c *crawlerInstance) processNodes(encoded string, target NodeID) {
+func (c *crawlerInstance) processNodes(ctx context.Context, encoded string, target NodeID) {
 	nodes, err := DecodeNodes(encoded)
 	if err != nil {
 		return
 	}
+	inserted, queued := 0, 0
 	for _, n := range nodes {
-		if !isValidNodeID(n.Addr.IP, n.ID) {
-			continue
-		}
 		c.server.table.Insert(n)
+		inserted++
 		if _, inCooldown := c.seen[n.ID]; inCooldown {
 			continue
 		}
@@ -816,6 +816,14 @@ func (c *crawlerInstance) processNodes(encoded string, target NodeID) {
 			target: target,
 			dist:   target.XOR(n.ID),
 		})
+		queued++
 	}
 	c.trimReadyToK()
+	logger.FromContext(ctx).Debug("process nodes",
+		"service", "crawler",
+		"total", len(nodes),
+		"inserted", inserted,
+		"queued", queued,
+		"table_size", c.server.table.NodeCount(),
+	)
 }

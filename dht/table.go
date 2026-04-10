@@ -78,7 +78,6 @@ func (rt *RoutingTable) insert(node *Node) {
 			n.Addr = node.Addr
 			n.LastSeen = node.LastSeen
 			n.FailureCount = 0
-			b.LastChanged = time.Now()
 			return
 		}
 

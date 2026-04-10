@@ -280,28 +280,16 @@ func (s *Server) routeMessage(addr *net.UDPAddr, msg *Msg) {
 }
 
 // updateTableFromResponse inserts/refreshes the responding node in the table.
+// BEP-42 is not enforced here: the spec scopes enforcement to token validity
+// and lookup-termination counting only, not routing table insertion.
 func (s *Server) updateTableFromResponse(addr *net.UDPAddr, msg *Msg) {
 	id, err := ParseNodeID(msg.R.ID)
 	if err != nil {
 		return
 	}
-	if !isValidNodeID(addr.IP, id) {
-		return
-	}
 	s.table.Insert(&Node{ID: id, Addr: addr, LastSeen: time.Now()})
 	s.table.MarkSuccess(id)
 	s.rec.SetDHTRoutingTableSize(float64(s.table.NodeCount()))
-}
-
-// isValidNodeID reports whether id satisfies the BEP-42 security constraint
-// for ip. Nodes that fail this check are not inserted into the routing table
-// to prevent eclipse attacks via crafted node IDs.
-// Non-IPv4 addresses always pass — BEP-42 is IPv4-only per project scope.
-func isValidNodeID(ip net.IP, id NodeID) bool {
-	if ip.To4() == nil {
-		return true
-	}
-	return ValidateNodeIDForIP(ip, id) == nil
 }
 
 // queryHandlerLoop processes inbound queries until ctx is cancelled.
@@ -329,9 +317,7 @@ func (s *Server) processQuery(ctx context.Context, in inMsg) {
 
 	if in.msg.A != nil {
 		if id, err := ParseNodeID(in.msg.A.ID); err == nil {
-			if isValidNodeID(in.addr.IP, id) {
-				s.table.Insert(&Node{ID: id, Addr: in.addr, LastSeen: time.Now()})
-			}
+			s.table.Insert(&Node{ID: id, Addr: in.addr, LastSeen: time.Now()})
 		}
 	}
 
@@ -531,8 +517,8 @@ func (s *Server) writeLoop(ctx context.Context) {
 }
 
 // insertNodesFromFindNode decodes the compact node list from a find_node
-// response and inserts BEP-42-valid nodes into the routing table. It is the
-// shared post-processing step for both bucketRefreshLoop and refreshStaleBuckets.
+// response and inserts all nodes into the routing table. It is the shared
+// post-processing step for both bucketRefreshLoop and refreshStaleBuckets.
 func (s *Server) insertNodesFromFindNode(ctx context.Context, resp *Msg, from *net.UDPAddr, logKey string) {
 	nodes, err := DecodeNodes(resp.R.Nodes)
 	if err != nil {
@@ -543,18 +529,13 @@ func (s *Server) insertNodesFromFindNode(ctx context.Context, resp *Msg, from *n
 		)
 		return
 	}
-	inserted := 0
 	for _, node := range nodes {
-		if isValidNodeID(node.Addr.IP, node.ID) {
-			s.table.Insert(node)
-			inserted++
-		}
+		s.table.Insert(node)
 	}
 	logger.FromContext(ctx).Debug(logKey+" nodes inserted",
 		"service", "dht",
 		"from", from.String(),
 		"returned", len(nodes),
-		"inserted", inserted,
 		"table_size", s.table.NodeCount(),
 	)
 }

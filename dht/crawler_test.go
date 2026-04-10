@@ -406,7 +406,7 @@ func TestCrawler_processNodes(t *testing.T) {
 
 		heap.Init(&w.ready)
 		heap.Init(&w.cooldown)
-		w.processNodes(encoded, target)
+		w.processNodes(context.Background(), encoded, target)
 
 		assert.Equal(t, 1, w.ready.Len())
 		item := heap.Pop(&w.ready).(*traversalItem)
@@ -425,7 +425,7 @@ func TestCrawler_processNodes(t *testing.T) {
 
 		heap.Init(&w.ready)
 		heap.Init(&w.cooldown)
-		w.processNodes("bad", target)
+		w.processNodes(context.Background(), "not-valid-compact-nodes", target)
 		assert.Equal(t, 0, w.ready.Len())
 	})
 
@@ -446,7 +446,7 @@ func TestCrawler_processNodes(t *testing.T) {
 		heap.Init(&w.cooldown)
 
 		encoded := EncodeNodes([]*Node{node})
-		w.processNodes(encoded, target)
+		w.processNodes(context.Background(), encoded, target)
 
 		assert.Equal(t, 0, w.ready.Len(), "in-flight node must not be pushed to ready heap")
 	})
@@ -469,7 +469,7 @@ func TestCrawler_processNodes(t *testing.T) {
 			makeDiscoveredNode(0x30, 2002),
 			makeDiscoveredNode(0x40, 2003),
 		}
-		w.processNodes(EncodeNodes(nodes), target)
+		w.processNodes(context.Background(), EncodeNodes(nodes), target)
 
 		assert.Equal(t, 2, w.ready.Len(), "ready heap must not exceed traversalWidth")
 	})
@@ -501,7 +501,7 @@ func TestCrawler_processNodes(t *testing.T) {
 			makeDiscoveredNode(0x03, 4002),
 			makeDiscoveredNode(0x04, 4003),
 		}
-		w.processNodes(EncodeNodes(more), target)
+		w.processNodes(context.Background(), EncodeNodes(more), target)
 
 		assert.Equal(t, 2, w.ready.Len(), "ready heap must never exceed traversalWidth")
 	})
