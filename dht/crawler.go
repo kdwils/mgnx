@@ -310,8 +310,6 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 
 	heap.Init(&c.heap)
 
-	seen := make(map[NodeID]time.Time) // node ID → earliest time we may re-query
-
 	c.seedQueue(target)
 
 	queried := 0
@@ -321,16 +319,16 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 		}
 
 		c.rec.SetCrawlerTraversalQueueSize(id, float64(c.heap.Len()))
-		c.rec.SetCrawlerCooldownsActive(id, float64(len(seen)))
+		c.rec.SetCrawlerCooldownsActive(id, float64(len(c.seen)))
 
 		if queried > 0 && queried%retargetEvery == 0 {
 			rand.Read(target[:])
 			// Prune seen entries whose cooldown has already expired; long-interval
 			// BEP-51 nodes (up to 6 h) are retained so we honour their interval.
 			now := time.Now()
-			for id, t := range seen {
+			for id, t := range c.seen {
 				if now.After(t) {
-					delete(seen, id)
+					delete(c.seen, id)
 				}
 			}
 			c.seedQueue(target)
@@ -345,7 +343,7 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 				"queried", queried,
 				"heap_size", c.heap.Len(),
 				"routing_table_nodes", c.server.table.NodeCount(),
-				"seen_cooldowns", len(seen),
+				"seen_cooldowns", len(c.seen),
 				"target", hex.EncodeToString(target[:]),
 			)
 		}
@@ -354,7 +352,7 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 		if item == nil {
 			log.Debug("queue exhausted, reseeding",
 				"routing_table_nodes", c.server.table.NodeCount(),
-				"seen_cooldowns", len(seen),
+				"seen_cooldowns", len(c.seen),
 			)
 			rand.Read(target[:])
 			c.seedQueue(target)
@@ -373,7 +371,7 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 		// this node on subsequent passes without spinning.
 		if c.rateLimiter.throttle(item.node.ID) {
 			log.Debug("rate limited", "node", item.node.ID)
-			seen[item.node.ID] = time.Now().Add(c.rateLimiter.minSpacing)
+			c.seen[item.node.ID] = time.Now().Add(c.rateLimiter.minSpacing)
 			heap.Push(&c.heap, item)
 			continue
 		}
@@ -402,7 +400,7 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 			}
 		}
 
-		seen[item.node.ID] = time.Now().Add(interval)
+		c.seen[item.node.ID] = time.Now().Add(interval)
 		log.Debug("query complete",
 			"node", item.node.Addr.String(),
 			"err", err,
