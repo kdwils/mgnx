@@ -13,6 +13,7 @@ import (
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/kdwils/mgnx/config"
 	"github.com/kdwils/mgnx/logger"
+	"github.com/kdwils/mgnx/recorder"
 	"golang.org/x/time/rate"
 )
 
@@ -29,25 +30,30 @@ type inMsg struct {
 // Server is the UDP DHT node. It owns the socket, routing table, transaction
 // manager, token manager, and the discovered output channel.
 type Server struct {
-	conn       *net.UDPConn
-	ourID      NodeID
-	table      *RoutingTable
-	txns       *TxnManager
-	outbound   chan *outMsg
-	discovered chan DiscoveredPeers
-	token      *TokenManager
-	dedup      *BloomFilter
-	rate       *rate.Limiter
-	ipLimiter  *ipLimiter
-	cfg        config.DHT
-	handlers   chan inMsg
-	bufPool    sync.Pool
-	Resolver   Resolver
+	conn                *net.UDPConn
+	nodeID              string
+	ourID               NodeID
+	table               *RoutingTable
+	txns                *TxnManager
+	outbound            chan *outMsg
+	discovered          chan DiscoveredPeers
+	token               *TokenManager
+	dedup               *BloomFilter
+	rec                 *recorder.Recorder
+	rate                *rate.Limiter
+	ipLimiter           *ipLimiter
+	handlers            chan inMsg
+	bufPool             sync.Pool
+	Resolver            Resolver
+	workers             int
+	transactionTimeout  time.Duration
+	bucketSize          int
+	maxNodesPerResponse int
 }
 
 // NewServer binds the UDP socket and initialises all subsystems.
 // Call Start to launch the goroutines.
-func NewServer(cfg config.DHT) (*Server, error) {
+func NewServer(cfg config.DHT, rec *recorder.Recorder) (*Server, error) {
 	pc, err := net.ListenPacket("udp4", fmt.Sprintf(":%d", cfg.Port))
 	if err != nil {
 		return nil, err
@@ -71,17 +77,22 @@ func NewServer(cfg config.DHT) (*Server, error) {
 	token := NewTokenManager(cfg.TokenRotation)
 
 	s := &Server{
-		conn:       conn,
-		ourID:      ourID,
-		table:      table,
-		txns:       txns,
-		outbound:   make(chan *outMsg, 512),
-		discovered: make(chan DiscoveredPeers, cfg.DiscoveryBuffer),
-		token:      token,
-		rate:       rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateBurst),
-		ipLimiter:  newIPLimiter(cfg.RateLimit, cfg.RateBurst, 5*time.Minute),
-		cfg:        cfg,
-		handlers:   make(chan inMsg, 512),
+		conn:                conn,
+		ourID:               ourID,
+		table:               table,
+		txns:                txns,
+		outbound:            make(chan *outMsg, 512),
+		discovered:          make(chan DiscoveredPeers, cfg.DiscoveryBuffer),
+		token:               token,
+		rec:                 rec,
+		rate:                rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateBurst),
+		ipLimiter:           newIPLimiter(cfg.RateLimit, cfg.RateBurst, 5*time.Minute),
+		workers:             cfg.Workers,
+		nodeID:              cfg.NodeID,
+		handlers:            make(chan inMsg, 512),
+		transactionTimeout:  cfg.TransactionTimeout,
+		maxNodesPerResponse: cfg.MaxNodesPerResponse,
+		bucketSize:          cfg.BucketSize,
 		bufPool: sync.Pool{
 			New: func() any { return make([]byte, 2048) },
 		},
@@ -101,10 +112,11 @@ func (s *Server) Start(ctx context.Context) error {
 	s.txns.Start(ctx)
 	s.token.Start(ctx)
 	s.ipLimiter.Start(ctx)
+	s.rec.SetDHTRoutingTableSize(float64(s.table.NodeCount()))
 
 	go s.readLoop(ctx)
 	go s.writeLoop(ctx)
-	for i := 0; i < s.cfg.Workers; i++ {
+	for i := 0; i < s.workers; i++ {
 		go s.queryHandlerLoop(ctx)
 	}
 	go s.bucketRefreshLoop(ctx)
@@ -113,7 +125,7 @@ func (s *Server) Start(ctx context.Context) error {
 		"service", "dht",
 		"addr", s.conn.LocalAddr().String(),
 		"node_id", hex.EncodeToString(s.ourID[:]),
-		"workers", s.cfg.Workers,
+		"workers", s.workers,
 	)
 	return nil
 }
@@ -180,7 +192,7 @@ func (s *Server) Query(ctx context.Context, addr *net.UDPAddr, nodeID NodeID, ms
 // TxnManager automatically calls MarkFailure if the ping times out.
 func (s *Server) PingAsync(ctx context.Context, node *Node) {
 	go func() {
-		pingCtx, cancel := context.WithTimeout(ctx, s.cfg.TransactionTimeout)
+		pingCtx, cancel := context.WithTimeout(ctx, s.transactionTimeout)
 		defer cancel()
 		resp, err := s.Query(pingCtx, node.Addr, node.ID, &Msg{
 			Y: "q",
@@ -219,6 +231,7 @@ func (s *Server) readLoop(ctx context.Context) {
 		data := make([]byte, n)
 		copy(data, buf[:n])
 		s.bufPool.Put(buf)
+		s.rec.IncDHTPacketsInTotal()
 
 		var msg Msg
 		if err := bencode.Unmarshal(data, &msg); err != nil {
@@ -258,6 +271,7 @@ func (s *Server) updateTableFromResponse(addr *net.UDPAddr, msg *Msg) {
 	}
 	s.table.Insert(&Node{ID: id, Addr: addr, LastSeen: time.Now()})
 	s.table.MarkSuccess(id)
+	s.rec.SetDHTRoutingTableSize(float64(s.table.NodeCount()))
 }
 
 // isValidNodeID reports whether id satisfies the BEP-42 security constraint
@@ -287,6 +301,8 @@ func (s *Server) queryHandlerLoop(ctx context.Context) {
 // to the appropriate handler and adds the querying node to the routing table.
 func (s *Server) processQuery(ctx context.Context, in inMsg) {
 	log := logger.FromContext(ctx).With("service", "dht")
+
+	s.rec.IncDHTMessagesInTotal(in.msg.Q)
 
 	if !s.ipLimiter.Allow(in.addr.IP) {
 		return
@@ -342,8 +358,8 @@ func (s *Server) handleFindNode(ctx context.Context, addr *net.UDPAddr, msg *Msg
 			return
 		}
 	}
-	closest := s.table.Closest(target, s.cfg.BucketSize)
-	maxNodes := s.cfg.MaxNodesPerResponse
+	closest := s.table.Closest(target, s.bucketSize)
+	maxNodes := s.maxNodesPerResponse
 	if len(closest) > maxNodes {
 		closest = closest[:maxNodes]
 	}
@@ -372,8 +388,8 @@ func (s *Server) handleGetPeers(ctx context.Context, addr *net.UDPAddr, msg *Msg
 		s.respondError(addr, msg.T, ErrProtocol, "missing info_hash")
 		return
 	}
-	closest := s.table.Closest(target, s.cfg.BucketSize)
-	maxNodes := s.cfg.MaxNodesPerResponse
+	closest := s.table.Closest(target, s.bucketSize)
+	maxNodes := s.maxNodesPerResponse
 	if len(closest) > maxNodes {
 		closest = closest[:maxNodes]
 	}
@@ -450,7 +466,7 @@ func (s *Server) handleSampleInfohashes(ctx context.Context, addr *net.UDPAddr, 
 	}
 
 	// As a crawler we have no stored samples; respond with closest nodes.
-	closest := s.table.Closest(target, s.cfg.BucketSize)
+	closest := s.table.Closest(target, s.bucketSize)
 	s.respond(addr, msg.T, &Return{
 		ID:    string(s.ourID[:]),
 		Nodes: EncodeNodes(closest),
@@ -487,6 +503,8 @@ func (s *Server) writeLoop(ctx context.Context) {
 				continue
 			}
 			s.conn.WriteToUDP(data, out.addr) //nolint:errcheck
+			s.rec.IncDHTPacketsOutTotal()
+
 		case <-ctx.Done():
 			return
 		}
@@ -503,7 +521,7 @@ func (s *Server) bucketRefreshLoop(ctx context.Context) {
 		case <-ticker.C:
 			for _, b := range s.table.StaleBuckets() {
 				target := randomIDInBucket(b)
-				for _, n := range s.table.Closest(target, s.cfg.BucketSize) {
+				for _, n := range s.table.Closest(target, s.bucketSize) {
 					go func() {
 						_, _ = s.Query(ctx, n.Addr, n.ID, &Msg{
 							Y: "q",

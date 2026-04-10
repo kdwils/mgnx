@@ -110,13 +110,20 @@ type XMLChannel struct {
 }
 
 type XMLItem struct {
-	XMLName xml.Name `xml:"item"`
-	Title   string   `xml:"title"`
-	GUID    XMLGUID  `xml:"guid"`
-	Link    string   `xml:"link"`
-	Size    int64    `xml:"size"`
-	PubDate string   `xml:"pubDate"`
-	Attrs   []XMLTorznabAttr
+	XMLName   xml.Name     `xml:"item"`
+	Title     string       `xml:"title"`
+	GUID      XMLGUID      `xml:"guid"`
+	Link      string       `xml:"link"`
+	Enclosure XMLEnclosure `xml:"enclosure"`
+	Size      int64        `xml:"size"`
+	PubDate   string       `xml:"pubDate"`
+	Attrs     []XMLTorznabAttr
+}
+
+type XMLEnclosure struct {
+	URL    string `xml:"url,attr"`
+	Length int64  `xml:"length,attr"`
+	Type   string `xml:"type,attr"`
 }
 
 type XMLGUID struct {
@@ -196,9 +203,14 @@ func newXMLItem(t TorrentItem) XMLItem {
 	}
 
 	return XMLItem{
-		Title:   t.Title,
-		GUID:    XMLGUID{IsPermaLink: "false", Value: t.Infohash},
-		Link:    t.MagnetURL,
+		Title: t.Title,
+		GUID:  XMLGUID{IsPermaLink: "false", Value: t.Infohash},
+		Link:  t.MagnetURL,
+		Enclosure: XMLEnclosure{
+			URL:    t.MagnetURL,
+			Length: t.Size,
+			Type:   "application/x-bittorrent;x-scheme-handler/magnet",
+		},
 		Size:    t.Size,
 		PubDate: pubDate,
 		Attrs:   attrs,

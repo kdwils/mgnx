@@ -105,7 +105,7 @@ func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
 		return err
 	}
 
-	if s.cfg.NodeID == "" && externalIP != nil {
+	if s.nodeID == "" && externalIP != nil {
 		if newID, err := DeriveNodeIDFromIP(externalIP); err == nil {
 			s.SetNodeID(newID)
 			bn.recomputeDistances(s.ourID)
@@ -250,9 +250,9 @@ func (s *Server) refreshStaleBuckets(ctx context.Context) {
 			return
 		}
 		target := randomIDInBucket(b)
-		for _, n := range s.table.Closest(target, s.cfg.BucketSize) {
+		for _, n := range s.table.Closest(target, s.bucketSize) {
 			go func() {
-				qCtx, cancel := context.WithTimeout(ctx, s.cfg.TransactionTimeout)
+				qCtx, cancel := context.WithTimeout(ctx, s.transactionTimeout)
 				defer cancel()
 				_, _ = s.Query(qCtx, n.Addr, n.ID, &Msg{
 					Y: "q",

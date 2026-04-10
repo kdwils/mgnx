@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kdwils/mgnx/logger"
 	"github.com/kdwils/mgnx/service"
@@ -16,8 +17,10 @@ func (s *Server) handleAPI() http.HandlerFunc {
 		log := logger.FromContext(r.Context())
 		t := r.URL.Query().Get("t")
 
-		log.Info("torznab request", "t", t, "query", r.URL.RawQuery)
+		log.Debug("torznab request", "t", t, "query", r.URL.RawQuery)
+		s.rec.IncTorznabRequestsTotal()
 
+		start := time.Now()
 		switch t {
 		case "caps":
 			s.handleCaps(w, r)
@@ -30,6 +33,7 @@ func (s *Server) handleAPI() http.HandlerFunc {
 		default:
 			writeXMLError(w, http.StatusBadRequest, 202, fmt.Sprintf("unknown function: %s", t))
 		}
+		s.rec.ObserveTorznabRequestDurationSeconds(time.Since(start).Seconds())
 	}
 }
 

@@ -9,25 +9,38 @@ import (
 
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/kdwils/mgnx/config"
+	"github.com/kdwils/mgnx/recorder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func makeCrawler(t *testing.T) *crawler {
 	t.Helper()
-	cr, err := NewCrawler(config.Crawler{Crawlers: 2, Alpha: 3, MaxIterations: 4, TraversalWidth: 20}, testServerCfg(t))
+	cr, err := NewCrawler(config.Crawler{Crawlers: 2, Alpha: 3, MaxIterations: 4, TraversalWidth: 20}, testServerCfg(t), recorder.NewNoOp())
 	require.NoError(t, err)
 	cr.discoveryQueue = make(chan discoveryWork, 64)
 	t.Cleanup(func() { cr.Stop(t.Context()) })
 	return cr
 }
 
+func (c *crawler) wrapInstance() *crawlerInstance {
+	return &crawlerInstance{id: 0, crawler: c}
+}
+
+func (c *crawler) wrapDiscoveryWorker(id int) *discoveryWorker {
+	return &discoveryWorker{id: id, crawler: c}
+}
+
 // startDiscoveryWorkers launches discovery workers for tests that need the full
 // processSamples → discoverPeers → discovered pipeline.
 func startDiscoveryWorkers(t *testing.T, c *crawler) {
 	t.Helper()
-	for range 2 {
-		c.wg.Go(func() { c.discoveryWorker(t.Context()) })
+	for i := range 2 {
+		w := discoveryWorker{
+			id:      i,
+			crawler: c,
+		}
+		go w.discover(t.Context())
 	}
 }
 
@@ -152,7 +165,7 @@ func TestCrawler_nextEligible(t *testing.T) {
 		c := makeCrawler(t)
 		pq := &traversalHeap{}
 		heap.Init(pq)
-		assert.Nil(t, c.nextEligible(pq, make(map[NodeID]time.Time)))
+		assert.Nil(t, c.wrapInstance().nextEligible(pq, make(map[NodeID]time.Time)))
 	})
 
 	t.Run("skips nodes within cooldown", func(t *testing.T) {
@@ -164,7 +177,7 @@ func TestCrawler_nextEligible(t *testing.T) {
 		heap.Push(pq, &traversalItem{node: node, target: target, dist: target.XOR(node.ID)})
 
 		seen := map[NodeID]time.Time{node.ID: time.Now().Add(time.Hour)}
-		assert.Nil(t, c.nextEligible(pq, seen))
+		assert.Nil(t, c.wrapInstance().nextEligible(pq, seen))
 	})
 
 	t.Run("returns node whose cooldown has expired", func(t *testing.T) {
@@ -176,7 +189,7 @@ func TestCrawler_nextEligible(t *testing.T) {
 		heap.Push(pq, &traversalItem{node: node, target: target, dist: target.XOR(node.ID)})
 
 		seen := map[NodeID]time.Time{node.ID: time.Now().Add(-time.Second)}
-		item := c.nextEligible(pq, seen)
+		item := c.wrapInstance().nextEligible(pq, seen)
 		require.NotNil(t, item)
 		assert.Equal(t, node.ID, item.node.ID)
 	})
@@ -189,7 +202,7 @@ func TestCrawler_nextEligible(t *testing.T) {
 		heap.Init(pq)
 		heap.Push(pq, &traversalItem{node: node, target: target, dist: target.XOR(node.ID)})
 
-		item := c.nextEligible(pq, make(map[NodeID]time.Time))
+		item := c.wrapInstance().nextEligible(pq, make(map[NodeID]time.Time))
 		require.NotNil(t, item)
 		assert.Equal(t, node.ID, item.node.ID)
 	})
@@ -211,7 +224,7 @@ func TestCrawler_processSamples(t *testing.T) {
 
 		var h [20]byte
 		h[0] = 0xAB
-		c.processSamples(ctx, string(h[:]), item)
+		c.wrapInstance().processSamples(ctx, string(h[:]), item)
 
 		select {
 		case event := <-c.discovered:
@@ -238,8 +251,8 @@ func TestCrawler_processSamples(t *testing.T) {
 
 		var h [20]byte
 		h[0] = 0xCD
-		c.processSamples(ctx, string(h[:]), item)
-		c.processSamples(ctx, string(h[:]), item)
+		c.wrapInstance().processSamples(ctx, string(h[:]), item)
+		c.wrapInstance().processSamples(ctx, string(h[:]), item)
 
 		select {
 		case <-c.discovered:
@@ -258,7 +271,7 @@ func TestCrawler_processSamples(t *testing.T) {
 		node := makeDiscoveredNode(0x01, 1001)
 		item := &traversalItem{node: node}
 
-		c.processSamples(context.Background(), string(make([]byte, 19)), item)
+		c.wrapInstance().processSamples(context.Background(), string(make([]byte, 19)), item)
 
 		select {
 		case <-c.discovered:
@@ -279,7 +292,7 @@ func TestCrawler_processSamples(t *testing.T) {
 		var h [20]byte
 		h[0] = 0xFF
 		h[1] = 0xFF
-		c.processSamples(context.Background(), string(h[:]), item) // must not block
+		c.wrapInstance().processSamples(context.Background(), string(h[:]), item) // must not block
 	})
 
 	t.Run("decodes multiple hashes from one samples string", func(t *testing.T) {
@@ -299,7 +312,7 @@ func TestCrawler_processSamples(t *testing.T) {
 		buf[0] = 0x01
 		buf[20] = 0x02
 		buf[40] = 0x03
-		c.processSamples(ctx, string(buf[:]), item)
+		c.wrapInstance().processSamples(ctx, string(buf[:]), item)
 
 		count := 0
 		timeout := time.After(2 * time.Second)

@@ -9,6 +9,7 @@ import (
 	"github.com/kdwils/mgnx/config"
 	"github.com/kdwils/mgnx/db/gen"
 	"github.com/kdwils/mgnx/logger"
+	"github.com/kdwils/mgnx/recorder"
 )
 
 // torrentMeta holds the pre-fetched fields needed to process a scrape result.
@@ -22,11 +23,12 @@ type Worker struct {
 	queries gen.Querier
 	scraper Scraper
 	cfg     config.Scrape
+	rec     *recorder.Recorder
 }
 
 // New creates a Worker.
-func New(queries gen.Querier, scraper Scraper, cfg config.Scrape) *Worker {
-	return &Worker{queries: queries, scraper: scraper, cfg: cfg}
+func New(queries gen.Querier, scraper Scraper, cfg config.Scrape, rec *recorder.Recorder) *Worker {
+	return &Worker{queries: queries, scraper: scraper, cfg: cfg, rec: rec}
 }
 
 // Run starts the scrape loop, dead detection loop, and prune loop.
@@ -90,9 +92,12 @@ func (w *Worker) scrapeOnce(ctx context.Context, trackerID int64) {
 	log := logger.FromContext(ctx).With("service", "scraper")
 	batchSize := w.cfg.BatchSize
 
+	start := time.Now()
+	w.rec.IncScrapeCyclesTotal()
 	rows, err := w.queries.GetTorrentsToScrape(ctx, int32(batchSize))
 	if err != nil {
 		log.ErrorContext(ctx, "get torrents to scrape failed", "err", err)
+		w.rec.IncScrapeErrorsTotal()
 		return
 	}
 	if len(rows) == 0 {
@@ -111,14 +116,20 @@ func (w *Worker) scrapeOnce(ctx context.Context, trackerID int64) {
 	results, err := w.scraper.Scrape(ctx, infohashes)
 	if err != nil {
 		log.ErrorContext(ctx, "tracker scrape failed", "err", err)
+		w.rec.IncScrapeErrorsTotal()
 		return
 	}
 
 	for _, r := range results {
 		if err := w.applyResult(ctx, r, trackerID, meta[r.Infohash]); err != nil {
 			log.ErrorContext(ctx, "apply scrape result failed", "infohash", r.Infohash, "err", err)
+			w.rec.IncScrapeErrorsTotal()
+
 		}
 	}
+
+	w.rec.ObserveScrapeDurationSeconds(time.Since(start).Seconds())
+	w.rec.IncScrapeTorrentsUpdatedTotal()
 }
 
 // applyResult writes a single scrape result to the DB.
@@ -232,12 +243,17 @@ func (w *Worker) detectDead(ctx context.Context) {
 	}
 
 	log.DebugContext(ctx, "dead detection run", "candidates", len(candidates))
+	deadCount := 0
 	for _, infohash := range candidates {
 		if err := w.queries.UpdateTorrentDead(ctx, infohash); err != nil {
 			log.ErrorContext(ctx, "mark torrent dead failed", "infohash", infohash, "err", err)
 			continue
 		}
+		deadCount++
 		log.DebugContext(ctx, "torrent marked dead", "infohash", infohash)
+	}
+	if deadCount > 0 {
+		w.rec.IncScrapeDeadDetectedTotal()
 	}
 }
 
@@ -267,4 +283,5 @@ func (w *Worker) prune(ctx context.Context) {
 	if err := w.queries.PruneScrapeHistory(ctx, cutoff); err != nil {
 		log.ErrorContext(ctx, "prune scrape history failed", "err", err)
 	}
+	w.rec.IncScrapeHistoryPrunedTotal()
 }

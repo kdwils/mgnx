@@ -19,9 +19,12 @@ import (
 	"github.com/kdwils/mgnx/indexer"
 	"github.com/kdwils/mgnx/logger"
 	"github.com/kdwils/mgnx/metadata"
+	"github.com/kdwils/mgnx/metrics"
+	"github.com/kdwils/mgnx/recorder"
 	"github.com/kdwils/mgnx/scrape"
 	"github.com/kdwils/mgnx/service"
 	"github.com/kdwils/mgnx/torznab"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"golang.org/x/sync/errgroup"
@@ -80,7 +83,13 @@ var serveCmd = &cobra.Command{
 		}
 		queries := gen.New(pool)
 
-		crawler, err := dht.NewCrawler(cfg.Crawler, cfg.DHT)
+		reg := prometheus.NewPedanticRegistry()
+		rec, err := recorder.New(reg)
+		if err != nil {
+			return fmt.Errorf("create recorder: %w", err)
+		}
+
+		crawler, err := dht.NewCrawler(cfg.Crawler, cfg.DHT, rec)
 		if err != nil {
 			return fmt.Errorf("dht crawler: %w", err)
 		}
@@ -89,11 +98,16 @@ var serveCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("scrape client: %w", err)
 		}
-		scrapeWorker := scrape.New(queries, scrapeClient, cfg.Scrape)
+		scrapeWorker := scrape.New(queries, scrapeClient, cfg.Scrape, rec)
 
 		hs := health.New(cfg.Server.HealthPort, pool, crawler)
 		g.Go(func() error {
 			return hs.Start(ctx)
+		})
+
+		ms := metrics.New(cfg.Server.MetricsPort, reg)
+		g.Go(func() error {
+			return ms.Start(ctx)
 		})
 
 		if err := db.RunMigrations(pool); err != nil {
@@ -110,6 +124,7 @@ var serveCmd = &cobra.Command{
 			},
 			cfg.DHT.MaxMessageSize,
 			cfg.DHT.MaxMetadataSize,
+			rec,
 		)
 
 		g.Go(func() error {
@@ -128,7 +143,7 @@ var serveCmd = &cobra.Command{
 			err := crawler.Stop(ctx)
 			return err
 		})
-		idxWorker := indexer.New(crawler, metaClient, queries, cfg.Indexer)
+		idxWorker := indexer.New(crawler, metaClient, queries, cfg.Indexer, rec)
 		g.Go(func() error {
 			idxWorker.Run(ctx)
 			return nil
@@ -139,7 +154,7 @@ var serveCmd = &cobra.Command{
 		})
 		g.Go(func() error {
 			svc := service.New(queries, cfg)
-			srv := torznab.New(cfg.Server.Port, l, svc)
+			srv := torznab.New(cfg.Server.TorznabPort, l, svc, rec)
 			err := srv.Serve(ctx)
 			if err != nil && err != context.Canceled {
 				logger.FromContext(ctx).Error("torznab server error", "error", err)

@@ -97,7 +97,9 @@ func initConfig() {
 	viper.SetDefault("crawler.max_iterations", 4)
 	viper.SetDefault("crawler.traversal_width", 20)
 
-	viper.SetDefault("server.health_port", 8080)
+	viper.SetDefault("server.torznab_port", 8080)
+	viper.SetDefault("server.health_port", 8081)
+	viper.SetDefault("server.metrics_port", 9090)
 
 	viper.SetDefault("scrape.workers", 5)
 	viper.SetDefault("scrape.rate_limit", 2.0)

@@ -20,6 +20,7 @@ import (
 	"github.com/kdwils/mgnx/logger"
 	"github.com/kdwils/mgnx/metadata"
 	"github.com/kdwils/mgnx/mocks"
+	"github.com/kdwils/mgnx/recorder"
 	"github.com/kdwils/mgnx/scrape"
 	"github.com/kdwils/mgnx/service"
 	"github.com/kdwils/mgnx/torznab"
@@ -126,12 +127,12 @@ func TestEndToEnd(t *testing.T) {
 		Server: config.Server{LogLevel: "error"},
 	}
 
-	idxWorker := indexer.New(crawler, fetcher, queries, cfg.Indexer)
+	idxWorker := indexer.New(crawler, fetcher, queries, cfg.Indexer, recorder.NewNoOp())
 	require.NoError(t, crawler.Start(ctx))
 	t.Cleanup(func() { crawler.Stop(ctx) })
 	go idxWorker.Run(ctx)
 
-	scrapeWorker := scrape.New(queries, scraper, cfg.Scrape)
+	scrapeWorker := scrape.New(queries, scraper, cfg.Scrape, recorder.NewNoOp())
 	go scrapeWorker.Run(ctx)
 
 	time.Sleep(100 * time.Millisecond)
@@ -153,7 +154,7 @@ func TestEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 
 	svc := service.New(queries, cfg)
-	srv := torznab.New(0, logger.New("error"), svc)
+	srv := torznab.New(0, logger.New("error"), svc, recorder.NewNoOp())
 	go srv.ServeListener(ctx, ln)
 
 	serverURL := "http://127.0.0.1:" + strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)

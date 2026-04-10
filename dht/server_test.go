@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kdwils/mgnx/config"
+	"github.com/kdwils/mgnx/recorder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -46,7 +47,7 @@ func testServerCfg(t *testing.T) config.DHT {
 
 func TestNewServer(t *testing.T) {
 	t.Run("creates server with valid config", func(t *testing.T) {
-		s, err := NewServer(testServerCfg(t))
+		s, err := NewServer(testServerCfg(t), recorder.NewNoOp())
 		require.NoError(t, err)
 		defer s.Stop(t.Context())
 		assert.NotNil(t, s.table)
@@ -60,7 +61,7 @@ func TestServer_processQuery(t *testing.T) {
 
 	makeServer := func(t *testing.T) *Server {
 		t.Helper()
-		s, err := NewServer(testServerCfg(t))
+		s, err := NewServer(testServerCfg(t), recorder.NewNoOp())
 		require.NoError(t, err)
 		t.Cleanup(func() { s.Stop(t.Context()) })
 		return s
@@ -161,12 +162,12 @@ func TestServer_ping_roundtrip(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		s1, err := NewServer(testServerCfg(t))
+		s1, err := NewServer(testServerCfg(t), recorder.NewNoOp())
 		require.NoError(t, err)
 		defer s1.Stop(t.Context())
 		require.NoError(t, s1.Start(ctx))
 
-		s2, err := NewServer(testServerCfg(t))
+		s2, err := NewServer(testServerCfg(t), recorder.NewNoOp())
 		require.NoError(t, err)
 		defer s2.Stop(t.Context())
 		require.NoError(t, s2.Start(ctx))

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
+	"github.com/kdwils/mgnx/recorder"
 	"github.com/kdwils/mgnx/service"
 )
 
@@ -24,13 +25,15 @@ type Server struct {
 	port   int
 	logger *slog.Logger
 	svc    Service
+	rec    *recorder.Recorder
 }
 
-func New(port int, logger *slog.Logger, svc Service) Server {
+func New(port int, logger *slog.Logger, svc Service, rec *recorder.Recorder) Server {
 	return Server{
 		port:   port,
 		logger: logger,
 		svc:    svc,
+		rec:    rec,
 	}
 }
 

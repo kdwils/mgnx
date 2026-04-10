@@ -18,6 +18,7 @@ import (
 	"github.com/kdwils/mgnx/dht"
 	"github.com/kdwils/mgnx/logger"
 	"github.com/kdwils/mgnx/metadata"
+	"github.com/kdwils/mgnx/recorder"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 )
@@ -34,6 +35,7 @@ type Worker struct {
 	crawler             Crawler
 	fetcher             metadata.Fetcher
 	queries             gen.Querier
+	rec                 *recorder.Recorder
 	allowedExts         map[string]struct{}
 	peerTimeout         time.Duration
 	maxPeers            int
@@ -46,7 +48,7 @@ type Worker struct {
 	excludeAdultContent bool
 }
 
-func New(crawler Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg config.Indexer) *Worker {
+func New(crawler Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg config.Indexer, rec *recorder.Recorder) *Worker {
 	allowed := make(map[string]struct{}, len(cfg.AllowedExtensions))
 	for _, ext := range cfg.AllowedExtensions {
 		allowed[ext] = struct{}{}
@@ -55,6 +57,7 @@ func New(crawler Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg con
 		crawler:             crawler,
 		fetcher:             fetcher,
 		queries:             queries,
+		rec:                 rec,
 		allowedExts:         allowed,
 		peerTimeout:         cfg.RequestTimeout,
 		maxPeers:            cfg.MaxPeers,
@@ -70,6 +73,7 @@ func New(crawler Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg con
 
 func (w *Worker) Run(ctx context.Context) {
 	var wg sync.WaitGroup
+	w.rec.SetIndexerWorkersActive(float64(w.workers))
 	ch := w.crawler.Infohashes()
 	for range w.workers {
 		wg.Go(func() {
@@ -97,10 +101,12 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 
 	_, err := w.queries.GetTorrentByInfohash(ctx, infohashHex)
 	if err == nil {
+		w.rec.IncIndexerPeersProcessedTotal("duplicate")
 		return
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		log.ErrorContext(ctx, "db lookup failed", "infohash", infohashHex, "err", err)
+		w.rec.IncIndexerPeersProcessedTotal("error")
 		return
 	}
 
@@ -146,11 +152,16 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		close(resultCh)
 	}()
 
+	start := time.Now()
 	info = <-resultCh
 	if info == nil {
 		log.DebugContext(ctx, "no metadata fetched", "infohash", infohashHex)
+		w.rec.IncIndexerMetadataFailedTotal("no_peers")
 		return
 	}
+
+	w.rec.ObserveIndexerFetchDurationSeconds(time.Since(start).Seconds())
+	w.rec.IncIndexerMetadataFetchedTotal()
 
 	log.DebugContext(ctx, "metadata fetched", "infohash", infohashHex, "name", info.Name, "files", len(info.Files))
 
@@ -170,7 +181,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 	if tag.RowsAffected() == 0 {
 		return
 	}
-
+	w.rec.IncIndexerDBUpsertsTotal()
 	classifyFiles := make([]classify.File, len(info.Files))
 	infohashes := make([]string, len(info.Files))
 	paths := make([]string, len(info.Files))
@@ -202,6 +213,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 
 	result := classify.Classify(info.Name, classifyFiles, info.TotalSize, w.minSize, w.maxSize, w.allowedExts, w.enableExtFilter, w.excludeAdultContent)
 	log.DebugContext(ctx, "classified torrent", "infohash", infohashHex, "state", result.State, "content_type", result.ContentType)
+	w.rec.IncTorrentsIndexedTotal(string(result.ContentType))
 
 	if err := w.queries.UpdateTorrentClassified(ctx, gen.UpdateTorrentClassifiedParams{
 		Infohash:          infohashHex,

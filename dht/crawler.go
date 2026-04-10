@@ -17,6 +17,7 @@ import (
 	"github.com/kdwils/mgnx/config"
 	"github.com/kdwils/mgnx/logger"
 	pkgcache "github.com/kdwils/mgnx/pkg/cache"
+	"github.com/kdwils/mgnx/recorder"
 )
 
 // DiscoveredPeers is the only coupling point between the DHT layer (Section 3)
@@ -40,6 +41,7 @@ type crawler struct {
 	server             *Server
 	discovered         chan DiscoveredPeers
 	dedup              *BloomFilter
+	rec                *recorder.Recorder
 	cancel             context.CancelFunc
 	wg                 sync.WaitGroup
 	rateLimiter        *nodeRateLimiter
@@ -51,7 +53,7 @@ type crawler struct {
 	discoveryWorkers   int
 	crawlers           int
 	transactionTimeout time.Duration
-	traversalWidth         int
+	traversalWidth     int
 	alpha              int
 	maxIterations      int
 }
@@ -95,8 +97,8 @@ func (r *nodeRateLimiter) Start(ctx context.Context) {
 // NewCrawler creates a Crawler backed by a new UDP Server. The BloomFilter is
 // created here and wired into the server so that both the passive
 // announce_peer path and the active BEP-51 path share the same dedup state.
-func NewCrawler(cfg config.Crawler, dhtCfg config.DHT) (*crawler, error) {
-	server, err := NewServer(dhtCfg)
+func NewCrawler(cfg config.Crawler, dhtCfg config.DHT, rec *recorder.Recorder) (*crawler, error) {
+	server, err := NewServer(dhtCfg, rec)
 	if err != nil {
 		return nil, err
 	}
@@ -106,12 +108,13 @@ func NewCrawler(cfg config.Crawler, dhtCfg config.DHT) (*crawler, error) {
 		server:             server,
 		discovered:         server.discovered,
 		dedup:              dedup,
+		rec:                rec,
 		bootstrapNodes:     cfg.BootstrapNodes,
 		crawlers:           cfg.Crawlers,
 		discoveryWorkers:   cfg.DiscoveryWorkers,
 		rateLimiter:        newNodeRateLimiter(2 * time.Second),
 		discoveryQueue:     make(chan discoveryWork, cfg.DiscoveryQueueSize),
-		traversalWidth:         cfg.TraversalWidth,
+		traversalWidth:     cfg.TraversalWidth,
 		transactionTimeout: dhtCfg.TransactionTimeout,
 		alpha:              cfg.Alpha,
 		maxIterations:      cfg.MaxIterations,
@@ -132,6 +135,16 @@ func (c *crawler) Infohashes() <-chan DiscoveredPeers {
 // NodeCount returns the number of nodes currently in the routing table.
 func (c *crawler) NodeCount() int {
 	return c.server.table.NodeCount()
+}
+
+type crawlerInstance struct {
+	id int
+	*crawler
+}
+
+type discoveryWorker struct {
+	id int
+	*crawler
 }
 
 // Start launches the server, runs bootstrap convergence, and starts the
@@ -155,14 +168,22 @@ func (c *crawler) Start(ctx context.Context) error {
 	c.nodeSampleSupport.StartCleanup(crawlCtx)
 	c.rateLimiter.Start(crawlCtx)
 
-	for range c.crawlers {
+	for i := 0; i < c.crawlers; i++ {
 		c.wg.Go(func() {
-			c.crawlerWorker(crawlCtx)
+			instance := crawlerInstance{
+				id:      i,
+				crawler: c,
+			}
+			instance.crawl(crawlCtx, i)
 		})
 	}
-	for range c.discoveryWorkers {
+	for i := 0; i < c.discoveryWorkers; i++ {
 		c.wg.Go(func() {
-			c.discoveryWorker(crawlCtx)
+			w := discoveryWorker{
+				id:      i,
+				crawler: c,
+			}
+			w.discover(crawlCtx)
 		})
 	}
 
@@ -239,7 +260,7 @@ func (c *crawler) getPeers(ctx context.Context, item *traversalItem) (*Msg, erro
 // If the node responds with a 204 "method unknown" error it doesn't support
 // BEP-51; that fact is cached and get_peers is used as a fallback for routing
 // continuation. Subsequent calls for the same node skip straight to get_peers.
-func (c *crawler) queryForSamples(ctx context.Context, item *traversalItem) (*Msg, error) {
+func (c *crawlerInstance) queryForSamples(ctx context.Context, item *traversalItem) (*Msg, error) {
 	log := logger.FromContext(ctx).With("service", "crawler", "node", item.node.Addr.String(), "target", hex.EncodeToString(item.target[:]))
 
 	capable, known := c.nodeSampleSupport.Get(item.node.ID)
@@ -248,6 +269,7 @@ func (c *crawler) queryForSamples(ctx context.Context, item *traversalItem) (*Ms
 	}
 
 	log.Debug("sending query", "type", "sample_infohashes")
+	c.rec.IncCrawlerQueriesTotal("sample_infohashes", "crawling", c.id)
 	resp, err := c.server.Query(ctx, item.node.Addr, item.node.ID, &Msg{
 		Y: "q", Q: "sample_infohashes",
 		A: &MsgArgs{
@@ -276,7 +298,7 @@ const retargetEvery = 200
 // per-node cooldown map so it respects the Interval returned by each node.
 // When the queue is exhausted the worker picks a new random target and
 // re-seeds from the routing table.
-func (c *crawler) crawlerWorker(ctx context.Context) {
+func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 	log := logger.FromContext(ctx).With("service", "crawler")
 
 	var target NodeID
@@ -294,6 +316,9 @@ func (c *crawler) crawlerWorker(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+
+		c.rec.SetCrawlerTraversalQueueSize(id, float64(pq.Len()))
+		c.rec.SetCrawlerCooldownsActive(id, float64(len(seen)))
 
 		if queried > 0 && queried%retargetEvery == 0 {
 			rand.Read(target[:])
@@ -400,7 +425,7 @@ func (c *crawler) seedQueue(pq *traversalHeap, target NodeID) {
 // Per BEP-51, nodes that return an interval must be respected but should
 // remain in the traversal queue until their cooldown expires.
 // Returns nil if the queue is empty or all items are in cooldown.
-func (c *crawler) nextEligible(pq *traversalHeap, seen map[NodeID]time.Time) *traversalItem {
+func (c *crawlerInstance) nextEligible(pq *traversalHeap, seen map[NodeID]time.Time) *traversalItem {
 	var deferred []*traversalItem
 	var result *traversalItem
 	now := time.Now()
@@ -423,12 +448,13 @@ func (c *crawler) nextEligible(pq *traversalHeap, seen map[NodeID]time.Time) *tr
 // get_peers query to the source node to find actual swarm peers, then emits
 // DiscoveredPeerss with those peer addresses. Using the DHT node's address
 // directly would fail — DHT nodes are UDP-only and don't serve BEP-09 metadata.
-func (c *crawler) processSamples(ctx context.Context, samples string, item *traversalItem) {
+func (c *crawlerInstance) processSamples(ctx context.Context, samples string, item *traversalItem) {
 	total := len(samples) / 20
 	if total == 0 {
 		return
 	}
 	new := 0
+	dropped := 0
 	for i := 0; i+20 <= len(samples); i += 20 {
 		var h [20]byte
 		copy(h[:], samples[i:i+20])
@@ -439,7 +465,20 @@ func (c *crawler) processSamples(ctx context.Context, samples string, item *trav
 		select {
 		case c.discoveryQueue <- discoveryWork{h, item.node}:
 		default:
+			dropped++
 			c.droppedDiscoveries.Add(1)
+		}
+	}
+	if c.rec != nil {
+		c.rec.SetDHTQueueCapacity(float64(cap(c.discoveryQueue)))
+		if new > 0 {
+			c.rec.IncDHTNodesDiscoveredTotal("inserted")
+		}
+		if total-new-dropped > 0 {
+			c.rec.IncDHTNodesDiscoveredTotal("duplicate")
+		}
+		if dropped > 0 {
+			c.rec.IncDHTDiscoveryQueueDroppedTotal()
 		}
 	}
 	logger.FromContext(ctx).Debug("samples processed",
@@ -452,12 +491,13 @@ func (c *crawler) processSamples(ctx context.Context, samples string, item *trav
 
 // discoveryWorker consumes infohash work items from the bounded discoveryQueue
 // and runs a get_peers lookup for each. Worker count is the concurrency limit.
-func (c *crawler) discoveryWorker(ctx context.Context) {
+func (c *discoveryWorker) discover(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case work := <-c.discoveryQueue:
+			c.rec.SetDHTDiscoveryQueueDepth(float64(len(c.discoveryQueue)))
 			c.discoverPeers(ctx, work.infohash, work.sourceNode)
 		}
 	}
@@ -467,11 +507,18 @@ func (c *crawler) discoveryWorker(ctx context.Context) {
 // At each iteration it queries up to Alpha nodes in parallel, then trims the
 // shortlist to the k-closest seen so far. It stops early when the closest node
 // stops changing (Kademlia convergence) or no new nodes are returned.
-func (c *crawler) discoverPeers(ctx context.Context, h [20]byte, initialNode *Node) {
+func (c *discoveryWorker) discoverPeers(ctx context.Context, h [20]byte, initialNode *Node) {
 	log := logger.FromContext(ctx).With("service", "crawler", "infohash", hex.EncodeToString(h[:]))
 	if initialNode != nil {
 		log.Debug("discovering peers", "initial_node", initialNode.Addr.String())
 	}
+
+	start := time.Now()
+	defer func() {
+		if c.rec != nil {
+			c.rec.ObserveDiscoveryDurationSeconds(time.Since(start).Seconds())
+		}
+	}()
 
 	target := NodeID(h)
 	shortlist := make(map[NodeID]*Node)
@@ -485,11 +532,17 @@ func (c *crawler) discoverPeers(ctx context.Context, h [20]byte, initialNode *No
 	for iter := 0; iter < c.maxIterations; iter++ {
 		entries := c.sortByDistance(shortlist, target)
 		if len(entries) == 0 {
+			if c.rec != nil {
+				c.rec.IncDiscoveryWorkItemsTotal("no_peers")
+			}
 			log.Debug("peer discovery complete", "iterations", iter, "result", "empty_shortlist")
 			return
 		}
 
 		if iter > 0 && entries[0].ID == prevClosest {
+			if c.rec != nil {
+				c.rec.IncDiscoveryWorkItemsTotal("success")
+			}
 			log.Debug("peer discovery complete", "iterations", iter, "result", "converged")
 			return
 		}
@@ -502,6 +555,9 @@ func (c *crawler) discoverPeers(ctx context.Context, h [20]byte, initialNode *No
 			}
 		}
 		if len(toQuery) == 0 {
+			if c.rec != nil {
+				c.rec.IncDiscoveryWorkItemsTotal("no_peers")
+			}
 			log.Debug("peer discovery complete", "iterations", iter, "result", "all_queried")
 			return
 		}
@@ -515,15 +571,24 @@ func (c *crawler) discoverPeers(ctx context.Context, h [20]byte, initialNode *No
 
 		foundPeers, newNodes := c.processResponses(ctx, responses, h)
 		if foundPeers {
+			if c.rec != nil {
+				c.rec.IncDiscoveryWorkItemsTotal("success")
+			}
 			log.Debug("peer discovery complete", "iterations", iter+1, "result", "peers_found")
 			return
 		}
 		if len(newNodes) == 0 {
+			if c.rec != nil {
+				c.rec.IncDiscoveryWorkItemsTotal("no_peers")
+			}
 			log.Debug("peer discovery complete", "iterations", iter+1, "result", "no_new_nodes")
 			return
 		}
 
 		shortlist = c.trimToKClosest(c.mergeNodes(shortlist, newNodes), target)
+	}
+	if c.rec != nil {
+		c.rec.IncDiscoveryWorkItemsTotal("no_peers")
 	}
 	log.Debug("peer discovery complete", "iterations", c.maxIterations, "result", "max_iterations")
 }
@@ -558,7 +623,7 @@ func (c *crawler) sortByDistance(nodes map[NodeID]*Node, target NodeID) []*Node 
 
 // queryParallel sends BEP-05 get_peers queries to up to Alpha nodes concurrently
 // (BEP-05 §2 alpha-parallel lookup) and returns all successful responses.
-func (c *crawler) queryParallel(ctx context.Context, nodes []*Node, h [20]byte) []*Msg {
+func (c *discoveryWorker) queryParallel(ctx context.Context, nodes []*Node, h [20]byte) []*Msg {
 	alpha := min(len(nodes), c.alpha)
 
 	respCh := make(chan *Msg, alpha)
@@ -582,8 +647,10 @@ func (c *crawler) queryParallel(ctx context.Context, nodes []*Node, h [20]byte) 
 
 // queryNodeAsync sends a single BEP-05 get_peers query (BEP-05 §4.2) to node
 // and forwards a successful response to respCh.
-func (c *crawler) queryNodeAsync(ctx context.Context, node *Node, h [20]byte, respCh chan<- *Msg, wg *sync.WaitGroup) {
+func (c *discoveryWorker) queryNodeAsync(ctx context.Context, node *Node, h [20]byte, respCh chan<- *Msg, wg *sync.WaitGroup) {
 	defer wg.Done()
+
+	c.rec.IncCrawlerQueriesTotal("get_peers", "discovery", c.id)
 
 	qCtx, cancel := context.WithTimeout(ctx, c.transactionTimeout)
 	defer cancel()
