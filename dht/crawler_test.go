@@ -450,6 +450,174 @@ func TestCrawler_processNodes(t *testing.T) {
 
 		assert.Equal(t, 0, w.ready.Len(), "in-flight node must not be pushed to ready heap")
 	})
+
+	t.Run("trims ready heap to traversalWidth after processing", func(t *testing.T) {
+		cr := makeCrawler(t)
+		cr.traversalWidth = 2
+		w := crawlerInstance{
+			crawler:  cr,
+			ready:    make(traversalHeap, 0),
+			cooldown: make(cooldownHeap, 0),
+			seen:     make(map[NodeID]time.Time),
+		}
+		heap.Init(&w.ready)
+
+		var target NodeID
+		nodes := []*Node{
+			makeDiscoveredNode(0x10, 2000),
+			makeDiscoveredNode(0x20, 2001),
+			makeDiscoveredNode(0x30, 2002),
+			makeDiscoveredNode(0x40, 2003),
+		}
+		w.processNodes(EncodeNodes(nodes), target)
+
+		assert.Equal(t, 2, w.ready.Len(), "ready heap must not exceed traversalWidth")
+	})
+
+	t.Run("ready heap never exceeds traversalWidth regardless of how many nodes arrive", func(t *testing.T) {
+		// DeriveNodeIDFromIP uses a random r each call so XOR distances are
+		// non-deterministic; this test only asserts the bound, not which nodes win.
+		cr := makeCrawler(t)
+		cr.traversalWidth = 2
+		w := crawlerInstance{
+			crawler:  cr,
+			ready:    make(traversalHeap, 0),
+			cooldown: make(cooldownHeap, 0),
+			seen:     make(map[NodeID]time.Time),
+		}
+		heap.Init(&w.ready)
+
+		var target NodeID
+		// Pre-load with 2 nodes, then deliver 4 more — heap must stay at 2.
+		for _, b := range []byte{0xfe, 0xff} {
+			n := makeDiscoveredNode(b, int(b)+3000)
+			heap.Push(&w.ready, &traversalItem{node: n, target: target, dist: target.XOR(n.ID)})
+		}
+		require.Equal(t, 2, w.ready.Len())
+
+		more := []*Node{
+			makeDiscoveredNode(0x01, 4000),
+			makeDiscoveredNode(0x02, 4001),
+			makeDiscoveredNode(0x03, 4002),
+			makeDiscoveredNode(0x04, 4003),
+		}
+		w.processNodes(EncodeNodes(more), target)
+
+		assert.Equal(t, 2, w.ready.Len(), "ready heap must never exceed traversalWidth")
+	})
+}
+
+// makeItem builds a traversalItem with an explicit first-byte distance so that
+// ordering in tests is fully deterministic regardless of BEP-42 randomness.
+func makeItem(distByte byte) *traversalItem {
+	var d NodeID
+	d[0] = distByte
+	return &traversalItem{
+		node: &Node{ID: NodeID{distByte}},
+		dist: d,
+	}
+}
+
+func TestCrawler_trimReadyToK(t *testing.T) {
+	t.Run("does nothing when heap is at or below traversalWidth", func(t *testing.T) {
+		cr := makeCrawler(t)
+		cr.traversalWidth = 3
+		w := crawlerInstance{
+			crawler:  cr,
+			ready:    make(traversalHeap, 0),
+			cooldown: make(cooldownHeap, 0),
+			seen:     make(map[NodeID]time.Time),
+		}
+		heap.Init(&w.ready)
+
+		for _, b := range []byte{0x10, 0x20, 0x30} {
+			heap.Push(&w.ready, makeItem(b))
+		}
+
+		w.trimReadyToK()
+
+		assert.Equal(t, 3, w.ready.Len())
+	})
+
+	t.Run("trims to traversalWidth keeping the k closest nodes", func(t *testing.T) {
+		cr := makeCrawler(t)
+		cr.traversalWidth = 2
+		w := crawlerInstance{
+			crawler:  cr,
+			ready:    make(traversalHeap, 0),
+			cooldown: make(cooldownHeap, 0),
+			seen:     make(map[NodeID]time.Time),
+		}
+		heap.Init(&w.ready)
+
+		// dist[0]: 0x01 < 0x10 < 0x80 < 0xff — explicit and deterministic.
+		items := []*traversalItem{makeItem(0x01), makeItem(0x10), makeItem(0x80), makeItem(0xff)}
+		for _, it := range items {
+			heap.Push(&w.ready, it)
+		}
+		require.Equal(t, 4, w.ready.Len())
+
+		w.trimReadyToK()
+
+		require.Equal(t, 2, w.ready.Len())
+		first := heap.Pop(&w.ready).(*traversalItem)
+		second := heap.Pop(&w.ready).(*traversalItem)
+		assert.Equal(t, byte(0x01), first.dist[0], "closest node must be kept")
+		assert.Equal(t, byte(0x10), second.dist[0], "second closest must be kept")
+	})
+
+	t.Run("closer nodes displace farther nodes already in heap", func(t *testing.T) {
+		cr := makeCrawler(t)
+		cr.traversalWidth = 2
+		w := crawlerInstance{
+			crawler:  cr,
+			ready:    make(traversalHeap, 0),
+			cooldown: make(cooldownHeap, 0),
+			seen:     make(map[NodeID]time.Time),
+		}
+		heap.Init(&w.ready)
+
+		heap.Push(&w.ready, makeItem(0x80))
+		heap.Push(&w.ready, makeItem(0xff))
+		require.Equal(t, 2, w.ready.Len())
+
+		// Push two closer items and trim.
+		heap.Push(&w.ready, makeItem(0x01))
+		heap.Push(&w.ready, makeItem(0x02))
+		w.trimReadyToK()
+
+		require.Equal(t, 2, w.ready.Len())
+		first := heap.Pop(&w.ready).(*traversalItem)
+		second := heap.Pop(&w.ready).(*traversalItem)
+		assert.Equal(t, byte(0x01), first.dist[0], "closer node must survive")
+		assert.Equal(t, byte(0x02), second.dist[0], "closer node must survive")
+	})
+
+	t.Run("heap min-order is preserved after trim", func(t *testing.T) {
+		cr := makeCrawler(t)
+		cr.traversalWidth = 3
+		w := crawlerInstance{
+			crawler:  cr,
+			ready:    make(traversalHeap, 0),
+			cooldown: make(cooldownHeap, 0),
+			seen:     make(map[NodeID]time.Time),
+		}
+		heap.Init(&w.ready)
+
+		for _, b := range []byte{0x50, 0x10, 0xff, 0x01, 0x80} {
+			heap.Push(&w.ready, makeItem(b))
+		}
+
+		w.trimReadyToK()
+		require.Equal(t, 3, w.ready.Len())
+
+		prev := heap.Pop(&w.ready).(*traversalItem)
+		for w.ready.Len() > 0 {
+			next := heap.Pop(&w.ready).(*traversalItem)
+			assert.LessOrEqual(t, prev.dist[0], next.dist[0], "heap must pop in ascending distance order after trim")
+			prev = next
+		}
+	})
 }
 
 func TestCrawler_seedQueue(t *testing.T) {

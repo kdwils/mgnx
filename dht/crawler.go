@@ -607,6 +607,19 @@ func (c *discoveryWorker) discoverPeers(ctx context.Context, h [20]byte, initial
 	log.Debug("peer discovery complete", "iterations", c.maxIterations, "result", "max_iterations")
 }
 
+// trimReadyToK sorts the ready heap by XOR distance and discards all items
+// beyond traversalWidth, keeping only the k closest nodes. This enforces the
+// Kademlia k-shortlist invariant: closer nodes discovered in a response can
+// displace farther ones already queued, and the heap never grows without bound.
+func (c *crawlerInstance) trimReadyToK() {
+	if c.ready.Len() <= c.traversalWidth {
+		return
+	}
+	sort.Sort(&c.ready)
+	c.ready = c.ready[:c.traversalWidth]
+	heap.Init(&c.ready)
+}
+
 // trimToKClosest returns a new map containing only the k nodes closest to target.
 func (c *crawler) trimToKClosest(nodes map[NodeID]*Node, target NodeID) map[NodeID]*Node {
 	if len(nodes) <= c.traversalWidth {
@@ -804,4 +817,5 @@ func (c *crawlerInstance) processNodes(encoded string, target NodeID) {
 			dist:   target.XOR(n.ID),
 		})
 	}
+	c.trimReadyToK()
 }
