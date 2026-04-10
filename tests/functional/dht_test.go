@@ -392,7 +392,6 @@ func testDHTConfig(t *testing.T) config.DHT {
 		TransactionTimeout:  2 * time.Second,
 		TokenRotation:       5 * time.Minute,
 		BucketSize:          8,
-		GoodNodeWindow:      15 * time.Minute,
 		BadFailureThreshold: 2,
 		StaleThreshold:      15 * time.Minute,
 		NodeID:              generateTestNodeID(),

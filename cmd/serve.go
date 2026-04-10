@@ -43,15 +43,13 @@ var serveCmd = &cobra.Command{
 		ctx, cancel := context.WithCancel(logger.WithContext(cmd.Context(), l))
 
 		g, ctx := errgroup.WithContext(ctx)
-		if cfg.DHT.ExternalIPFile != "" || cfg.DHT.ForwardedPortFile != "" {
-			g.Go(func() error {
-				return gluetun.WatchFiles(ctx, cancel, cfg.DHT.ExternalIPFile, cfg.DHT.ForwardedPortFile)
-			})
-		}
+
+		var settledIP net.IP
+		var settledPort int
 
 		if cfg.DHT.ExternalIPFile != "" {
 			fileCtx, fileCancel := context.WithTimeout(ctx, cfg.DHT.FileWaitTimeout)
-			ip, err := gluetun.ReadIp(fileCtx, cfg.DHT.ExternalIPFile)
+			ip, err := gluetun.ReadIp(fileCtx, cfg.DHT.ExternalIPFile, cfg.DHT.FileSettleTime)
 			fileCancel()
 			if err != nil {
 				return err
@@ -62,17 +60,19 @@ var serveCmd = &cobra.Command{
 				return fmt.Errorf("failed to derive node ID from ip address: %w", err)
 			}
 
+			settledIP = ip
 			cfg.DHT.NodeID = nodeID.String()
 			l.Info("derived node ID from ip", "id", nodeID.String())
 		}
 
 		if cfg.DHT.ForwardedPortFile != "" {
 			fileCtx, fileCancel := context.WithTimeout(ctx, cfg.DHT.FileWaitTimeout)
-			port, err := gluetun.ReadForwardedPort(fileCtx, cfg.DHT.ForwardedPortFile)
+			port, err := gluetun.ReadForwardedPort(fileCtx, cfg.DHT.ForwardedPortFile, cfg.DHT.FileSettleTime)
 			fileCancel()
 			if err != nil {
 				return err
 			}
+			settledPort = port
 			cfg.DHT.Port = port
 			l.Info("using forwarded port from file", "port", port)
 		}
@@ -128,7 +128,7 @@ var serveCmd = &cobra.Command{
 		)
 
 		g.Go(func() error {
-			err := gluetun.WatchFiles(ctx, cancel, cfg.DHT.ForwardedPortFile, cfg.DHT.ExternalIPFile)
+			err := gluetun.WatchFiles(ctx, cancel, cfg.DHT.ForwardedPortFile, cfg.DHT.ExternalIPFile, settledPort, settledIP)
 			if err != nil {
 				logger.FromContext(ctx).Error("file watcher error", "error", err)
 			}
