@@ -18,85 +18,84 @@ import (
 // settleTime with no further file changes before returning. Pass settleTime=0
 // to return as soon as a valid IP is found.
 func ReadIp(ctx context.Context, path string, settleTime time.Duration) (net.IP, error) {
-	log := logger.FromContext(ctx)
-	for {
-		if err := waitForFile(ctx, path); err != nil {
-			return nil, fmt.Errorf("waiting for IP file: %w", err)
-		}
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("read external IP file: %w", err)
-		}
-
-		ip := net.ParseIP(strings.TrimSpace(string(data)))
-		if ip == nil {
-			log.Warn("invalid IP in file, retrying", "path", path)
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(1 * time.Second):
-				continue
-			}
-		}
-
-		if settleTime <= 0 {
-			return ip, nil
-		}
-
-		settled, err := waitForSettle(ctx, path, settleTime)
-		if err != nil {
-			return nil, err
-		}
-		if !settled {
-			log.Info("IP file changed during settle window, re-reading", "path", path)
-			continue
-		}
-
-		return ip, nil
-	}
+	return readSettled(ctx, path, "IP", settleTime, func(s string) (net.IP, bool) {
+		ip := net.ParseIP(s)
+		return ip, ip != nil
+	})
 }
 
 // ReadForwardedPort waits for a valid port number to appear in path, then
 // blocks for settleTime with no further file changes before returning. Pass
 // settleTime=0 to return as soon as a valid port is found.
 func ReadForwardedPort(ctx context.Context, path string, settleTime time.Duration) (int, error) {
+	return readSettled(ctx, path, "port", settleTime, func(s string) (int, bool) {
+		p, err := strconv.Atoi(s)
+		if err != nil || p <= 0 || p > 65535 {
+			return 0, false
+		}
+		return p, true
+	})
+}
+
+// readSettled is the shared implementation for ReadIp and ReadForwardedPort.
+// It waits for path to exist, registers an fsnotify watch before reading
+// (eliminating the TOCTOU window), parses the content with parseFn, and
+// — when settleTime > 0 — waits for the file to be stable before returning.
+func readSettled[T any](ctx context.Context, path, name string, settleTime time.Duration, parseFn func(string) (T, bool)) (T, error) {
 	log := logger.FromContext(ctx)
+	var zero T
+
 	for {
 		if err := waitForFile(ctx, path); err != nil {
-			return 0, fmt.Errorf("waiting for port file: %w", err)
+			return zero, fmt.Errorf("waiting for %s file: %w", name, err)
+		}
+
+		// Register the watch BEFORE reading so no write between read and w.Add
+		// can go undetected during the settle window.
+		w, err := fsnotify.NewWatcher()
+		if err != nil {
+			return zero, fmt.Errorf("create %s watcher: %w", name, err)
+		}
+
+		if err := w.Add(path); err != nil {
+			w.Close()
+			return zero, fmt.Errorf("watch %s file: %w", name, err)
 		}
 
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return 0, fmt.Errorf("read forwarded port file: %w", err)
+			w.Close()
+			return zero, fmt.Errorf("read %s file: %w", name, err)
 		}
 
-		p, err := strconv.Atoi(strings.TrimSpace(string(data)))
-		if err != nil || p <= 0 || p > 65535 {
-			log.Warn("invalid forwarded port in file, retrying", "path", path)
+		value, ok := parseFn(strings.TrimSpace(string(data)))
+		if !ok {
+			w.Close()
+			log.Warn("invalid content in file, retrying", "name", name, "path", path)
 			select {
 			case <-ctx.Done():
-				return 0, ctx.Err()
+				return zero, ctx.Err()
 			case <-time.After(1 * time.Second):
 				continue
 			}
 		}
 
 		if settleTime <= 0 {
-			return p, nil
+			w.Close()
+			return value, nil
 		}
 
-		settled, err := waitForSettle(ctx, path, settleTime)
+		settled, err := waitForSettle(ctx, w, path, settleTime)
+		w.Close()
 		if err != nil {
-			return 0, err
+			return zero, err
 		}
 		if !settled {
-			log.Info("port file changed during settle window, re-reading", "path", path)
+			log.Info("file changed during settle window, re-reading", "name", name, "path", path)
 			continue
 		}
 
-		return p, nil
+		return value, nil
 	}
 }
 
@@ -117,21 +116,12 @@ func waitForFile(ctx context.Context, path string) error {
 	}
 }
 
-// waitForSettle watches path for settleTime with no Write or Create events.
-// Returns true if the file was stable for the full settle period, false if
-// a change was detected (caller should re-read), or an error if ctx expires.
-func waitForSettle(ctx context.Context, path string, settleTime time.Duration) (bool, error) {
+// waitForSettle waits on an already-registered watcher for settleTime with no
+// Write or Create events. Returns true if the file was stable for the full
+// settle period, false if a change was detected (caller should re-read), or an
+// error if ctx expires or the watcher channels close unexpectedly.
+func waitForSettle(ctx context.Context, w *fsnotify.Watcher, path string, settleTime time.Duration) (bool, error) {
 	log := logger.FromContext(ctx)
-
-	w, err := fsnotify.NewWatcher()
-	if err != nil {
-		return false, fmt.Errorf("create settle watcher: %w", err)
-	}
-	defer w.Close()
-
-	if err := w.Add(path); err != nil {
-		return false, fmt.Errorf("watch file for settle: %w", err)
-	}
 
 	log.Info("waiting for file to settle", "path", path, "settle_time", settleTime)
 	timer := time.NewTimer(settleTime)
