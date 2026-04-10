@@ -393,6 +393,7 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 		cancel()
 
 		if err != nil {
+			c.server.table.MarkFailure(item.node.ID)
 			item.failures++
 			if item.failures >= maxNodeFailures {
 				delete(c.seen, item.node.ID)
@@ -413,6 +414,7 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 			}
 		}
 
+		c.server.table.MarkSuccess(item.node.ID)
 		item.failures = 0
 		next := time.Now().Add(computeInterval(resp))
 		c.seen[item.node.ID] = next
