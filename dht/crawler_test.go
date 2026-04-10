@@ -229,6 +229,29 @@ func TestCrawler_nextEligible(t *testing.T) {
 		require.NotNil(t, got)
 		assert.Equal(t, node.ID, got.node.ID)
 	})
+
+	t.Run("retains node in seen after pop so in-flight node acts as dedup guard", func(t *testing.T) {
+		var target NodeID
+		node := makeDiscoveredNode(0x01, 1001)
+		c := makeCrawler(t)
+		nextAllowed := time.Now().Add(-time.Second)
+		item := &traversalItem{node: node, target: target, dist: target.XOR(node.ID)}
+		w := crawlerInstance{
+			crawler:  c,
+			ready:    make(traversalHeap, 0),
+			cooldown: make(cooldownHeap, 0),
+			seen:     map[NodeID]time.Time{node.ID: nextAllowed},
+		}
+		heap.Init(&w.ready)
+		heap.Init(&w.cooldown)
+		heap.Push(&w.cooldown, &cooldownItem{item: item, nextAllowed: nextAllowed})
+
+		got := w.nextEligible(time.Now())
+		require.NotNil(t, got)
+		assert.Equal(t, node.ID, got.node.ID)
+		_, stillInSeen := w.seen[node.ID]
+		assert.True(t, stillInSeen, "node must remain in seen while in-flight so seedQueue/processNodes cannot re-insert it")
+	})
 }
 
 func TestCrawler_processSamples(t *testing.T) {
@@ -405,6 +428,28 @@ func TestCrawler_processNodes(t *testing.T) {
 		w.processNodes("bad", target)
 		assert.Equal(t, 0, w.ready.Len())
 	})
+
+	t.Run("does not re-insert node that is currently in-flight", func(t *testing.T) {
+		// Simulate the state after nextEligible pops a node: the node is absent
+		// from both heaps but its seen entry is retained (stale, already-expired
+		// time). If processNodes receives that same node in a response it must
+		// skip it, otherwise the node ends up in both ready and cooldown.
+		node := makeDiscoveredNode(0x10, 2000)
+		var target NodeID
+		w := crawlerInstance{
+			crawler:  makeCrawler(t),
+			ready:    make(traversalHeap, 0),
+			cooldown: make(cooldownHeap, 0),
+			seen:     map[NodeID]time.Time{node.ID: time.Now().Add(-time.Second)},
+		}
+		heap.Init(&w.ready)
+		heap.Init(&w.cooldown)
+
+		encoded := EncodeNodes([]*Node{node})
+		w.processNodes(encoded, target)
+
+		assert.Equal(t, 0, w.ready.Len(), "in-flight node must not be pushed to ready heap")
+	})
 }
 
 func TestCrawler_seedQueue(t *testing.T) {
@@ -430,6 +475,29 @@ func TestCrawler_seedQueue(t *testing.T) {
 		item := heap.Pop(&w.ready).(*traversalItem)
 		assert.Equal(t, target, item.target)
 		assert.Equal(t, target.XOR(item.node.ID), item.dist)
+	})
+}
+
+func TestCrawler_seedQueue_inflight(t *testing.T) {
+	t.Run("does not re-insert node that is currently in-flight", func(t *testing.T) {
+		// Same scenario: node was popped by nextEligible, seen entry is stale but
+		// present. A concurrent seedQueue call that happens to pull the same node
+		// from the routing table must not push it to ready.
+		node := makeDiscoveredNode(0x10, 2000)
+		var target NodeID
+		w := crawlerInstance{
+			crawler:  makeCrawler(t),
+			ready:    make(traversalHeap, 0),
+			cooldown: make(cooldownHeap, 0),
+			seen:     map[NodeID]time.Time{node.ID: time.Now().Add(-time.Second)},
+		}
+		w.server.table.Insert(node)
+		heap.Init(&w.ready)
+		heap.Init(&w.cooldown)
+
+		w.seedQueue(target)
+
+		assert.Equal(t, 0, w.ready.Len(), "in-flight node must not be pushed to ready heap by seedQueue")
 	})
 }
 

@@ -442,9 +442,11 @@ func (c *crawlerInstance) seedQueue(target NodeID) {
 }
 
 // nextEligible promotes cooled-down nodes then pops the closest ready node.
-// It deletes the node from seen at consumption time — this is the only place
-// the key is removed, closing the window where seedQueue/processNodes could
-// double-insert a promoted-but-not-yet-queried node.
+// The seen entry is intentionally retained after the pop: the node is now
+// in-flight and seen acts as the dedup guard that prevents seedQueue and
+// processNodes from re-inserting it while the query is outstanding. The
+// caller is responsible for updating seen with the new cooldown time once
+// the query completes.
 func (c *crawlerInstance) nextEligible(now time.Time) *traversalItem {
 	c.promoteReady(now)
 
@@ -452,9 +454,7 @@ func (c *crawlerInstance) nextEligible(now time.Time) *traversalItem {
 		return nil
 	}
 
-	item := heap.Pop(&c.ready).(*traversalItem)
-	delete(c.seen, item.node.ID)
-	return item
+	return heap.Pop(&c.ready).(*traversalItem)
 }
 
 // processSamples decodes the raw 20-byte infohash samples from a BEP-51
