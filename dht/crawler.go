@@ -138,7 +138,9 @@ func (c *crawler) NodeCount() int {
 }
 
 type crawlerInstance struct {
-	id int
+	id   int
+	seen map[NodeID]time.Time
+	heap traversalHeap
 	*crawler
 }
 
@@ -173,6 +175,8 @@ func (c *crawler) Start(ctx context.Context) error {
 			instance := crawlerInstance{
 				id:      i,
 				crawler: c,
+				heap:    make(traversalHeap, 0),
+				seen:    make(map[NodeID]time.Time),
 			}
 			instance.crawl(crawlCtx, i)
 		})
@@ -304,12 +308,11 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 	var target NodeID
 	rand.Read(target[:])
 
-	pq := &traversalHeap{}
-	heap.Init(pq)
+	heap.Init(&c.heap)
 
 	seen := make(map[NodeID]time.Time) // node ID → earliest time we may re-query
 
-	c.seedQueue(pq, target)
+	c.seedQueue(target)
 
 	queried := 0
 	for {
@@ -317,7 +320,7 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 			return
 		}
 
-		c.rec.SetCrawlerTraversalQueueSize(id, float64(pq.Len()))
+		c.rec.SetCrawlerTraversalQueueSize(id, float64(c.heap.Len()))
 		c.rec.SetCrawlerCooldownsActive(id, float64(len(seen)))
 
 		if queried > 0 && queried%retargetEvery == 0 {
@@ -330,7 +333,7 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 					delete(seen, id)
 				}
 			}
-			c.seedQueue(pq, target)
+			c.seedQueue(target)
 			if dropped := c.droppedDiscoveries.Swap(0); dropped > 0 {
 				log.Warn("discovery queue backpressure",
 					"dropped", dropped,
@@ -340,22 +343,22 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 			}
 			log.Debug("retargeting",
 				"queried", queried,
-				"queue_size", pq.Len(),
+				"heap_size", c.heap.Len(),
 				"routing_table_nodes", c.server.table.NodeCount(),
 				"seen_cooldowns", len(seen),
 				"target", hex.EncodeToString(target[:]),
 			)
 		}
 
-		item := c.nextEligible(pq, seen)
+		item := c.nextEligible()
 		if item == nil {
 			log.Debug("queue exhausted, reseeding",
 				"routing_table_nodes", c.server.table.NodeCount(),
 				"seen_cooldowns", len(seen),
 			)
 			rand.Read(target[:])
-			c.seedQueue(pq, target)
-			if pq.Len() == 0 {
+			c.seedQueue(target)
+			if c.heap.Len() == 0 {
 				select {
 				case <-time.After(5 * time.Second):
 				case <-ctx.Done():
@@ -371,7 +374,7 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 		if c.rateLimiter.throttle(item.node.ID) {
 			log.Debug("rate limited", "node", item.node.ID)
 			seen[item.node.ID] = time.Now().Add(c.rateLimiter.minSpacing)
-			heap.Push(pq, item)
+			heap.Push(&c.heap, item)
 			continue
 		}
 
@@ -395,7 +398,7 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 			}
 			// Both protocols return nodes for continuation
 			if len(resp.R.Nodes) > 0 {
-				c.processNodes(resp.R.Nodes, item.target, pq)
+				c.processNodes(resp.R.Nodes, item.target)
 			}
 		}
 
@@ -404,15 +407,15 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 			"node", item.node.Addr.String(),
 			"err", err,
 			"interval", interval,
-			"queue_size", pq.Len(),
+			"heap_size", c.heap.Len(),
 		)
 	}
 }
 
 // seedQueue pushes the k closest routing-table nodes to target onto pq.
-func (c *crawler) seedQueue(pq *traversalHeap, target NodeID) {
+func (c *crawlerInstance) seedQueue(target NodeID) {
 	for _, n := range c.server.table.Closest(target, c.traversalWidth) {
-		heap.Push(pq, &traversalItem{
+		heap.Push(&c.heap, &traversalItem{
 			node:   n,
 			target: target,
 			dist:   target.XOR(n.ID),
@@ -425,23 +428,28 @@ func (c *crawler) seedQueue(pq *traversalHeap, target NodeID) {
 // Per BEP-51, nodes that return an interval must be respected but should
 // remain in the traversal queue until their cooldown expires.
 // Returns nil if the queue is empty or all items are in cooldown.
-func (c *crawlerInstance) nextEligible(pq *traversalHeap, seen map[NodeID]time.Time) *traversalItem {
+func (c *crawlerInstance) nextEligible() *traversalItem {
 	var deferred []*traversalItem
 	var result *traversalItem
 	now := time.Now()
-	for pq.Len() > 0 {
-		item := heap.Pop(pq).(*traversalItem)
-		if t, ok := seen[item.node.ID]; !ok || now.After(t) {
+
+	for c.heap.Len() > 0 {
+		item := heap.Pop(&c.heap).(*traversalItem)
+		if t, ok := c.seen[item.node.ID]; !ok || now.After(t) {
 			if ok {
-				delete(seen, item.node.ID)
+				delete(c.seen, item.node.ID)
 			}
 			result = item
 			break
 		}
 		deferred = append(deferred, item)
 	}
+
 	for _, item := range deferred {
-		heap.Push(pq, item)
+		if item == nil {
+			continue
+		}
+		heap.Push(&c.heap, item)
 	}
 	return result
 }
@@ -773,7 +781,7 @@ func (c *crawler) extractNodes(resp *Msg) map[NodeID]*Node {
 // processNodes decodes compact node records from a BEP-51 sample_infohashes
 // response ("nodes" field, BEP-51 §4), inserts them into the routing table,
 // and enqueues them onto the crawlerWorker's traversal priority queue.
-func (c *crawler) processNodes(encoded string, target NodeID, pq *traversalHeap) {
+func (c *crawlerInstance) processNodes(encoded string, target NodeID) {
 	nodes, err := DecodeNodes(encoded)
 	if err != nil {
 		return
@@ -783,7 +791,7 @@ func (c *crawler) processNodes(encoded string, target NodeID, pq *traversalHeap)
 			continue
 		}
 		c.server.table.Insert(n)
-		heap.Push(pq, &traversalItem{
+		heap.Push(&c.heap, &traversalItem{
 			node:   n,
 			target: target,
 			dist:   target.XOR(n.ID),
