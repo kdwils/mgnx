@@ -65,7 +65,13 @@ func readSettled[T any](ctx context.Context, path, name string, settleTime time.
 		data, err := os.ReadFile(path)
 		if err != nil {
 			w.Close()
-			return zero, fmt.Errorf("read %s file: %w", name, err)
+			log.Warn("failed to read file, retrying", "name", name, "path", path, "err", err)
+			select {
+			case <-ctx.Done():
+				return zero, ctx.Err()
+			case <-time.After(1 * time.Second):
+				continue
+			}
 		}
 
 		value, ok := parseFn(strings.TrimSpace(string(data)))
@@ -183,7 +189,11 @@ func WatchFiles(ctx context.Context, cancel context.CancelFunc, portFile, ipFile
 
 	// Check for changes that slipped through between settle and watch registration.
 	if ipFile != "" && settledIP != nil {
-		if data, err := os.ReadFile(ipFile); err == nil {
+		data, err := os.ReadFile(ipFile)
+		if err != nil {
+			log.Warn("could not re-read IP file for drift check", "file", ipFile, "err", err)
+		}
+		if err == nil {
 			current := net.ParseIP(strings.TrimSpace(string(data)))
 			if current == nil || !current.Equal(settledIP) {
 				log.Info("IP changed since settle, shutting down for restart", "file", ipFile, "settled", settledIP, "current", current)
@@ -193,7 +203,11 @@ func WatchFiles(ctx context.Context, cancel context.CancelFunc, portFile, ipFile
 		}
 	}
 	if portFile != "" && settledPort != 0 {
-		if data, err := os.ReadFile(portFile); err == nil {
+		data, err := os.ReadFile(portFile)
+		if err != nil {
+			log.Warn("could not re-read port file for drift check", "file", portFile, "err", err)
+		}
+		if err == nil {
 			p, err := strconv.Atoi(strings.TrimSpace(string(data)))
 			if err != nil || p != settledPort {
 				log.Info("port changed since settle, shutting down for restart", "file", portFile, "settled", settledPort, "current", p)

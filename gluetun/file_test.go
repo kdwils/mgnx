@@ -198,7 +198,9 @@ func TestWatchFiles(t *testing.T) {
 			gluetun.WatchFiles(ctx, cancel, "", path, 0, net.ParseIP("1.2.3.4"))
 		}()
 
-		time.Sleep(50 * time.Millisecond)
+		// Use a longer sleep to give the goroutine time to register the fsnotify
+		// watch before we write; 50 ms was too short on loaded CI machines.
+		time.Sleep(250 * time.Millisecond)
 		os.WriteFile(path, []byte("5.6.7.8"), 0600)
 
 		select {
