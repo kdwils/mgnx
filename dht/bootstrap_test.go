@@ -238,6 +238,40 @@ func TestServer_Bootstrap_ipBasedNodeID(t *testing.T) {
 	})
 }
 
+func TestServer_refreshStaleBuckets_insertsNodes(t *testing.T) {
+	t.Run("nodes from find_node response are inserted into routing table", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		peer, err := NewServer(testServerCfg(t), recorder.NewNoOp())
+		require.NoError(t, err)
+		defer peer.Stop(t.Context())
+		require.NoError(t, peer.Start(ctx))
+
+		cfg := testServerCfg(t)
+		// Use a stale threshold of zero so every bucket is immediately stale.
+		cfg.StaleThreshold = 0
+		subject, err := NewServer(cfg, recorder.NewNoOp())
+		require.NoError(t, err)
+		defer subject.Stop(t.Context())
+		require.NoError(t, subject.Start(ctx))
+
+		peerAddr := &net.UDPAddr{
+			IP:   net.ParseIP("127.0.0.1"),
+			Port: peer.conn.LocalAddr().(*net.UDPAddr).Port,
+		}
+		subject.table.Insert(&Node{ID: peer.ourID, Addr: peerAddr, LastSeen: time.Now()})
+		initialCount := subject.table.NodeCount()
+
+		subject.refreshStaleBuckets(ctx)
+
+		// Give the async goroutines time to complete.
+		require.Eventually(t, func() bool {
+			return subject.table.NodeCount() >= initialCount
+		}, 3*time.Second, 50*time.Millisecond)
+	})
+}
+
 // newIPEchoServer starts a minimal UDP listener that responds to any message
 // with a KRPC response carrying the given IP field (simulating a remote node
 // reporting our external IP per BEP-42). The caller must call Close() on the

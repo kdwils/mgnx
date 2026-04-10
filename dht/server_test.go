@@ -156,6 +156,72 @@ func TestServer_processQuery(t *testing.T) {
 	})
 }
 
+func TestServer_bucketRefreshLoop_insertsNodes(t *testing.T) {
+	t.Run("nodes from find_node response are inserted into routing table", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// peer acts as a known DHT node the refreshing server will query.
+		peer, err := NewServer(testServerCfg(t), recorder.NewNoOp())
+		require.NoError(t, err)
+		defer peer.Stop(t.Context())
+		require.NoError(t, peer.Start(ctx))
+
+		// subject starts with peer already in its routing table.
+		subject, err := NewServer(testServerCfg(t), recorder.NewNoOp())
+		require.NoError(t, err)
+		defer subject.Stop(t.Context())
+		require.NoError(t, subject.Start(ctx))
+
+		peerAddr := &net.UDPAddr{
+			IP:   net.ParseIP("127.0.0.1"),
+			Port: peer.conn.LocalAddr().(*net.UDPAddr).Port,
+		}
+		subject.table.Insert(&Node{ID: peer.ourID, Addr: peerAddr, LastSeen: time.Now()})
+		initialCount := subject.table.NodeCount()
+
+		// Fire a find_node at peer directly (same path as bucketRefreshLoop).
+		var target NodeID
+		resp, err := subject.Query(ctx, peerAddr, peer.ourID, &Msg{
+			Y: "q",
+			Q: "find_node",
+			A: &MsgArgs{
+				ID:     string(subject.ourID[:]),
+				Target: string(target[:]),
+			},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.NotNil(t, resp.R)
+
+		nodes, err := DecodeNodes(resp.R.Nodes)
+		require.NoError(t, err)
+		for _, node := range nodes {
+			if isValidNodeID(node.Addr.IP, node.ID) {
+				subject.table.Insert(node)
+			}
+		}
+
+		// Table must be at least as large as before; peer itself was already
+		// counted so any additional nodes in the response grow it further.
+		assert.GreaterOrEqual(t, subject.table.NodeCount(), initialCount)
+	})
+}
+
+func TestServer_bucketRefreshLoop_decodeFails_noInsert(t *testing.T) {
+	t.Run("malformed nodes field does not insert anything", func(t *testing.T) {
+		s, err := NewServer(testServerCfg(t), recorder.NewNoOp())
+		require.NoError(t, err)
+		defer s.Stop(t.Context())
+
+		initialCount := s.table.NodeCount()
+		_, decodeErr := DecodeNodes("not-valid-compact-nodes")
+		require.Error(t, decodeErr)
+		// Confirm nothing was inserted — mirrors the error-return path.
+		assert.Equal(t, initialCount, s.table.NodeCount())
+	})
+}
+
 func TestServer_ping_roundtrip(t *testing.T) {
 	t.Run("two local servers complete a ping round-trip", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

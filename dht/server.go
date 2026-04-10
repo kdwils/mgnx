@@ -523,7 +523,7 @@ func (s *Server) bucketRefreshLoop(ctx context.Context) {
 				target := randomIDInBucket(b)
 				for _, n := range s.table.Closest(target, s.bucketSize) {
 					go func() {
-						_, _ = s.Query(ctx, n.Addr, n.ID, &Msg{
+						resp, err := s.Query(ctx, n.Addr, n.ID, &Msg{
 							Y: "q",
 							Q: "find_node",
 							A: &MsgArgs{
@@ -531,6 +531,32 @@ func (s *Server) bucketRefreshLoop(ctx context.Context) {
 								Target: string(target[:]),
 							},
 						})
+						if err != nil || resp == nil || resp.R == nil {
+							return
+						}
+						nodes, err := DecodeNodes(resp.R.Nodes)
+						if err != nil {
+							logger.FromContext(ctx).Debug("bucket refresh failed to decode nodes",
+								"service", "dht",
+								"from", n.Addr.String(),
+								"error", err,
+							)
+							return
+						}
+						inserted := 0
+						for _, node := range nodes {
+							if isValidNodeID(node.Addr.IP, node.ID) {
+								s.table.Insert(node)
+								inserted++
+							}
+						}
+						logger.FromContext(ctx).Debug("bucket refresh nodes inserted",
+							"service", "dht",
+							"from", n.Addr.String(),
+							"returned", len(nodes),
+							"inserted", inserted,
+							"table_size", s.table.NodeCount(),
+						)
 					}()
 				}
 			}

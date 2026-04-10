@@ -254,7 +254,7 @@ func (s *Server) refreshStaleBuckets(ctx context.Context) {
 			go func() {
 				qCtx, cancel := context.WithTimeout(ctx, s.transactionTimeout)
 				defer cancel()
-				_, _ = s.Query(qCtx, n.Addr, n.ID, &Msg{
+				resp, err := s.Query(qCtx, n.Addr, n.ID, &Msg{
 					Y: "q",
 					Q: "find_node",
 					A: &MsgArgs{
@@ -262,6 +262,32 @@ func (s *Server) refreshStaleBuckets(ctx context.Context) {
 						Target: string(target[:]),
 					},
 				})
+				if err != nil || resp == nil || resp.R == nil {
+					return
+				}
+				nodes, err := DecodeNodes(resp.R.Nodes)
+				if err != nil {
+					logger.FromContext(ctx).Debug("stale bucket refresh failed to decode nodes",
+						"service", "dht",
+						"from", n.Addr.String(),
+						"error", err,
+					)
+					return
+				}
+				inserted := 0
+				for _, node := range nodes {
+					if isValidNodeID(node.Addr.IP, node.ID) {
+						s.table.Insert(node)
+						inserted++
+					}
+				}
+				logger.FromContext(ctx).Debug("stale bucket refresh nodes inserted",
+					"service", "dht",
+					"from", n.Addr.String(),
+					"returned", len(nodes),
+					"inserted", inserted,
+					"table_size", s.table.NodeCount(),
+				)
 			}()
 		}
 	}
