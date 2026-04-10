@@ -93,16 +93,11 @@ func (w *Worker) scrapeOnce(ctx context.Context, trackerID int64) {
 	batchSize := w.cfg.BatchSize
 
 	start := time.Now()
-	if w.rec != nil {
-		w.rec.IncScrapeCyclesTotal()
-	}
-
+	w.rec.IncScrapeCyclesTotal()
 	rows, err := w.queries.GetTorrentsToScrape(ctx, int32(batchSize))
 	if err != nil {
 		log.ErrorContext(ctx, "get torrents to scrape failed", "err", err)
-		if w.rec != nil {
-			w.rec.IncScrapeErrorsTotal()
-		}
+		w.rec.IncScrapeErrorsTotal()
 		return
 	}
 	if len(rows) == 0 {
@@ -121,25 +116,20 @@ func (w *Worker) scrapeOnce(ctx context.Context, trackerID int64) {
 	results, err := w.scraper.Scrape(ctx, infohashes)
 	if err != nil {
 		log.ErrorContext(ctx, "tracker scrape failed", "err", err)
-		if w.rec != nil {
-			w.rec.IncScrapeErrorsTotal()
-		}
+		w.rec.IncScrapeErrorsTotal()
 		return
 	}
 
 	for _, r := range results {
 		if err := w.applyResult(ctx, r, trackerID, meta[r.Infohash]); err != nil {
 			log.ErrorContext(ctx, "apply scrape result failed", "infohash", r.Infohash, "err", err)
-			if w.rec != nil {
-				w.rec.IncScrapeErrorsTotal()
-			}
+			w.rec.IncScrapeErrorsTotal()
+
 		}
 	}
 
-	if w.rec != nil {
-		w.rec.ObserveScrapeDurationSeconds(time.Since(start).Seconds())
-		w.rec.IncScrapeTorrentsUpdatedTotal()
-	}
+	w.rec.ObserveScrapeDurationSeconds(time.Since(start).Seconds())
+	w.rec.IncScrapeTorrentsUpdatedTotal()
 }
 
 // applyResult writes a single scrape result to the DB.
@@ -262,7 +252,7 @@ func (w *Worker) detectDead(ctx context.Context) {
 		deadCount++
 		log.DebugContext(ctx, "torrent marked dead", "infohash", infohash)
 	}
-	if w.rec != nil && deadCount > 0 {
+	if deadCount > 0 {
 		w.rec.IncScrapeDeadDetectedTotal()
 	}
 }
@@ -293,7 +283,5 @@ func (w *Worker) prune(ctx context.Context) {
 	if err := w.queries.PruneScrapeHistory(ctx, cutoff); err != nil {
 		log.ErrorContext(ctx, "prune scrape history failed", "err", err)
 	}
-	if w.rec != nil {
-		w.rec.IncScrapeHistoryPrunedTotal()
-	}
+	w.rec.IncScrapeHistoryPrunedTotal()
 }

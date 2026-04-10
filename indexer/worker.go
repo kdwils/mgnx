@@ -73,9 +73,7 @@ func New(crawler Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg con
 
 func (w *Worker) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	if w.rec != nil {
-		w.rec.SetIndexerWorkersActive(float64(w.workers))
-	}
+	w.rec.SetIndexerWorkersActive(float64(w.workers))
 	ch := w.crawler.Infohashes()
 	for range w.workers {
 		wg.Go(func() {
@@ -103,16 +101,12 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 
 	_, err := w.queries.GetTorrentByInfohash(ctx, infohashHex)
 	if err == nil {
-		if w.rec != nil {
-			w.rec.IncIndexerPeersProcessedTotal("duplicate")
-		}
+		w.rec.IncIndexerPeersProcessedTotal("duplicate")
 		return
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		log.ErrorContext(ctx, "db lookup failed", "infohash", infohashHex, "err", err)
-		if w.rec != nil {
-			w.rec.IncIndexerPeersProcessedTotal("error")
-		}
+		w.rec.IncIndexerPeersProcessedTotal("error")
 		return
 	}
 
@@ -162,16 +156,12 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 	info = <-resultCh
 	if info == nil {
 		log.DebugContext(ctx, "no metadata fetched", "infohash", infohashHex)
-		if w.rec != nil {
-			w.rec.IncIndexerMetadataFailedTotal("no_peers")
-		}
+		w.rec.IncIndexerMetadataFailedTotal("no_peers")
 		return
 	}
 
-	if w.rec != nil {
-		w.rec.ObserveIndexerFetchDurationSeconds(time.Since(start).Seconds())
-		w.rec.IncIndexerMetadataFetchedTotal()
-	}
+	w.rec.ObserveIndexerFetchDurationSeconds(time.Since(start).Seconds())
+	w.rec.IncIndexerMetadataFetchedTotal()
 
 	log.DebugContext(ctx, "metadata fetched", "infohash", infohashHex, "name", info.Name, "files", len(info.Files))
 
@@ -191,11 +181,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 	if tag.RowsAffected() == 0 {
 		return
 	}
-
-	if w.rec != nil {
-		w.rec.IncIndexerDBUpsertsTotal()
-	}
-
+	w.rec.IncIndexerDBUpsertsTotal()
 	classifyFiles := make([]classify.File, len(info.Files))
 	infohashes := make([]string, len(info.Files))
 	paths := make([]string, len(info.Files))
