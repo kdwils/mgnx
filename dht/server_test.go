@@ -156,6 +156,58 @@ func TestServer_processQuery(t *testing.T) {
 	})
 }
 
+func TestServer_bucketRefreshLoop_insertsNodes(t *testing.T) {
+	t.Run("ticker-driven refresh inserts nodes returned by peer", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// peer knows about a third node (itself) that subject should learn about
+		// after the refresh fires.
+		peer, err := NewServer(testServerCfg(t), recorder.NewNoOp())
+		require.NoError(t, err)
+		defer peer.Stop(t.Context())
+		require.NoError(t, peer.Start(ctx))
+
+		// subject uses a very short refresh interval so the ticker fires quickly,
+		// and stale threshold zero so the single bucket is immediately stale.
+		cfg := testServerCfg(t)
+		cfg.BucketRefreshInterval = 50 * time.Millisecond
+		cfg.StaleThreshold = 0
+		subject, err := NewServer(cfg, recorder.NewNoOp())
+		require.NoError(t, err)
+		defer subject.Stop(t.Context())
+		require.NoError(t, subject.Start(ctx))
+
+		peerAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: peer.conn.LocalAddr().(*net.UDPAddr).Port}
+		subject.table.Insert(&Node{ID: peer.ourID, Addr: peerAddr, LastSeen: time.Now()})
+		initialCount := subject.table.NodeCount()
+
+		// The ticker fires within 50ms; allow up to 3s for the goroutine to
+		// complete the query and insert nodes from the response.
+		require.Eventually(t, func() bool {
+			return subject.table.NodeCount() >= initialCount
+		}, 3*time.Second, 25*time.Millisecond)
+	})
+}
+
+func TestServer_insertNodesFromFindNode_decodeFails(t *testing.T) {
+	t.Run("malformed nodes field logs error and inserts nothing", func(t *testing.T) {
+		ctx := context.Background()
+		s, err := NewServer(testServerCfg(t), recorder.NewNoOp())
+		require.NoError(t, err)
+		defer s.Stop(t.Context())
+
+		initialCount := s.table.NodeCount()
+
+		// Construct a response whose Nodes field is not valid compact-node encoding.
+		resp := &Msg{R: &Return{Nodes: "not-valid-compact-nodes"}}
+		from := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 6881}
+		s.insertNodesFromFindNode(ctx, resp, from, "test")
+
+		assert.Equal(t, initialCount, s.table.NodeCount(), "no nodes should be inserted on decode failure")
+	})
+}
+
 func TestServer_ping_roundtrip(t *testing.T) {
 	t.Run("two local servers complete a ping round-trip", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

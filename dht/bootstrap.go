@@ -254,7 +254,7 @@ func (s *Server) refreshStaleBuckets(ctx context.Context) {
 			go func() {
 				qCtx, cancel := context.WithTimeout(ctx, s.transactionTimeout)
 				defer cancel()
-				_, _ = s.Query(qCtx, n.Addr, n.ID, &Msg{
+				resp, err := s.Query(qCtx, n.Addr, n.ID, &Msg{
 					Y: "q",
 					Q: "find_node",
 					A: &MsgArgs{
@@ -262,6 +262,10 @@ func (s *Server) refreshStaleBuckets(ctx context.Context) {
 						Target: string(target[:]),
 					},
 				})
+				if err != nil || resp == nil || resp.R == nil {
+					return
+				}
+				s.insertNodesFromFindNode(ctx, resp, n.Addr, "stale bucket refresh")
 			}()
 		}
 	}

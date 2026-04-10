@@ -309,6 +309,104 @@ func TestDHTBEPProtocol(t *testing.T) {
 	})
 }
 
+// TestDHTBucketRefresh_insertsNodesFromResponse verifies end-to-end that nodes
+// returned in a find_node response are inserted into the querying server's
+// routing table. This is the behaviour fixed in bucketRefreshLoop and
+// refreshStaleBuckets: previously the response body was discarded.
+func TestDHTBucketRefresh_insertsNodesFromResponse(t *testing.T) {
+	t.Run("find_node response nodes are inserted into routing table", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// B knows about C; when A queries B the response will carry C.
+		serverB, err := dht.NewServer(testDHTConfig(t), recorder.NewNoOp())
+		require.NoError(t, err)
+		require.NoError(t, serverB.Start(ctx))
+		t.Cleanup(func() { serverB.Stop(ctx) })
+
+		serverC, err := dht.NewServer(testDHTConfig(t), recorder.NewNoOp())
+		require.NoError(t, err)
+		require.NoError(t, serverC.Start(ctx))
+		t.Cleanup(func() { serverC.Stop(ctx) })
+
+		// Pre-populate B's routing table with C.
+		cAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: serverC.Addr().Port}
+		serverB.InsertNode(serverC.OurID(), cAddr)
+
+		serverA, err := dht.NewServer(testDHTConfig(t), recorder.NewNoOp())
+		require.NoError(t, err)
+		require.NoError(t, serverA.Start(ctx))
+		t.Cleanup(func() { serverA.Stop(ctx) })
+
+		bAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: serverB.Addr().Port}
+
+		var target dht.NodeID
+		aID := serverA.OurID()
+		resp, err := serverA.Query(ctx, bAddr, serverB.OurID(), &dht.Msg{
+			Y: "q",
+			Q: "find_node",
+			A: &dht.MsgArgs{
+				ID:     string(aID[:]),
+				Target: string(target[:]),
+			},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.NotNil(t, resp.R)
+		require.NotEmpty(t, resp.R.Nodes, "B should have returned C in its response")
+
+		nodes, err := dht.DecodeNodes(resp.R.Nodes)
+		require.NoError(t, err)
+		for _, node := range nodes {
+			serverA.InsertNode(node.ID, node.Addr)
+		}
+
+		// A should now know about C (learned via B's find_node response).
+		closest := serverA.Closest(serverC.OurID(), 1)
+		require.NotEmpty(t, closest)
+		assert.Equal(t, serverC.OurID(), closest[0].ID)
+	})
+}
+
+func TestDHTRefreshStaleBuckets_insertsNodesFromResponse(t *testing.T) {
+	t.Run("stale bucket refresh grows routing table via find_node responses", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// B knows about C.
+		serverB, err := dht.NewServer(testDHTConfig(t), recorder.NewNoOp())
+		require.NoError(t, err)
+		require.NoError(t, serverB.Start(ctx))
+		t.Cleanup(func() { serverB.Stop(ctx) })
+
+		serverC, err := dht.NewServer(testDHTConfig(t), recorder.NewNoOp())
+		require.NoError(t, err)
+		require.NoError(t, serverC.Start(ctx))
+		t.Cleanup(func() { serverC.Stop(ctx) })
+
+		cAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: serverC.Addr().Port}
+		serverB.InsertNode(serverC.OurID(), cAddr)
+
+		// A starts with only B in its table; all buckets are stale (threshold=0).
+		cfg := testDHTConfig(t)
+		cfg.StaleThreshold = 0
+		serverA, err := dht.NewServer(cfg, recorder.NewNoOp())
+		require.NoError(t, err)
+		require.NoError(t, serverA.Start(ctx))
+		t.Cleanup(func() { serverA.Stop(ctx) })
+
+		bAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: serverB.Addr().Port}
+		serverA.InsertNode(serverB.OurID(), bAddr)
+		initialCount := serverA.NodeCount()
+
+		serverA.RefreshStaleBuckets(ctx)
+
+		require.Eventually(t, func() bool {
+			return serverA.NodeCount() > initialCount
+		}, 3*time.Second, 50*time.Millisecond, "routing table should grow after stale bucket refresh")
+	})
+}
+
 type mockNode struct {
 	id dht.NodeID
 }

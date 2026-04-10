@@ -45,10 +45,11 @@ type Server struct {
 	handlers            chan inMsg
 	bufPool             sync.Pool
 	Resolver            Resolver
-	workers             int
-	transactionTimeout  time.Duration
-	bucketSize          int
-	maxNodesPerResponse int
+	workers               int
+	transactionTimeout    time.Duration
+	bucketSize            int
+	maxNodesPerResponse   int
+	bucketRefreshInterval time.Duration
 }
 
 // NewServer binds the UDP socket and initialises all subsystems.
@@ -90,9 +91,10 @@ func NewServer(cfg config.DHT, rec *recorder.Recorder) (*Server, error) {
 		workers:             cfg.Workers,
 		nodeID:              cfg.NodeID,
 		handlers:            make(chan inMsg, 512),
-		transactionTimeout:  cfg.TransactionTimeout,
-		maxNodesPerResponse: cfg.MaxNodesPerResponse,
-		bucketSize:          cfg.BucketSize,
+		transactionTimeout:    cfg.TransactionTimeout,
+		maxNodesPerResponse:   cfg.MaxNodesPerResponse,
+		bucketSize:            cfg.BucketSize,
+		bucketRefreshInterval: cfg.BucketRefreshInterval,
 		bufPool: sync.Pool{
 			New: func() any { return make([]byte, 2048) },
 		},
@@ -155,6 +157,23 @@ func (s *Server) Infohashes() <-chan DiscoveredPeers {
 func (s *Server) Addr() *net.UDPAddr {
 	return s.conn.LocalAddr().(*net.UDPAddr)
 }
+
+// OurID returns the server's own node ID.
+func (s *Server) OurID() NodeID { return s.ourID }
+
+// InsertNode adds a node to the routing table. Intended for testing and bootstrap seeding.
+func (s *Server) InsertNode(id NodeID, addr *net.UDPAddr) {
+	s.table.Insert(&Node{ID: id, Addr: addr, LastSeen: time.Now()})
+}
+
+// Closest returns the n nodes closest to target in the routing table.
+func (s *Server) Closest(target NodeID, n int) []*Node { return s.table.Closest(target, n) }
+
+// NodeCount returns the total number of nodes in the routing table.
+func (s *Server) NodeCount() int { return s.table.NodeCount() }
+
+// RefreshStaleBuckets triggers an immediate stale-bucket refresh. Intended for testing.
+func (s *Server) RefreshStaleBuckets(ctx context.Context) { s.refreshStaleBuckets(ctx) }
 
 // SetNodeID updates the server's node ID. Called once during bootstrap when the
 // BEP-42 compliant ID is derived from the external IP. Must only be called
@@ -511,10 +530,49 @@ func (s *Server) writeLoop(ctx context.Context) {
 	}
 }
 
-// bucketRefreshLoop ticks every minute, finds stale buckets, and fires
-// find_node queries to refresh them.
+// insertNodesFromFindNode decodes the compact node list from a find_node
+// response and inserts BEP-42-valid nodes into the routing table. It is the
+// shared post-processing step for both bucketRefreshLoop and refreshStaleBuckets.
+func (s *Server) insertNodesFromFindNode(ctx context.Context, resp *Msg, from *net.UDPAddr, logKey string) {
+	nodes, err := DecodeNodes(resp.R.Nodes)
+	if err != nil {
+		logger.FromContext(ctx).Debug(logKey+" failed to decode nodes",
+			"service", "dht",
+			"from", from.String(),
+			"error", err,
+		)
+		return
+	}
+	inserted := 0
+	for _, node := range nodes {
+		if isValidNodeID(node.Addr.IP, node.ID) {
+			s.table.Insert(node)
+			inserted++
+		}
+	}
+	logger.FromContext(ctx).Debug(logKey+" nodes inserted",
+		"service", "dht",
+		"from", from.String(),
+		"returned", len(nodes),
+		"inserted", inserted,
+		"table_size", s.table.NodeCount(),
+	)
+}
+
+// bucketRefreshInterval returns the configured refresh interval, defaulting to
+// one minute when the config value is zero.
+func (s *Server) refreshInterval() time.Duration {
+	if s.bucketRefreshInterval > 0 {
+		return s.bucketRefreshInterval
+	}
+	return time.Minute
+}
+
+// bucketRefreshLoop ticks on the refresh interval, finds stale buckets, and
+// fires find_node queries to refresh them, inserting returned nodes into the
+// routing table.
 func (s *Server) bucketRefreshLoop(ctx context.Context) {
-	ticker := time.NewTicker(time.Minute)
+	ticker := time.NewTicker(s.refreshInterval())
 	defer ticker.Stop()
 	for {
 		select {
@@ -523,7 +581,7 @@ func (s *Server) bucketRefreshLoop(ctx context.Context) {
 				target := randomIDInBucket(b)
 				for _, n := range s.table.Closest(target, s.bucketSize) {
 					go func() {
-						_, _ = s.Query(ctx, n.Addr, n.ID, &Msg{
+						resp, err := s.Query(ctx, n.Addr, n.ID, &Msg{
 							Y: "q",
 							Q: "find_node",
 							A: &MsgArgs{
@@ -531,6 +589,10 @@ func (s *Server) bucketRefreshLoop(ctx context.Context) {
 								Target: string(target[:]),
 							},
 						})
+						if err != nil || resp == nil || resp.R == nil {
+							return
+						}
+						s.insertNodesFromFindNode(ctx, resp, n.Addr, "bucket refresh")
 					}()
 				}
 			}
