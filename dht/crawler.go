@@ -44,7 +44,6 @@ type crawler struct {
 	rec                *recorder.Recorder
 	cancel             context.CancelFunc
 	wg                 sync.WaitGroup
-	rateLimiter        *nodeRateLimiter
 	nodeSampleSupport  *pkgcache.Cache[NodeID, bool]
 	discoveryQueue     chan discoveryWork
 	droppedDiscoveries atomic.Int64
@@ -61,37 +60,6 @@ type crawler struct {
 type discoveryWork struct {
 	infohash   [20]byte
 	sourceNode *Node
-}
-
-// nodeRateLimiter enforces minimum spacing between queries to the same node.
-type nodeRateLimiter struct {
-	cache      *pkgcache.Cache[NodeID, time.Time]
-	minSpacing time.Duration
-}
-
-func newNodeRateLimiter(minSpacing time.Duration) *nodeRateLimiter {
-	c := pkgcache.New[NodeID, time.Time](
-		pkgcache.WithCleanup[NodeID, time.Time](
-			minSpacing,
-			func(_ NodeID, last time.Time) bool {
-				return time.Since(last) > minSpacing
-			},
-		),
-	)
-	return &nodeRateLimiter{cache: c, minSpacing: minSpacing}
-}
-
-func (r *nodeRateLimiter) throttle(id NodeID) bool {
-	last, ok := r.cache.Get(id)
-	if ok && time.Since(last) < r.minSpacing {
-		return true
-	}
-	r.cache.Set(id, time.Now())
-	return false
-}
-
-func (r *nodeRateLimiter) Start(ctx context.Context) {
-	r.cache.StartCleanup(ctx)
 }
 
 // NewCrawler creates a Crawler backed by a new UDP Server. The BloomFilter is
@@ -112,7 +80,7 @@ func NewCrawler(cfg config.Crawler, dhtCfg config.DHT, rec *recorder.Recorder) (
 		bootstrapNodes:     cfg.BootstrapNodes,
 		crawlers:           cfg.Crawlers,
 		discoveryWorkers:   cfg.DiscoveryWorkers,
-		rateLimiter:        newNodeRateLimiter(2 * time.Second),
+		discoverQueueSize:  cfg.DiscoveryQueueSize,
 		discoveryQueue:     make(chan discoveryWork, cfg.DiscoveryQueueSize),
 		traversalWidth:     cfg.TraversalWidth,
 		transactionTimeout: dhtCfg.TransactionTimeout,
@@ -138,7 +106,10 @@ func (c *crawler) NodeCount() int {
 }
 
 type crawlerInstance struct {
-	id int
+	id       int
+	seen     map[NodeID]time.Time
+	ready    traversalHeap
+	cooldown cooldownHeap
 	*crawler
 }
 
@@ -166,13 +137,15 @@ func (c *crawler) Start(ctx context.Context) error {
 	c.cancel = cancel
 
 	c.nodeSampleSupport.StartCleanup(crawlCtx)
-	c.rateLimiter.Start(crawlCtx)
 
 	for i := 0; i < c.crawlers; i++ {
 		c.wg.Go(func() {
 			instance := crawlerInstance{
-				id:      i,
-				crawler: c,
+				id:       i,
+				crawler:  c,
+				ready:    make(traversalHeap, 0),
+				cooldown: make(cooldownHeap, 0),
+				seen:     make(map[NodeID]time.Time),
 			}
 			instance.crawl(crawlCtx, i)
 		})
@@ -212,10 +185,32 @@ func (c *crawler) Stop(_ context.Context) error {
 
 // traversalItem is an element of the traversal heap.
 type traversalItem struct {
-	node   *Node
-	target NodeID
-	dist   NodeID // XOR(node.ID, target); used for min-heap ordering
-	index  int
+	node     *Node
+	target   NodeID
+	dist     NodeID // XOR(node.ID, target); used for min-heap ordering
+	index    int
+	failures int
+}
+
+// cooldownItem holds a traversalItem waiting for its cooldown to expire.
+type cooldownItem struct {
+	item        *traversalItem
+	nextAllowed time.Time
+}
+
+// cooldownHeap is a min-heap of *cooldownItem ordered by nextAllowed time.
+type cooldownHeap []*cooldownItem
+
+func (h cooldownHeap) Len() int            { return len(h) }
+func (h cooldownHeap) Less(i, j int) bool  { return h[i].nextAllowed.Before(h[j].nextAllowed) }
+func (h cooldownHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
+func (h *cooldownHeap) Push(x any)         { *h = append(*h, x.(*cooldownItem)) }
+func (h *cooldownHeap) Pop() any {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	*h = old[:n-1]
+	return item
 }
 
 // traversalHeap is a min-heap of *traversalItem ordered by XOR distance to target.
@@ -289,48 +284,66 @@ func (c *crawlerInstance) queryForSamples(ctx context.Context, item *traversalIt
 	return nil, nil
 }
 
-// retargetEvery is the number of queries each worker issues before
-// randomising its target to spread coverage across the full keyspace.
-const retargetEvery = 200
+const (
+	defaultCooldown  = 2 * time.Second  // retry interval after a failed/timed-out query
+	defaultInterval  = 10 * time.Second // re-query interval when BEP-51 response carries no Interval
+	maxNodeFailures  = 3                // evict node after this many consecutive failures
+)
 
-// crawlerWorker implements the BEP-51 active traversal loop. It maintains its
-// own priority queue (ordered by XOR distance to the current target) and a
-// per-node cooldown map so it respects the Interval returned by each node.
-// When the queue is exhausted the worker picks a new random target and
-// re-seeds from the routing table.
+// computeInterval returns the re-query interval for a node.
+// BEP-51 nodes advertise an Interval field; default to defaultInterval if absent or too small.
+func computeInterval(resp *Msg) time.Duration {
+	if resp == nil || resp.R == nil || resp.R.Interval <= 0 {
+		return defaultInterval
+	}
+	d := time.Duration(resp.R.Interval) * time.Second
+	if d < defaultInterval {
+		return defaultInterval
+	}
+	return d
+}
+
+// promoteReady moves nodes from the cooldown heap to the ready heap when their
+// cooldown has expired. The seen entry is intentionally retained until
+// nextEligible pops the item, so seedQueue/processNodes cannot double-insert.
+func (c *crawlerInstance) promoteReady(now time.Time) {
+	for c.cooldown.Len() > 0 {
+		top := c.cooldown[0]
+		if top.nextAllowed.After(now) {
+			break
+		}
+		heap.Pop(&c.cooldown)
+		heap.Push(&c.ready, top.item)
+	}
+}
+
+// crawl implements the BEP-51 active traversal loop. Eligible nodes live in
+// the ready heap; nodes waiting for their cooldown live in the cooldown heap.
+// seen is the single authoritative dedup guard: a key present in seen means
+// the node is in cooldownHeap and must not be pushed to readyHeap.
 func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 	log := logger.FromContext(ctx).With("service", "crawler")
 
 	var target NodeID
 	rand.Read(target[:])
 
-	pq := &traversalHeap{}
-	heap.Init(pq)
+	heap.Init(&c.ready)
+	heap.Init(&c.cooldown)
 
-	seen := make(map[NodeID]time.Time) // node ID → earliest time we may re-query
+	c.seedQueue(target)
 
-	c.seedQueue(pq, target)
-
-	queried := 0
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 
-		c.rec.SetCrawlerTraversalQueueSize(id, float64(pq.Len()))
-		c.rec.SetCrawlerCooldownsActive(id, float64(len(seen)))
+		c.rec.SetCrawlerTraversalQueueSize(id, float64(c.ready.Len()))
+		c.rec.SetCrawlerCooldownsActive(id, float64(c.cooldown.Len()))
 
-		if queried > 0 && queried%retargetEvery == 0 {
+		if c.ready.Len() < c.traversalWidth {
 			rand.Read(target[:])
-			// Prune seen entries whose cooldown has already expired; long-interval
-			// BEP-51 nodes (up to 6 h) are retained so we honour their interval.
-			now := time.Now()
-			for id, t := range seen {
-				if now.After(t) {
-					delete(seen, id)
-				}
-			}
-			c.seedQueue(pq, target)
+			c.seedQueue(target)
+
 			if dropped := c.droppedDiscoveries.Swap(0); dropped > 0 {
 				log.Warn("discovery queue backpressure",
 					"dropped", dropped,
@@ -339,23 +352,33 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 				)
 			}
 			log.Debug("retargeting",
-				"queried", queried,
-				"queue_size", pq.Len(),
+				"ready_size", c.ready.Len(),
+				"cooldown_size", c.cooldown.Len(),
 				"routing_table_nodes", c.server.table.NodeCount(),
-				"seen_cooldowns", len(seen),
 				"target", hex.EncodeToString(target[:]),
 			)
 		}
 
-		item := c.nextEligible(pq, seen)
+		item := c.nextEligible(time.Now())
 		if item == nil {
-			log.Debug("queue exhausted, reseeding",
-				"routing_table_nodes", c.server.table.NodeCount(),
-				"seen_cooldowns", len(seen),
-			)
+			if c.cooldown.Len() > 0 {
+				wait := time.Until(c.cooldown[0].nextAllowed)
+				if wait > 0 {
+					select {
+					case <-time.After(wait):
+					case <-ctx.Done():
+						return
+					}
+				}
+				continue
+			}
+
+			// truly empty → reseed
 			rand.Read(target[:])
-			c.seedQueue(pq, target)
-			if pq.Len() == 0 {
+			c.seedQueue(target)
+
+			if c.ready.Len() == 0 {
+				// routing table also empty; avoid tight spin
 				select {
 				case <-time.After(5 * time.Second):
 				case <-ctx.Done():
@@ -365,54 +388,52 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 			continue
 		}
 
-		// Per-node rate limiting to avoid overwhelming responsive nodes.
-		// On throttle, record a short cooldown in seen so nextEligible skips
-		// this node on subsequent passes without spinning.
-		if c.rateLimiter.throttle(item.node.ID) {
-			log.Debug("rate limited", "node", item.node.ID)
-			seen[item.node.ID] = time.Now().Add(c.rateLimiter.minSpacing)
-			heap.Push(pq, item)
-			continue
-		}
-
 		qCtx, cancel := context.WithTimeout(ctx, c.transactionTimeout)
 		resp, err := c.queryForSamples(qCtx, item)
 		cancel()
-		queried++
 
-		interval := 10 * time.Second // default re-query interval
-
-		if err == nil && resp != nil && resp.R != nil {
-			if resp.R.Interval > 0 {
-				d := time.Duration(resp.R.Interval) * time.Second
-				if d > interval {
-					interval = d
-				}
+		if err != nil {
+			item.failures++
+			if item.failures >= maxNodeFailures {
+				delete(c.seen, item.node.ID)
+				continue
 			}
-			// BEP-51: process samples (infohashes)
+			next := time.Now().Add(defaultCooldown)
+			c.seen[item.node.ID] = next
+			heap.Push(&c.cooldown, &cooldownItem{item: item, nextAllowed: next})
+			continue
+		}
+
+		if resp != nil && resp.R != nil {
 			if len(resp.R.Samples) > 0 {
 				c.processSamples(ctx, resp.R.Samples, item)
 			}
-			// Both protocols return nodes for continuation
 			if len(resp.R.Nodes) > 0 {
-				c.processNodes(resp.R.Nodes, item.target, pq)
+				c.processNodes(resp.R.Nodes, item.target)
 			}
 		}
 
-		seen[item.node.ID] = time.Now().Add(interval)
+		item.failures = 0
+		next := time.Now().Add(computeInterval(resp))
+		c.seen[item.node.ID] = next
+		heap.Push(&c.cooldown, &cooldownItem{item: item, nextAllowed: next})
+
 		log.Debug("query complete",
 			"node", item.node.Addr.String(),
-			"err", err,
-			"interval", interval,
-			"queue_size", pq.Len(),
+			"ready_size", c.ready.Len(),
+			"cooldown_size", c.cooldown.Len(),
 		)
 	}
 }
 
-// seedQueue pushes the k closest routing-table nodes to target onto pq.
-func (c *crawler) seedQueue(pq *traversalHeap, target NodeID) {
+// seedQueue pushes the k closest routing-table nodes to the ready heap.
+// Nodes already in seen (currently in cooldownHeap) are skipped.
+func (c *crawlerInstance) seedQueue(target NodeID) {
 	for _, n := range c.server.table.Closest(target, c.traversalWidth) {
-		heap.Push(pq, &traversalItem{
+		if _, inCooldown := c.seen[n.ID]; inCooldown {
+			continue
+		}
+		heap.Push(&c.ready, &traversalItem{
 			node:   n,
 			target: target,
 			dist:   target.XOR(n.ID),
@@ -420,30 +441,20 @@ func (c *crawler) seedQueue(pq *traversalHeap, target NodeID) {
 	}
 }
 
-// nextEligible pops items from pq until it finds one not in the cooldown
-// window, then re-pushes any skipped items so they are not lost.
-// Per BEP-51, nodes that return an interval must be respected but should
-// remain in the traversal queue until their cooldown expires.
-// Returns nil if the queue is empty or all items are in cooldown.
-func (c *crawlerInstance) nextEligible(pq *traversalHeap, seen map[NodeID]time.Time) *traversalItem {
-	var deferred []*traversalItem
-	var result *traversalItem
-	now := time.Now()
-	for pq.Len() > 0 {
-		item := heap.Pop(pq).(*traversalItem)
-		if t, ok := seen[item.node.ID]; !ok || now.After(t) {
-			if ok {
-				delete(seen, item.node.ID)
-			}
-			result = item
-			break
-		}
-		deferred = append(deferred, item)
+// nextEligible promotes cooled-down nodes then pops the closest ready node.
+// The seen entry is intentionally retained after the pop: the node is now
+// in-flight and seen acts as the dedup guard that prevents seedQueue and
+// processNodes from re-inserting it while the query is outstanding. The
+// caller is responsible for updating seen with the new cooldown time once
+// the query completes.
+func (c *crawlerInstance) nextEligible(now time.Time) *traversalItem {
+	c.promoteReady(now)
+
+	if c.ready.Len() == 0 {
+		return nil
 	}
-	for _, item := range deferred {
-		heap.Push(pq, item)
-	}
-	return result
+
+	return heap.Pop(&c.ready).(*traversalItem)
 }
 
 // processSamples decodes the raw 20-byte infohash samples from a BEP-51
@@ -594,6 +605,19 @@ func (c *discoveryWorker) discoverPeers(ctx context.Context, h [20]byte, initial
 		c.rec.IncDiscoveryWorkItemsTotal("no_peers")
 	}
 	log.Debug("peer discovery complete", "iterations", c.maxIterations, "result", "max_iterations")
+}
+
+// trimReadyToK sorts the ready heap by XOR distance and discards all items
+// beyond traversalWidth, keeping only the k closest nodes. This enforces the
+// Kademlia k-shortlist invariant: closer nodes discovered in a response can
+// displace farther ones already queued, and the heap never grows without bound.
+func (c *crawlerInstance) trimReadyToK() {
+	if c.ready.Len() <= c.traversalWidth {
+		return
+	}
+	sort.Sort(&c.ready)
+	c.ready = c.ready[:c.traversalWidth]
+	heap.Init(&c.ready)
 }
 
 // trimToKClosest returns a new map containing only the k nodes closest to target.
@@ -772,8 +796,9 @@ func (c *crawler) extractNodes(resp *Msg) map[NodeID]*Node {
 
 // processNodes decodes compact node records from a BEP-51 sample_infohashes
 // response ("nodes" field, BEP-51 §4), inserts them into the routing table,
-// and enqueues them onto the crawlerWorker's traversal priority queue.
-func (c *crawler) processNodes(encoded string, target NodeID, pq *traversalHeap) {
+// and enqueues eligible nodes onto the ready heap.
+// Nodes already in seen (currently in cooldownHeap) are skipped.
+func (c *crawlerInstance) processNodes(encoded string, target NodeID) {
 	nodes, err := DecodeNodes(encoded)
 	if err != nil {
 		return
@@ -783,10 +808,14 @@ func (c *crawler) processNodes(encoded string, target NodeID, pq *traversalHeap)
 			continue
 		}
 		c.server.table.Insert(n)
-		heap.Push(pq, &traversalItem{
+		if _, inCooldown := c.seen[n.ID]; inCooldown {
+			continue
+		}
+		heap.Push(&c.ready, &traversalItem{
 			node:   n,
 			target: target,
 			dist:   target.XOR(n.ID),
 		})
 	}
+	c.trimReadyToK()
 }

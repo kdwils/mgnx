@@ -15,7 +15,6 @@ import (
 func testCfg() config.DHT {
 	return config.DHT{
 		BucketSize:          8,
-		GoodNodeWindow:      15 * time.Minute,
 		BadFailureThreshold: 2,
 		StaleThreshold:      15 * time.Minute,
 	}

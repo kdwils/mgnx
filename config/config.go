@@ -22,7 +22,6 @@ type DHT struct {
 	Port                   int           `mapstructure:"port"`
 	DiscoveryBuffer        int           `mapstructure:"discovery_buffer"`
 	NodesPath              string        `mapstructure:"nodes_path"`
-	GoodNodeWindow         time.Duration `mapstructure:"good_node_window"`
 	BadFailureThreshold    int           `mapstructure:"bad_failure_threshold"`
 	BucketSize             int           `mapstructure:"bucket_size"`
 	StaleThreshold         time.Duration `mapstructure:"stale_threshold"`
@@ -33,12 +32,13 @@ type DHT struct {
 	RateBurst              int           `mapstructure:"rate_burst"`
 	MaxNodesPerResponse    int           `mapstructure:"max_nodes_per_response"`
 	MaxPeersPerResponse    int           `mapstructure:"max_peers_per_response"`
+	BucketRefreshInterval  time.Duration `mapstructure:"bucket_refresh_interval"`
 	MaxMessageSize         int           `mapstructure:"max_message_size"`
 	MaxMetadataSize        int           `mapstructure:"max_metadata_size"`
-	ForwardedPortFile      string        `mapstructure:"forwarded_port_file"`
-	ExternalIPFile         string        `mapstructure:"external_ip_file"`
-	BootstrapRetryInterval time.Duration `mapstructure:"bootstrap_retry_interval"`
-	FileWaitTimeout        time.Duration `mapstructure:"file_wait_timeout"`
+	ForwardedPortFile string        `mapstructure:"forwarded_port_file"`
+	ExternalIPFile    string        `mapstructure:"external_ip_file"`
+	FileWaitTimeout   time.Duration `mapstructure:"file_wait_timeout"`
+	FileSettleTime    time.Duration `mapstructure:"file_settle_time"`
 }
 
 type Crawler struct {
@@ -66,9 +66,6 @@ type Indexer struct {
 }
 
 type Scrape struct {
-	Workers       int           `mapstructure:"workers"`
-	RateLimit     float64       `mapstructure:"rate_limit"`
-	RateBurst     int           `mapstructure:"rate_burst"`
 	BatchSize     int           `mapstructure:"batch_size"`
 	PollInterval  time.Duration `mapstructure:"poll_interval"`
 	DialTimeout   time.Duration `mapstructure:"dial_timeout"`
@@ -87,7 +84,6 @@ type Server struct {
 	HealthPort  int    `mapstructure:"health_port"`
 	MetricsPort int    `mapstructure:"metrics_port"`
 	LogLevel    string `mapstructure:"log_level"`
-	APIKey      string `mapstructure:"apiKey"`
 }
 
 func New(v *viper.Viper) (Config, error) {
