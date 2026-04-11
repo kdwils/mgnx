@@ -98,6 +98,37 @@ func TestRoutingTable_Insert(t *testing.T) {
 		require.NotNil(t, lowBucket)
 		assert.Equal(t, 1, len(lowBucket.ReplacementCache))
 	})
+
+	t.Run("deduplicates repeated inserts into replacement cache", func(t *testing.T) {
+		var ourID NodeID
+		for i := range ourID {
+			ourID[i] = 0xFF
+		}
+		rt := NewRoutingTable(ourID, testCfg(), nil)
+
+		for i := range 8 {
+			rt.Insert(makeNode(byte(i), 1000+i))
+		}
+
+		// Insert the same overflow node twice with a different address the second
+		// time. The cache should contain exactly one entry with the updated addr.
+		n := makeNode(0x08, 2000)
+		rt.Insert(n)
+
+		updated := makeNode(0x08, 3000)
+		rt.Insert(updated)
+
+		var lowBucket *Bucket
+		for _, b := range rt.buckets {
+			if b.Contains(n.ID) {
+				lowBucket = b
+				break
+			}
+		}
+		require.NotNil(t, lowBucket)
+		assert.Equal(t, 1, len(lowBucket.ReplacementCache), "duplicate insert must not grow the cache")
+		assert.Equal(t, updated.Addr, lowBucket.ReplacementCache[0].Addr, "addr should be updated in-place")
+	})
 }
 
 func TestRoutingTable_Closest(t *testing.T) {
@@ -147,6 +178,68 @@ func TestRoutingTable_Closest(t *testing.T) {
 		rt := NewRoutingTable(ourID, testCfg(), nil)
 		got := rt.Closest(ourID, 8)
 		assert.Empty(t, got)
+	})
+
+	t.Run("includes replacement cache nodes as candidates", func(t *testing.T) {
+		// ourID = 0xFF..FF so the low-keyspace bucket never contains ourID and
+		// will never split — overflow nodes go to ReplacementCache.
+		var ourID NodeID
+		for i := range ourID {
+			ourID[i] = 0xFF
+		}
+		rt := NewRoutingTable(ourID, testCfg(), nil)
+
+		// Fill the bucket (BucketSize=8) with nodes that are far from target.
+		for i := range 8 {
+			rt.Insert(makeNode(byte(0x50+i), 1000+i))
+		}
+
+		// This node is closer to target but goes to the replacement cache because
+		// the bucket is full.
+		cacheNode := makeNode(0x01, 2000)
+		rt.Insert(cacheNode)
+
+		var target NodeID
+		target[0] = 0x01
+
+		// Without the fix, cacheNode would never appear. With the fix it should
+		// be the closest candidate returned.
+		got := rt.Closest(target, 9)
+		var found bool
+		for _, n := range got {
+			if n.ID == cacheNode.ID {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "replacement cache node should be visible to Closest()")
+	})
+
+	t.Run("excludes bad replacement cache nodes", func(t *testing.T) {
+		var ourID NodeID
+		for i := range ourID {
+			ourID[i] = 0xFF
+		}
+		rt := NewRoutingTable(ourID, testCfg(), nil)
+
+		for i := range 8 {
+			rt.Insert(makeNode(byte(0x50+i), 1000+i))
+		}
+
+		badNode := makeNode(0x01, 2000)
+		rt.Insert(badNode)
+
+		// Drive the cache node to bad status via MarkFailure.
+		rt.MarkFailure(badNode.ID)
+		rt.MarkFailure(badNode.ID)
+
+		var target NodeID
+		target[0] = 0x01
+
+		got := rt.Closest(target, 9)
+		for _, n := range got {
+			assert.NotEqual(t, badNode.ID, n.ID, "bad replacement cache node must be excluded")
+		}
 	})
 }
 
@@ -221,6 +314,34 @@ func TestRoutingTable_MarkFailure(t *testing.T) {
 			assert.NotEqual(t, lrs.ID, node.ID, "bad node should have been evicted")
 		}
 		assert.Equal(t, 0, len(b.ReplacementCache))
+	})
+
+	t.Run("prunes bad nodes from replacement cache", func(t *testing.T) {
+		var ourID NodeID
+		for i := range ourID {
+			ourID[i] = 0xFF
+		}
+		rt := NewRoutingTable(ourID, testCfg(), nil)
+
+		for i := range 8 {
+			rt.Insert(makeNode(byte(i), 1000+i))
+		}
+
+		// Two nodes in the cache: one will go bad, the other must survive.
+		bad := makeNode(0x08, 2000)
+		good := makeNode(0x09, 2001)
+		rt.Insert(bad)
+		rt.Insert(good)
+
+		b := rt.buckets[rt.bucketFor(bad.ID)]
+		require.Equal(t, 2, len(b.ReplacementCache))
+
+		// Drive bad node to BadFailureThreshold (2 failures).
+		rt.MarkFailure(bad.ID)
+		rt.MarkFailure(bad.ID)
+
+		assert.Equal(t, 1, len(b.ReplacementCache), "bad cache node should be pruned")
+		assert.Equal(t, good.ID, b.ReplacementCache[0].ID, "good cache node should remain")
 	})
 }
 

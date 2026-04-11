@@ -523,6 +523,109 @@ func TestCrawler_processNodes(t *testing.T) {
 	})
 }
 
+func TestCrawlerInstance_ForcedTargetRotation(t *testing.T) {
+	t.Run("ready heap is cleared and reseeded on maxIterations boundary", func(t *testing.T) {
+		cr := makeCrawler(t)
+
+		// Seed a few nodes into the routing table so seedQueue has something to work with.
+		for i := range 4 {
+			cr.server.table.Insert(makeNode(byte(0x10+i), 2000+i))
+		}
+
+		var initialTarget NodeID
+		initialTarget[0] = 0xAA
+
+		w := crawlerInstance{
+			crawler:  cr,
+			id:       0,
+			ready:    make(traversalHeap, 0),
+			cooldown: make(cooldownHeap, 0),
+			seen:     make(map[NodeID]time.Time),
+		}
+		heap.Init(&w.ready)
+		heap.Init(&w.cooldown)
+
+		// Pre-populate the ready heap with nodes ordered for the initial target.
+		for i := range 3 {
+			n := makeNode(byte(0x50+i), 3000+i)
+			heap.Push(&w.ready, &traversalItem{
+				node:   n,
+				target: initialTarget,
+				dist:   initialTarget.XOR(n.ID),
+			})
+		}
+		require.Equal(t, 3, w.ready.Len())
+
+		// Capture the initial target items so we can verify they are gone afterward.
+		preRotationIDs := make(map[NodeID]bool)
+		for _, item := range w.ready {
+			preRotationIDs[item.node.ID] = true
+		}
+
+		// Simulate the forced rotation logic from crawl() directly.
+		// iteration is set so that iteration%maxIterations == 0.
+		target := initialTarget
+		iteration := w.maxIterations
+		if iteration%w.maxIterations == 0 {
+			var newTarget NodeID
+			newTarget[0] = 0xBB
+			target = newTarget
+			w.ready = traversalHeap{}
+			heap.Init(&w.ready)
+			w.seedQueue(target)
+		}
+
+		// The ready heap should no longer contain the pre-rotation nodes.
+		for _, item := range w.ready {
+			assert.False(t, preRotationIDs[item.node.ID],
+				"ready heap must not retain nodes ordered for the old target after rotation")
+		}
+
+		assert.NotEqual(t, initialTarget, target, "target should have changed after rotation")
+	})
+
+	t.Run("cooldown heap is preserved across target rotation", func(t *testing.T) {
+		cr := makeCrawler(t)
+		for i := range 4 {
+			cr.server.table.Insert(makeNode(byte(0x10+i), 2000+i))
+		}
+
+		var initialTarget NodeID
+		initialTarget[0] = 0xAA
+
+		w := crawlerInstance{
+			crawler:  cr,
+			id:       0,
+			ready:    make(traversalHeap, 0),
+			cooldown: make(cooldownHeap, 0),
+			seen:     make(map[NodeID]time.Time),
+		}
+		heap.Init(&w.ready)
+		heap.Init(&w.cooldown)
+
+		// Put a node in cooldown.
+		coolNode := makeNode(0x77, 4000)
+		nextAllowed := time.Now().Add(time.Minute)
+		heap.Push(&w.cooldown, &cooldownItem{
+			item:        &traversalItem{node: coolNode, target: initialTarget, dist: initialTarget.XOR(coolNode.ID)},
+			nextAllowed: nextAllowed,
+		})
+		require.Equal(t, 1, w.cooldown.Len())
+
+		// Simulate the rotation.
+		var newTarget NodeID
+		newTarget[0] = 0xBB
+		w.ready = traversalHeap{}
+		heap.Init(&w.ready)
+		w.seedQueue(newTarget)
+
+		// Cooldown must be intact.
+		assert.Equal(t, 1, w.cooldown.Len(), "cooldown heap must survive target rotation")
+		top := w.cooldown[0]
+		assert.Equal(t, coolNode.ID, top.item.node.ID)
+	})
+}
+
 // makeItem builds a traversalItem with an explicit first-byte distance so that
 // ordering in tests is fully deterministic regardless of BEP-42 randomness.
 func makeItem(distByte byte) *traversalItem {

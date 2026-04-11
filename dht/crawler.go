@@ -529,6 +529,20 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 		if iteration%50 == 0 {
 			c.pruneStaleInFlight()
 		}
+		if iteration%c.maxIterations == 0 {
+			rand.Read(target[:])
+			// Clear the ready heap — its nodes are ordered by XOR distance to the
+			// old target and are useless for the new one. Cooldown nodes are kept;
+			// they still need to be re-queried and will promote with the new target.
+			c.ready = traversalHeap{}
+			heap.Init(&c.ready)
+			c.seedQueue(target)
+			log.Debug("forced target rotation",
+				"iteration", iteration,
+				"target", hex.EncodeToString(target[:]),
+				"routing_table_nodes", c.server.table.NodeCount(),
+			)
+		}
 	}
 }
 

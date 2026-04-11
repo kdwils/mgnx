@@ -95,6 +95,15 @@ func (rt *RoutingTable) insert(node *Node) {
 
 		// Bucket is full and does not contain our ID: ping-before-evict.
 		// Add the candidate to the replacement cache and async-ping the LRS node.
+		for _, n := range b.ReplacementCache {
+			if n.ID != node.ID {
+				continue
+			}
+			n.Addr = node.Addr
+			n.LastSeen = node.LastSeen
+			n.FailureCount = 0
+			return
+		}
 		if len(b.ReplacementCache) < rt.cfg.BucketSize {
 			b.ReplacementCache = append(b.ReplacementCache, node)
 		}
@@ -108,7 +117,9 @@ func (rt *RoutingTable) insert(node *Node) {
 }
 
 // Closest returns the n nodes closest to target by XOR distance, excluding
-// bad nodes.
+// bad nodes. Both active nodes and replacement cache nodes are considered as
+// candidates so that recently discovered nodes not yet promoted to active
+// buckets are reachable by the crawler.
 func (rt *RoutingTable) Closest(target NodeID, n int) []*Node {
 	rt.mu.RLock()
 	defer rt.mu.RUnlock()
@@ -116,6 +127,12 @@ func (rt *RoutingTable) Closest(target NodeID, n int) []*Node {
 	var candidates []*Node
 	for _, b := range rt.buckets {
 		for _, node := range b.Nodes {
+			if node.IsBad(rt.cfg.BadFailureThreshold) {
+				continue
+			}
+			candidates = append(candidates, node)
+		}
+		for _, node := range b.ReplacementCache {
 			if node.IsBad(rt.cfg.BadFailureThreshold) {
 				continue
 			}
@@ -175,6 +192,20 @@ func (rt *RoutingTable) MarkFailure(id NodeID) {
 		b.ReplacementCache = b.ReplacementCache[1:]
 		b.Nodes = append(b.Nodes, replacement)
 		b.LastChanged = time.Now()
+		return
+	}
+
+	// Prune failing nodes from the replacement cache so dead nodes do not
+	// accumulate once Closest() starts returning them as candidates.
+	for i := len(b.ReplacementCache) - 1; i >= 0; i-- {
+		n := b.ReplacementCache[i]
+		if n.ID != id {
+			continue
+		}
+		n.FailureCount++
+		if n.IsBad(rt.cfg.BadFailureThreshold) {
+			b.ReplacementCache = append(b.ReplacementCache[:i], b.ReplacementCache[i+1:]...)
+		}
 		return
 	}
 }
