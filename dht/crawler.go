@@ -109,6 +109,7 @@ func NewCrawler(ctx context.Context, cfg config.Crawler, dhtCfg config.DHT, rec 
 			),
 		),
 	}
+
 	go c.dedup.Rotate(ctx)
 
 	return c, nil

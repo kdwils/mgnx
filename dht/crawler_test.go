@@ -28,6 +28,9 @@ func makeCrawler(t *testing.T) *crawler {
 		EmptySpinWait:        5 * time.Second,
 		SampleEnqueueTimeout: 1 * time.Second,
 		NodeCacheCleanup:     1 * time.Hour,
+		BloomN:               1_000_000,
+		BloomP:               0.001,
+		BloomRotation:        time.Minute * 10,
 	}, testServerCfg(t), recorder.NewNoOp())
 	require.NoError(t, err)
 	cr.discoveryQueue = make(chan discoveryWork, 64)
