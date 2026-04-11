@@ -48,6 +48,7 @@ type Crawler struct {
 	BootstrapNodes       []string      `mapstructure:"bootstrap_nodes"`
 	Alpha                int           `mapstructure:"alpha"`
 	MaxIterations        int           `mapstructure:"max_iterations"`
+	DiscoveryMaxIterations int         `mapstructure:"discovery_max_iterations"`
 	TraversalWidth       int           `mapstructure:"traversal_width"`
 	DefaultCooldown      time.Duration `mapstructure:"default_cooldown"`
 	DefaultInterval      time.Duration `mapstructure:"default_interval"`

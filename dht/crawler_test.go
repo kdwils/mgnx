@@ -17,10 +17,11 @@ import (
 func makeCrawler(t *testing.T) *crawler {
 	t.Helper()
 	cr, err := NewCrawler(t.Context(), config.Crawler{
-		Crawlers:             2,
-		Alpha:                3,
-		MaxIterations:        4,
-		TraversalWidth:       20,
+		Crawlers:               2,
+		Alpha:                  3,
+		MaxIterations:          4,
+		DiscoveryMaxIterations: 4,
+		TraversalWidth:         20,
 		DefaultCooldown:      2 * time.Second,
 		DefaultInterval:      10 * time.Second,
 		MaxNodeFailures:      3,

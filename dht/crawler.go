@@ -53,9 +53,10 @@ type crawler struct {
 	discoveryWorkers     int
 	crawlers             int
 	transactionTimeout   time.Duration
-	traversalWidth       int
-	alpha                int
-	maxIterations        int
+	traversalWidth          int
+	alpha                   int
+	maxIterations           int
+	discoveryMaxIterations  int
 	defaultCooldown      time.Duration
 	defaultInterval      time.Duration
 	maxNodeFailures      int
@@ -94,7 +95,8 @@ func NewCrawler(ctx context.Context, cfg config.Crawler, dhtCfg config.DHT, rec 
 		traversalWidth:       cfg.TraversalWidth,
 		transactionTimeout:   dhtCfg.TransactionTimeout,
 		alpha:                cfg.Alpha,
-		maxIterations:        cfg.MaxIterations,
+		maxIterations:          cfg.MaxIterations,
+		discoveryMaxIterations: cfg.DiscoveryMaxIterations,
 		defaultCooldown:      cfg.DefaultCooldown,
 		defaultInterval:      cfg.DefaultInterval,
 		maxNodeFailures:      cfg.MaxNodeFailures,
@@ -697,7 +699,7 @@ func (c *discoveryWorker) discoverPeers(ctx context.Context, h [20]byte, initial
 	var collectedPeers []PeerAddr
 	result := "max_iterations"
 
-	for iter := 0; iter < c.maxIterations; iter++ {
+	for iter := 0; iter < c.discoveryMaxIterations; iter++ {
 		entries := c.sortByDistance(shortlist, target)
 		if len(entries) == 0 {
 			result = "empty_shortlist"
