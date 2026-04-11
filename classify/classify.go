@@ -77,8 +77,8 @@ var (
 	// Release group: last hyphen-prefixed token at end of name (before any extension).
 	reReleaseGroup = regexp.MustCompile(`-([A-Za-z0-9]{2,15})$`)
 
-	// Adult content: scene names commonly contain .XXX. as a genre tag (require 3 or more).
-	reAdult = regexp.MustCompile(`(?i)(?:\bXXX\b.*){3}`)
+	// Adult content: scene names use X{3,} (XXX, XXXX, etc.) as a genre tag.
+	reAdult = regexp.MustCompile(`(?i)\bX{3,}\b`)
 
 	// Patterns used to find where the title ends in a normalized name.
 	titleCutPatterns = []*regexp.Regexp{
