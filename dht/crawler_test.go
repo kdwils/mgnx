@@ -124,7 +124,6 @@ func TestNewCrawler(t *testing.T) {
 
 }
 
-
 func TestBep51PQ_ordering(t *testing.T) {
 	t.Run("pop returns closest item first", func(t *testing.T) {
 		var target NodeID
@@ -813,7 +812,7 @@ func TestCrawler_extractNodes(t *testing.T) {
 }
 
 func TestCrawler_processResponses(t *testing.T) {
-	t.Run("returns true when peers found", func(t *testing.T) {
+	t.Run("returns peers when found", func(t *testing.T) {
 		c := makeCrawler(t)
 
 		peer := &net.TCPAddr{IP: net.ParseIP("1.2.3.4"), Port: 6881}
@@ -828,9 +827,11 @@ func TestCrawler_processResponses(t *testing.T) {
 			},
 		}
 
-		foundPeers, newNodes := c.processResponses(context.Background(), []*Msg{resp}, h)
+		peers, newNodes := c.processResponses(context.Background(), []*Msg{resp}, h)
 
-		assert.Equal(t, true, foundPeers)
+		assert.Len(t, peers, 1)
+		assert.Equal(t, net.ParseIP("1.2.3.4").To4(), peers[0].SourceIP)
+		assert.Equal(t, 6881, peers[0].Port)
 		assert.Nil(t, newNodes)
 	})
 
@@ -849,14 +850,14 @@ func TestCrawler_processResponses(t *testing.T) {
 			},
 		}
 
-		foundPeers, gotNodes := c.processResponses(context.Background(), []*Msg{resp}, h)
+		peers, gotNodes := c.processResponses(context.Background(), []*Msg{resp}, h)
 
 		decodedNodes, _ := DecodeNodes(encodedNodes)
 		wantNodes := make(map[NodeID]*Node)
 		for _, n := range decodedNodes {
 			wantNodes[n.ID] = n
 		}
-		assert.Equal(t, false, foundPeers)
+		assert.Empty(t, peers)
 		assert.Equal(t, wantNodes, gotNodes)
 	})
 
@@ -865,9 +866,9 @@ func TestCrawler_processResponses(t *testing.T) {
 
 		var h [20]byte
 
-		foundPeers, newNodes := c.processResponses(context.Background(), []*Msg{nil, nil}, h)
+		peers, newNodes := c.processResponses(context.Background(), []*Msg{nil, nil}, h)
 
-		assert.Equal(t, false, foundPeers)
+		assert.Empty(t, peers)
 		assert.Nil(t, newNodes)
 	})
 
@@ -876,9 +877,9 @@ func TestCrawler_processResponses(t *testing.T) {
 
 		var h [20]byte
 
-		foundPeers, newNodes := c.processResponses(context.Background(), []*Msg{{Y: "r"}}, h)
+		peers, newNodes := c.processResponses(context.Background(), []*Msg{{Y: "r"}}, h)
 
-		assert.Equal(t, false, foundPeers)
+		assert.Empty(t, peers)
 		assert.Nil(t, newNodes)
 	})
 
@@ -896,18 +897,18 @@ func TestCrawler_processResponses(t *testing.T) {
 		resp1 := &Msg{R: &Return{Nodes: encodedNodes1}}
 		resp2 := &Msg{R: &Return{Nodes: encodedNodes2}}
 
-		foundPeers, gotNodes := c.processResponses(context.Background(), []*Msg{resp1, resp2}, h)
+		peers, gotNodes := c.processResponses(context.Background(), []*Msg{resp1, resp2}, h)
 
 		decodedNodes, _ := DecodeNodes(encodedNodes1 + encodedNodes2)
 		wantNodes := make(map[NodeID]*Node)
 		for _, n := range decodedNodes {
 			wantNodes[n.ID] = n
 		}
-		assert.Equal(t, false, foundPeers)
+		assert.Empty(t, peers)
 		assert.Equal(t, wantNodes, gotNodes)
 	})
 
-	t.Run("returns true and no nodes when peers found", func(t *testing.T) {
+	t.Run("returns peers and no nodes when values present", func(t *testing.T) {
 		c := makeCrawler(t)
 
 		peer := &net.TCPAddr{IP: net.ParseIP("1.2.3.4"), Port: 6881}
@@ -918,13 +919,12 @@ func TestCrawler_processResponses(t *testing.T) {
 
 		respWithPeers := &Msg{R: &Return{Values: []string{encodedPeer}}}
 
-		foundPeers, gotNodes := c.processResponses(context.Background(), []*Msg{respWithPeers}, h)
+		peers, gotNodes := c.processResponses(context.Background(), []*Msg{respWithPeers}, h)
 
-		assert.Equal(t, true, foundPeers)
+		assert.Len(t, peers, 1)
 		assert.Nil(t, gotNodes)
 	})
 }
-
 
 func TestComputeInterval(t *testing.T) {
 	const floor = 10 * time.Second

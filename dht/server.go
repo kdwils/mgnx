@@ -30,21 +30,21 @@ type inMsg struct {
 // Server is the UDP DHT node. It owns the socket, routing table, transaction
 // manager, token manager, and the discovered output channel.
 type Server struct {
-	conn                *net.UDPConn
-	nodeID              string
-	ourID               NodeID
-	table               *RoutingTable
-	txns                *TxnManager
-	outbound            chan *outMsg
-	discovered          chan DiscoveredPeers
-	token               *TokenManager
-	dedup               *BloomFilter
-	rec                 *recorder.Recorder
-	rate                *rate.Limiter
-	ipLimiter           *ipLimiter
-	handlers            chan inMsg
-	bufPool             sync.Pool
-	Resolver            Resolver
+	conn                  *net.UDPConn
+	nodeID                string
+	ourID                 NodeID
+	table                 *RoutingTable
+	txns                  *TxnManager
+	outbound              chan *outMsg
+	discovered            chan DiscoveredPeers
+	token                 *TokenManager
+	dedup                 *BloomFilter
+	rec                   *recorder.Recorder
+	rate                  *rate.Limiter
+	ipLimiter             *ipLimiter
+	handlers              chan inMsg
+	bufPool               sync.Pool
+	Resolver              Resolver
 	workers               int
 	transactionTimeout    time.Duration
 	bucketSize            int
@@ -78,19 +78,19 @@ func NewServer(cfg config.DHT, rec *recorder.Recorder) (*Server, error) {
 	token := NewTokenManager(cfg.TokenRotation)
 
 	s := &Server{
-		conn:                conn,
-		ourID:               ourID,
-		table:               table,
-		txns:                txns,
-		outbound:            make(chan *outMsg, 512),
-		discovered:          make(chan DiscoveredPeers, cfg.DiscoveryBuffer),
-		token:               token,
-		rec:                 rec,
-		rate:                rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateBurst),
-		ipLimiter:           newIPLimiter(cfg.RateLimit, cfg.RateBurst, 5*time.Minute),
-		workers:             cfg.Workers,
-		nodeID:              cfg.NodeID,
-		handlers:            make(chan inMsg, 512),
+		conn:                  conn,
+		ourID:                 ourID,
+		table:                 table,
+		txns:                  txns,
+		outbound:              make(chan *outMsg, 512),
+		discovered:            make(chan DiscoveredPeers, cfg.DiscoveryBuffer),
+		token:                 token,
+		rec:                   rec,
+		rate:                  rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateBurst),
+		ipLimiter:             newIPLimiter(cfg.RateLimit, cfg.RateBurst, 5*time.Minute),
+		workers:               cfg.Workers,
+		nodeID:                cfg.NodeID,
+		handlers:              make(chan inMsg, 512),
 		transactionTimeout:    cfg.TransactionTimeout,
 		maxNodesPerResponse:   cfg.MaxNodesPerResponse,
 		bucketSize:            cfg.BucketSize,
