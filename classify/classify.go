@@ -17,18 +17,19 @@ type File struct {
 
 // Result is the output of classifying a torrent.
 type Result struct {
-	State        gen.TorrentState
-	ContentType  gen.ContentType
-	Title        string
-	Year         int
-	Season       int
-	Episode      int
-	Quality      string
-	Encoding     string
-	DynamicRange string
-	Source       string
-	ReleaseGroup string
-	SceneName    string
+	State           gen.TorrentState
+	ContentType     gen.ContentType
+	RejectionReason string
+	Title           string
+	Year            int
+	Season          int
+	Episode         int
+	Quality         string
+	Encoding        string
+	DynamicRange    string
+	Source          string
+	ReleaseGroup    string
+	SceneName       string
 }
 
 type tvInfo struct {
@@ -170,24 +171,24 @@ func IsVideoExt(ext string) bool {
 	return false
 }
 
-func shouldReject(ct gen.ContentType, name string, files []File, totalSize int64, minSize, maxSize int64, allowed map[string]struct{}, enableExtensionFilter, excludeAdultContent bool) bool {
+func shouldReject(ct gen.ContentType, name string, files []File, totalSize int64, minSize, maxSize int64, allowed map[string]struct{}, enableExtensionFilter, excludeAdultContent bool) string {
 	if totalSize < minSize || totalSize > maxSize {
-		return true
+		return "size"
 	}
 	if ct == gen.ContentTypeUnknown {
-		return true
+		return "unknown_type"
 	}
 	if excludeAdultContent && reAdult.MatchString(name) {
-		return true
+		return "adult"
 	}
 	videoCount, badCount := analyzeFiles(files, allowed)
 	if videoCount == 0 {
-		return true
+		return "no_video"
 	}
 	if enableExtensionFilter && badCount > 0 {
-		return true
+		return "bad_extension"
 	}
-	return false
+	return ""
 }
 
 // stripVideoExt removes a trailing video file extension from name so that
@@ -239,8 +240,9 @@ func Classify(name string, files []File, totalSize int64, minSize, maxSize int64
 		result.ReleaseGroup = m[1]
 	}
 
-	if shouldReject(result.ContentType, name, files, totalSize, minSize, maxSize, allowed, enableExtensionFilter, excludeAdultContent) {
+	if reason := shouldReject(result.ContentType, name, files, totalSize, minSize, maxSize, allowed, enableExtensionFilter, excludeAdultContent); reason != "" {
 		result.State = gen.TorrentStateRejected
+		result.RejectionReason = reason
 		return result
 	}
 	result.State = gen.TorrentStateClassified

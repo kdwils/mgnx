@@ -55,3 +55,8 @@ WHERE infohash = sqlc.arg('infohash');
 -- name: PruneScrapeHistory :exec
 DELETE FROM scrape_history
 WHERE scraped_at < sqlc.arg('cutoff');
+
+-- name: CountTorrentsByState :many
+SELECT state, COUNT(*) AS count
+FROM torrents
+GROUP BY state;

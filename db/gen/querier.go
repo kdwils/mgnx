@@ -12,6 +12,7 @@ import (
 )
 
 type Querier interface {
+	CountTorrentsByState(ctx context.Context) ([]CountTorrentsByStateRow, error)
 	GetDeadCandidates(ctx context.Context, arg GetDeadCandidatesParams) ([]string, error)
 	// Fetch all active encodes of a specific movie by IMDB ID. Used for t=movie&imdbid=.
 	GetMoviesByIMDB(ctx context.Context, imdbID pgtype.Text) ([]GetMoviesByIMDBRow, error)

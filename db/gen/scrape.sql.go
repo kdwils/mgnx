@@ -11,6 +11,37 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countTorrentsByState = `-- name: CountTorrentsByState :many
+SELECT state, COUNT(*) AS count
+FROM torrents
+GROUP BY state
+`
+
+type CountTorrentsByStateRow struct {
+	State TorrentState `json:"state"`
+	Count int64        `json:"count"`
+}
+
+func (q *Queries) CountTorrentsByState(ctx context.Context) ([]CountTorrentsByStateRow, error) {
+	rows, err := q.db.Query(ctx, countTorrentsByState)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountTorrentsByStateRow
+	for rows.Next() {
+		var i CountTorrentsByStateRow
+		if err := rows.Scan(&i.State, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getDeadCandidates = `-- name: GetDeadCandidates :many
 SELECT infohash
 FROM torrents
