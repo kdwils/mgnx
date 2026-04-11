@@ -126,7 +126,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 
 	resultCh := make(chan *metadata.TorrentInfo, 1)
 
-	for i := 0; i < maxPeers; i++ {
+	for i := range maxPeers {
 		if err := w.rateLimiter.Wait(gctx); err != nil {
 			break
 		}
@@ -175,6 +175,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 	})
 	if err != nil {
 		log.ErrorContext(ctx, "upsert torrent failed", "infohash", infohashHex, "err", err)
+		w.rec.IncIndexerDBErrorsTotal("upsert")
 		return
 	}
 
@@ -208,11 +209,15 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		IsVideo:   isVideos,
 	}); err != nil {
 		log.ErrorContext(ctx, "insert torrent files failed", "infohash", infohashHex, "err", err)
+		w.rec.IncIndexerDBErrorsTotal("insert_files")
 		return
 	}
 
 	result := classify.Classify(info.Name, classifyFiles, info.TotalSize, w.minSize, w.maxSize, w.allowedExts, w.enableExtFilter, w.excludeAdultContent)
 	log.DebugContext(ctx, "classified torrent", "infohash", infohashHex, "state", result.State, "content_type", result.ContentType)
+	if result.RejectionReason != "" {
+		w.rec.IncTorrentsRejectedTotal(result.RejectionReason)
+	}
 	w.rec.IncTorrentsIndexedTotal(string(result.ContentType))
 
 	if err := w.queries.UpdateTorrentClassified(ctx, gen.UpdateTorrentClassifiedParams{
@@ -231,6 +236,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		ClassifiedEpisode: nullInt4(result.Episode),
 	}); err != nil {
 		log.ErrorContext(ctx, "classify torrent failed", "infohash", infohashHex, "err", err)
+		w.rec.IncIndexerDBErrorsTotal("update_classified")
 		return
 	}
 

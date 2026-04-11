@@ -51,6 +51,10 @@ type Metrics struct {
 	MetadataFetchSuccessTotal    prometheus.Counter
 	MetadataFetchFailedTotal     *prometheus.CounterVec
 	MetadataFetchDurationSeconds prometheus.Histogram
+
+	TorrentsTotal        *prometheus.GaugeVec
+	TorrentsRejectedTotal *prometheus.CounterVec
+	IndexerDBErrorsTotal  *prometheus.CounterVec
 }
 
 type Recorder struct {
@@ -234,6 +238,22 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Help:      "Metadata fetch duration.",
 			Buckets:   buckets,
 		}),
+
+		TorrentsTotal: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "torrents_total",
+			Help:      "Number of torrents in the database by state.",
+		}, []string{"state"}),
+		TorrentsRejectedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "torrents_rejected_total",
+			Help:      "Torrents rejected during classification.",
+		}, []string{"reason"}),
+		IndexerDBErrorsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "indexer_db_errors_total",
+			Help:      "Database errors in the indexer by operation.",
+		}, []string{"operation"}),
 	}
 
 	collectors := []prometheus.Collector{
@@ -269,6 +289,9 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.MetadataFetchSuccessTotal,
 		m.MetadataFetchFailedTotal,
 		m.MetadataFetchDurationSeconds,
+		m.TorrentsTotal,
+		m.TorrentsRejectedTotal,
+		m.IndexerDBErrorsTotal,
 	}
 
 	for _, c := range collectors {
@@ -522,4 +545,25 @@ func (r *Recorder) ObserveTorznabRequestDurationSeconds(v float64) {
 		return
 	}
 	r.m.TorznabRequestDurationSeconds.Observe(v)
+}
+
+func (r *Recorder) SetTorrentsTotal(state string, count float64) {
+	if r.m == nil {
+		return
+	}
+	r.m.TorrentsTotal.WithLabelValues(state).Set(count)
+}
+
+func (r *Recorder) IncTorrentsRejectedTotal(reason string) {
+	if r.m == nil {
+		return
+	}
+	r.m.TorrentsRejectedTotal.WithLabelValues(reason).Inc()
+}
+
+func (r *Recorder) IncIndexerDBErrorsTotal(operation string) {
+	if r.m == nil {
+		return
+	}
+	r.m.IndexerDBErrorsTotal.WithLabelValues(operation).Inc()
 }

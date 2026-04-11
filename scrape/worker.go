@@ -37,7 +37,7 @@ func (w *Worker) Run(ctx context.Context) {
 	trackerID := w.initTracker(ctx)
 
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 
 	go func() {
 		defer wg.Done()
@@ -52,6 +52,11 @@ func (w *Worker) Run(ctx context.Context) {
 	go func() {
 		defer wg.Done()
 		w.runPruner(ctx)
+	}()
+
+	go func() {
+		defer wg.Done()
+		w.runStatsLoop(ctx)
 	}()
 
 	wg.Wait()
@@ -274,6 +279,32 @@ func (w *Worker) runPruner(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+func (w *Worker) runStatsLoop(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			w.refreshStats(ctx)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (w *Worker) refreshStats(ctx context.Context) {
+	log := logger.FromContext(ctx).With("service", "scraper")
+	rows, err := w.queries.CountTorrentsByState(ctx)
+	if err != nil {
+		log.ErrorContext(ctx, "count torrents by state failed", "err", err)
+		return
+	}
+	for _, r := range rows {
+		w.rec.SetTorrentsTotal(string(r.State), float64(r.Count))
 	}
 }
 
