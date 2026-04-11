@@ -110,9 +110,9 @@ func initConfig() {
 	viper.SetDefault("crawler.max_samples_per_node", 50)
 	viper.SetDefault("crawler.target_rotation_strategy", "prefix_rotate")
 
-	viper.SetDefault("crawler.dedup.bloom_n", 1_000_000)
-	viper.SetDefault("crawler.dedup.bloom_p", 0.001)
-	viper.SetDefault("crawler.dedup.bloom_rotation", 12*time.Hour)
+	viper.SetDefault("crawler.bloom_n", 10_000_000)
+	viper.SetDefault("crawler.bloom_p", 0.001)
+	viper.SetDefault("crawler.bloom_rotation", 10*time.Minute)
 
 	viper.SetDefault("server.torznab_port", 8080)
 	viper.SetDefault("server.health_port", 8081)

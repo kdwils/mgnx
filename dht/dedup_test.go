@@ -3,10 +3,17 @@ package dht
 import (
 	"crypto/rand"
 	"testing"
+	"time"
+)
+
+const (
+	bloomN        = 1_000_000
+	bloomP        = 0.001
+	bloomRotation = 10 * time.Minute
 )
 
 func TestBloomFilter_SeenOrAdd(t *testing.T) {
-	bf := NewBloomFilter()
+	bf := NewBloomFilter(bloomN, bloomP, bloomRotation)
 
 	var h [20]byte
 	if _, err := rand.Read(h[:]); err != nil {
@@ -22,7 +29,7 @@ func TestBloomFilter_SeenOrAdd(t *testing.T) {
 }
 
 func TestBloomFilter_FalsePositiveRate(t *testing.T) {
-	bf := NewBloomFilter()
+	bf := NewBloomFilter(bloomN, bloomP, bloomRotation)
 
 	// Insert 1,000,000 items.
 	for i := range 1_000_000 {

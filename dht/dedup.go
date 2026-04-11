@@ -1,61 +1,60 @@
 package dht
 
 import (
+	"context"
 	"sync"
 	"time"
 
 	"github.com/bits-and-blooms/bloom/v3"
 )
 
-const (
-	bloomN        = 10_000_000
-	bloomP        = 0.001
-	bloomRotation = 10 * time.Minute
-)
-
 // BloomFilter is a filter for infohash deduplication.
 type BloomFilter struct {
 	active   *bloom.BloomFilter
-	mu       sync.Mutex
-	rotateAt time.Time
+	bloomN   uint
+	bloomP   float64
+	rotation time.Duration
+	mu       sync.RWMutex
 }
 
-func NewBloomFilter() *BloomFilter {
+func NewBloomFilter(bloomN uint, bloomP float64, rotation time.Duration) *BloomFilter {
 	bf := &BloomFilter{
 		active:   bloom.NewWithEstimates(bloomN, bloomP),
-		rotateAt: time.Now().Add(bloomRotation),
+		rotation: rotation,
+		bloomN:   bloomN,
+		bloomP:   bloomP,
 	}
-	go bf.startRotator()
-
 	return bf
 }
 
-// SeenOrAdd returns true if h was already seen (in either filter).
-// If not seen, it adds h to the active filter and returns false.
 func (b *BloomFilter) SeenOrAdd(h [20]byte) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	b.mu.RLock()
+	seen := b.active.Test(h[:])
+	b.mu.RUnlock()
 
-	if time.Now().After(b.rotateAt) {
-		b.active = bloom.NewWithEstimates(bloomN, bloomP)
-		b.rotateAt = time.Now().Add(bloomRotation)
-	}
-
-	if b.active.Test(h[:]) {
+	if seen {
 		return true
 	}
 
+	b.mu.Lock()
 	b.active.Add(h[:])
+	b.mu.Unlock()
+
 	return false
 }
 
-func (b *BloomFilter) startRotator() {
-	ticker := time.NewTicker(bloomRotation)
+func (b *BloomFilter) Rotate(ctx context.Context) {
+	ticker := time.NewTicker(b.rotation)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		b.mu.Lock()
-		b.active = bloom.NewWithEstimates(bloomN, bloomP)
-		b.mu.Unlock()
+	for {
+		select {
+		case <-ticker.C:
+			b.mu.Lock()
+			b.active = bloom.NewWithEstimates(b.bloomN, b.bloomP)
+			b.mu.Unlock()
+		case <-ctx.Done():
+			return
+		}
 	}
 }

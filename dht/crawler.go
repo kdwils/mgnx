@@ -73,14 +73,15 @@ type discoveryWork struct {
 // NewCrawler creates a Crawler backed by a new UDP Server. The BloomFilter is
 // created here and wired into the server so that both the passive
 // announce_peer path and the active BEP-51 path share the same dedup state.
-func NewCrawler(cfg config.Crawler, dhtCfg config.DHT, rec *recorder.Recorder) (*crawler, error) {
+func NewCrawler(ctx context.Context, cfg config.Crawler, dhtCfg config.DHT, rec *recorder.Recorder) (*crawler, error) {
 	server, err := NewServer(dhtCfg, rec)
 	if err != nil {
 		return nil, err
 	}
-	dedup := NewBloomFilter()
+	dedup := NewBloomFilter(cfg.BloomN, cfg.BloomP, cfg.BloomRotation)
 	server.dedup = dedup
-	return &crawler{
+
+	c := &crawler{
 		server:               server,
 		discovered:           server.discovered,
 		dedup:                dedup,
@@ -107,7 +108,10 @@ func NewCrawler(cfg config.Crawler, dhtCfg config.DHT, rec *recorder.Recorder) (
 				func(_ NodeID, _ bool) bool { return true },
 			),
 		),
-	}, nil
+	}
+	go c.dedup.Rotate(ctx)
+
+	return c, nil
 }
 
 // Infohashes returns the channel of discovered infohash events.

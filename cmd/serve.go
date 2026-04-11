@@ -89,7 +89,7 @@ var serveCmd = &cobra.Command{
 			return fmt.Errorf("create recorder: %w", err)
 		}
 
-		crawler, err := dht.NewCrawler(cfg.Crawler, cfg.DHT, rec)
+		crawler, err := dht.NewCrawler(ctx, cfg.Crawler, cfg.DHT, rec)
 		if err != nil {
 			return fmt.Errorf("dht crawler: %w", err)
 		}

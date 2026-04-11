@@ -16,7 +16,7 @@ import (
 
 func makeCrawler(t *testing.T) *crawler {
 	t.Helper()
-	cr, err := NewCrawler(config.Crawler{
+	cr, err := NewCrawler(t.Context(), config.Crawler{
 		Crawlers:             2,
 		Alpha:                3,
 		MaxIterations:        4,
