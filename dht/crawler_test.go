@@ -926,6 +926,54 @@ func TestCrawler_processResponses(t *testing.T) {
 }
 
 
+func TestComputeInterval(t *testing.T) {
+	const floor = 10 * time.Second
+	const cap5s = 5 * time.Second
+
+	makeC := func(maxInterval time.Duration) *crawler {
+		cr := &crawler{
+			defaultInterval: floor,
+			maxInterval:     maxInterval,
+		}
+		return cr
+	}
+
+	t.Run("nil response returns floor", func(t *testing.T) {
+		assert.Equal(t, floor, makeC(0).computeInterval(nil))
+	})
+
+	t.Run("nil R field returns floor", func(t *testing.T) {
+		assert.Equal(t, floor, makeC(0).computeInterval(&Msg{}))
+	})
+
+	t.Run("zero interval returns floor", func(t *testing.T) {
+		assert.Equal(t, floor, makeC(0).computeInterval(&Msg{R: &Return{Interval: 0}}))
+	})
+
+	t.Run("interval below floor is clamped to floor", func(t *testing.T) {
+		assert.Equal(t, floor, makeC(0).computeInterval(&Msg{R: &Return{Interval: 3}}))
+	})
+
+	t.Run("interval above floor with no cap is returned as-is", func(t *testing.T) {
+		assert.Equal(t, 30*time.Second, makeC(0).computeInterval(&Msg{R: &Return{Interval: 30}}))
+	})
+
+	t.Run("interval above cap is clamped to cap", func(t *testing.T) {
+		assert.Equal(t, cap5s, makeC(cap5s).computeInterval(&Msg{R: &Return{Interval: 30}}))
+	})
+
+	t.Run("interval equal to cap is returned unchanged", func(t *testing.T) {
+		// floor=2s, cap=5s, interval=5s → exactly at the cap, returned as-is
+		c := &crawler{defaultInterval: 2 * time.Second, maxInterval: cap5s}
+		assert.Equal(t, cap5s, c.computeInterval(&Msg{R: &Return{Interval: 5}}))
+	})
+
+	t.Run("interval between floor and cap is returned as-is", func(t *testing.T) {
+		// floor=10s, cap=30s, interval=20s → 20s
+		assert.Equal(t, 20*time.Second, makeC(30*time.Second).computeInterval(&Msg{R: &Return{Interval: 20}}))
+	})
+}
+
 func TestCrawler_pruneStaleInFlight(t *testing.T) {
 	t.Run("removes entries older than 2x transactionTimeout", func(t *testing.T) {
 		cr := makeCrawler(t)

@@ -62,6 +62,7 @@ type crawler struct {
 	maxJitter            time.Duration
 	emptySpinWait        time.Duration
 	sampleEnqueueTimeout time.Duration
+	maxInterval          time.Duration
 }
 
 type discoveryWork struct {
@@ -99,6 +100,7 @@ func NewCrawler(cfg config.Crawler, dhtCfg config.DHT, rec *recorder.Recorder) (
 		maxJitter:            cfg.MaxJitter,
 		emptySpinWait:        cfg.EmptySpinWait,
 		sampleEnqueueTimeout: cfg.SampleEnqueueTimeout,
+		maxInterval:          cfg.MaxInterval,
 		nodeSampleSupport: pkgcache.New[NodeID, bool](
 			pkgcache.WithCleanup[NodeID, bool](
 				cfg.NodeCacheCleanup,
@@ -314,6 +316,8 @@ func jitter(max time.Duration) time.Duration {
 
 // computeInterval returns the re-query interval for a node.
 // BEP-51 nodes advertise an Interval field; default to c.defaultInterval if absent or too small.
+// If maxInterval is set (non-zero), the returned duration is capped at that value so that
+// nodes advertising long cooldowns do not starve the traversal.
 func (c *crawler) computeInterval(resp *Msg) time.Duration {
 	if resp == nil || resp.R == nil || resp.R.Interval <= 0 {
 		return c.defaultInterval
@@ -321,6 +325,9 @@ func (c *crawler) computeInterval(resp *Msg) time.Duration {
 	d := time.Duration(resp.R.Interval) * time.Second
 	if d < c.defaultInterval {
 		return c.defaultInterval
+	}
+	if c.maxInterval > 0 && d > c.maxInterval {
+		return c.maxInterval
 	}
 	return d
 }
@@ -374,10 +381,11 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 		c.rec.SetCrawlerTraversalQueueSize(id, float64(c.ready.Len()))
 		c.rec.SetCrawlerCooldownsActive(id, float64(c.cooldown.Len()))
 
-		// Only re-seed when the ready heap AND cooldown heap are both empty.
-		// Re-seeding while cooldown nodes remain would abandon in-progress
-		// traversal regions, skimming the DHT instead of exploring it deeply.
-		if c.ready.Len() == 0 && c.cooldown.Len() == 0 {
+		// Re-seed whenever the ready heap falls below alpha. Waiting for both
+		// heaps to empty means reseeding almost never fires once cooldown fills,
+		// which starves the traversal. Seeding on low-ready keeps fresh nodes
+		// flowing without abandoning existing cooldown work.
+		if c.ready.Len() < c.alpha {
 			rand.Read(target[:])
 			c.seedQueue(target)
 
