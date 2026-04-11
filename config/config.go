@@ -55,8 +55,9 @@ type Crawler struct {
 	MaxJitter            time.Duration `mapstructure:"max_jitter"`
 	EmptySpinWait        time.Duration `mapstructure:"empty_spin_wait"`
 	SampleEnqueueTimeout time.Duration `mapstructure:"sample_enqueue_timeout"`
-	NodeCacheCleanup     time.Duration `mapstructure:"node_cache_cleanup"`
-	MaxInterval          time.Duration `mapstructure:"max_interval"`
+	NodeCacheCleanup          time.Duration `mapstructure:"node_cache_cleanup"`
+	MaxInterval               time.Duration `mapstructure:"max_interval"`
+	BarrenRotateThreshold     int           `mapstructure:"barren_rotate_threshold"`
 }
 
 type Indexer struct {

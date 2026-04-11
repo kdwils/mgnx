@@ -61,8 +61,9 @@ type crawler struct {
 	maxNodeFailures      int
 	maxJitter            time.Duration
 	emptySpinWait        time.Duration
-	sampleEnqueueTimeout time.Duration
-	maxInterval          time.Duration
+	sampleEnqueueTimeout  time.Duration
+	maxInterval           time.Duration
+	barrenRotateThreshold int
 }
 
 type discoveryWork struct {
@@ -99,8 +100,9 @@ func NewCrawler(cfg config.Crawler, dhtCfg config.DHT, rec *recorder.Recorder) (
 		maxNodeFailures:      cfg.MaxNodeFailures,
 		maxJitter:            cfg.MaxJitter,
 		emptySpinWait:        cfg.EmptySpinWait,
-		sampleEnqueueTimeout: cfg.SampleEnqueueTimeout,
-		maxInterval:          cfg.MaxInterval,
+		sampleEnqueueTimeout:  cfg.SampleEnqueueTimeout,
+		maxInterval:           cfg.MaxInterval,
+		barrenRotateThreshold: cfg.BarrenRotateThreshold,
 		nodeSampleSupport: pkgcache.New[NodeID, bool](
 			pkgcache.WithCleanup[NodeID, bool](
 				cfg.NodeCacheCleanup,
@@ -367,10 +369,13 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 	c.seedQueue(target)
 
 	type queryResult struct {
-		item *traversalItem
-		resp *Msg
-		err  error
+		item        *traversalItem
+		resp        *Msg
+		err         error
+		samplesSeen bool
 	}
+
+	var consecutiveBarrenBatches int
 
 	var iteration int
 	for {
@@ -471,11 +476,12 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 				sqCtx, scancel := context.WithTimeout(ctx, c.transactionTimeout)
 				sResp, supported, sErr := c.queryForSamples(sqCtx, item)
 				scancel()
-				if sErr == nil && supported && sResp != nil && sResp.R != nil && len(sResp.R.Samples) > 0 {
+				samplesSeen := sErr == nil && supported && sResp != nil && sResp.R != nil && len(sResp.R.Samples) > 0
+				if samplesSeen {
 					c.processSamples(ctx, sResp.R.Samples, item)
 				}
 
-				results[i] = queryResult{item, resp, err}
+				results[i] = queryResult{item, resp, err, samplesSeen}
 			}()
 		}
 		wg.Wait()
@@ -518,6 +524,26 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 				"nodes_returned", nodesReturned,
 				"table_size", c.server.table.NodeCount(),
 			)
+		}
+
+		batchHadSamples := false
+		for _, r := range results {
+			if r.samplesSeen {
+				batchHadSamples = true
+				break
+			}
+		}
+		if batchHadSamples {
+			consecutiveBarrenBatches = 0
+		}
+		if !batchHadSamples {
+			consecutiveBarrenBatches++
+		}
+		if c.barrenRotateThreshold > 0 && consecutiveBarrenBatches >= c.barrenRotateThreshold {
+			consecutiveBarrenBatches = 0
+			rand.Read(target[:])
+			c.seedQueue(target)
+			log.Debug("barren rotate", "target", hex.EncodeToString(target[:]))
 		}
 
 		iteration++
