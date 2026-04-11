@@ -85,7 +85,10 @@ func (w *Worker) Run(ctx context.Context) {
 					if !ok {
 						return
 					}
+					w.rec.SetDiscoveredChannelDepth(float64(len(ch)))
+					w.rec.AddIndexerWorkersBusy(1)
 					w.process(ctx, ev)
+					w.rec.AddIndexerWorkersBusy(-1)
 				}
 			}
 		})
@@ -99,7 +102,9 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 
 	log.DebugContext(ctx, "processing infohash", "infohash", infohashHex, "peers", len(ev.Peers))
 
+	lookupStart := time.Now()
 	_, err := w.queries.GetTorrentByInfohash(ctx, infohashHex)
+	w.rec.ObserveIndexerDBQueryDurationSeconds("lookup", time.Since(lookupStart).Seconds())
 	if err == nil {
 		w.rec.IncIndexerPeersProcessedTotal("duplicate")
 		return
@@ -111,6 +116,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 	}
 
 	w.rec.IncIndexerPeersProcessedTotal("processed")
+	w.rec.ObserveIndexerPeersPerInfohash(float64(len(ev.Peers)))
 
 	maxPeers := min(len(ev.Peers), w.maxPeers)
 
@@ -129,9 +135,11 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 	resultCh := make(chan *metadata.TorrentInfo, 1)
 
 	for i := range maxPeers {
+		rlStart := time.Now()
 		if err := w.rateLimiter.Wait(gctx); err != nil {
 			break
 		}
+		w.rec.ObserveIndexerRateLimiterWaitSeconds(time.Since(rlStart).Seconds())
 		peer := ev.Peers[i]
 		g.Go(func() error {
 			fetchCtx, fetchCancel := context.WithTimeout(gctx, w.peerTimeout)
@@ -169,12 +177,14 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 
 	info.Name = strings.ToValidUTF8(info.Name, "")
 
+	upsertStart := time.Now()
 	tag, err := w.queries.UpsertTorrentPending(ctx, gen.UpsertTorrentPendingParams{
 		Infohash:  infohashHex,
 		Name:      info.Name,
 		TotalSize: info.TotalSize,
 		FileCount: int64(len(info.Files)),
 	})
+	w.rec.ObserveIndexerDBQueryDurationSeconds("upsert", time.Since(upsertStart).Seconds())
 	if err != nil {
 		log.ErrorContext(ctx, "upsert torrent failed", "infohash", infohashHex, "err", err)
 		w.rec.IncIndexerDBErrorsTotal("upsert")
@@ -203,13 +213,16 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		classifyFiles[i] = classify.File{Path: f.Path, Size: f.Size}
 	}
 
-	if err := w.queries.InsertTorrentFiles(ctx, gen.InsertTorrentFilesParams{
+	insertFilesStart := time.Now()
+	err = w.queries.InsertTorrentFiles(ctx, gen.InsertTorrentFilesParams{
 		Infohash:  infohashes,
 		Path:      paths,
 		Size:      sizes,
 		Extension: extensions,
 		IsVideo:   isVideos,
-	}); err != nil {
+	})
+	w.rec.ObserveIndexerDBQueryDurationSeconds("insert_files", time.Since(insertFilesStart).Seconds())
+	if err != nil {
 		log.ErrorContext(ctx, "insert torrent files failed", "infohash", infohashHex, "err", err)
 		w.rec.IncIndexerDBErrorsTotal("insert_files")
 		return
@@ -222,7 +235,8 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 	}
 	w.rec.IncTorrentsIndexedTotal(string(result.ContentType))
 
-	if err := w.queries.UpdateTorrentClassified(ctx, gen.UpdateTorrentClassifiedParams{
+	classifyStart := time.Now()
+	err = w.queries.UpdateTorrentClassified(ctx, gen.UpdateTorrentClassifiedParams{
 		Infohash:          infohashHex,
 		State:             result.State,
 		ContentType:       result.ContentType,
@@ -236,7 +250,9 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		ClassifiedYear:    nullInt4(result.Year),
 		ClassifiedSeason:  nullInt4(result.Season),
 		ClassifiedEpisode: nullInt4(result.Episode),
-	}); err != nil {
+	})
+	w.rec.ObserveIndexerDBQueryDurationSeconds("classify_update", time.Since(classifyStart).Seconds())
+	if err != nil {
 		log.ErrorContext(ctx, "classify torrent failed", "infohash", infohashHex, "err", err)
 		w.rec.IncIndexerDBErrorsTotal("update_classified")
 		return

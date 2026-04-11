@@ -10,11 +10,22 @@ import (
 
 const namespace = "mgnx"
 
-var buckets = prometheus.ExponentialBuckets(0.001, 2, 12)
+// subSecondBuckets covers fast operations (torznab, scrape): 1ms → 2.048s.
+var subSecondBuckets = prometheus.ExponentialBuckets(0.001, 2, 12)
+
+// discoveryBuckets covers BEP-05 iterative lookups: 50ms → 25.6s.
+// Chosen to span the full discovery_max_iterations × transaction_timeout range (e.g. 3 × 3s = 9s).
+var discoveryBuckets = prometheus.ExponentialBuckets(0.05, 2, 10)
+
+// fetchBuckets covers BEP-09 metadata fetches: 50ms → 12.8s.
+// Chosen to span request_timeout (4s) with headroom.
+var fetchBuckets = prometheus.ExponentialBuckets(0.05, 2, 9)
+
+// peerCountBuckets spans typical DHT peer-set sizes: 0 → 233.
+var peerCountBuckets = []float64{0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233}
 
 type Metrics struct {
-	DHTNodesDiscoveredTotal       *prometheus.CounterVec
-	DHTDiscoveryQueueDepth        prometheus.Gauge
+	DHTDiscoveryQueueDepth prometheus.Gauge
 	DHTQueueCapacity              prometheus.Gauge
 	DHTDiscoveryQueueDroppedTotal prometheus.Counter
 	DiscoveryWorkItemsTotal       *prometheus.CounterVec
@@ -37,6 +48,25 @@ type Metrics struct {
 	IndexerDBUpsertsTotal       prometheus.Counter
 	TorrentsIndexedTotal        *prometheus.CounterVec
 
+	// CrawlerSamplesTotal counts individual infohash samples from BEP-51 responses,
+	// broken down by result. Use this to measure bloom filter saturation:
+	// a high duplicate ratio means the crawler is re-seeing infohashes it already
+	// enqueued this rotation window, confirming supply exhaustion.
+	CrawlerSamplesTotal *prometheus.CounterVec
+
+	// DiscoveredChannelDepth is the instantaneous depth of the discovered channel
+	// between discovery workers and indexer workers. Near-zero means indexer
+	// workers are starved waiting for peer sets.
+	DiscoveredChannelDepth prometheus.Gauge
+
+	// DiscoveryWorkersBusy is the number of discovery workers actively running
+	// a get_peers lookup (not blocked waiting on the discovery queue).
+	DiscoveryWorkersBusy prometheus.Gauge
+
+	// IndexerWorkersBusy is the number of indexer workers actively processing
+	// an infohash (not blocked waiting on the discovered channel).
+	IndexerWorkersBusy prometheus.Gauge
+
 	ScrapeCyclesTotal          prometheus.Counter
 	ScrapeTorrentsUpdatedTotal prometheus.Counter
 	ScrapeDeadDetectedTotal    prometheus.Counter
@@ -55,6 +85,21 @@ type Metrics struct {
 	TorrentsTotal        *prometheus.GaugeVec
 	TorrentsRejectedTotal *prometheus.CounterVec
 	IndexerDBErrorsTotal  *prometheus.CounterVec
+
+	// IndexerDBQueryDurationSeconds tracks per-operation DB latency in the indexer.
+	// Operations: lookup, upsert, insert_files, classify_update.
+	// A slow lookup is especially costly because it runs on every infohash including duplicates.
+	IndexerDBQueryDurationSeconds *prometheus.HistogramVec
+
+	// IndexerRateLimiterWaitSeconds tracks how long the indexer blocks waiting for a
+	// rate-limiter token before launching each BEP-09 peer goroutine. A high p99 here
+	// means the rate limiter is the ceiling on fetch parallelism, not peer count or workers.
+	IndexerRateLimiterWaitSeconds prometheus.Histogram
+
+	// IndexerPeersPerInfohash is a histogram of how many peers were available when each
+	// non-duplicate infohash entered the indexer. Zero-heavy distributions mean most
+	// infohashes can never succeed at BEP-09 and the throughput cap is upstream in the DHT.
+	IndexerPeersPerInfohash prometheus.Histogram
 }
 
 type Recorder struct {
@@ -68,11 +113,6 @@ func (r *Recorder) GetMetrics() *Metrics {
 
 func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 	m := &Metrics{
-		DHTNodesDiscoveredTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: namespace,
-			Name:      "dht_nodes_discovered_total",
-			Help:      "Nodes discovered from responses.",
-		}, []string{"result"}),
 		DHTDiscoveryQueueDepth: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
 			Name:      "dht_discovery_queue_depth",
@@ -97,7 +137,7 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Namespace: namespace,
 			Name:      "discovery_duration_seconds",
 			Help:      "get_peers lookup duration.",
-			Buckets:   buckets,
+			Buckets:   discoveryBuckets,
 		}),
 		CrawlerQueriesTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace,
@@ -160,7 +200,7 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Namespace: namespace,
 			Name:      "indexer_fetch_duration_seconds",
 			Help:      "Metadata fetch duration.",
-			Buckets:   buckets,
+			Buckets:   fetchBuckets,
 		}),
 		IndexerDBUpsertsTotal: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace,
@@ -197,7 +237,7 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Namespace: namespace,
 			Name:      "scrape_duration_seconds",
 			Help:      "Duration of scrape cycle.",
-			Buckets:   buckets,
+			Buckets:   subSecondBuckets,
 		}),
 		ScrapeHistoryPrunedTotal: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace,
@@ -214,7 +254,7 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Namespace: namespace,
 			Name:      "torznab_request_duration_seconds",
 			Help:      "Request latency.",
-			Buckets:   buckets,
+			Buckets:   subSecondBuckets,
 		}),
 
 		MetadataFetchAttemptsTotal: prometheus.NewCounter(prometheus.CounterOpts{
@@ -236,7 +276,7 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Namespace: namespace,
 			Name:      "metadata_fetch_duration_seconds",
 			Help:      "Metadata fetch duration.",
-			Buckets:   buckets,
+			Buckets:   fetchBuckets,
 		}),
 
 		TorrentsTotal: prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -254,10 +294,49 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name:      "indexer_db_errors_total",
 			Help:      "Database errors in the indexer by operation.",
 		}, []string{"operation"}),
+
+		CrawlerSamplesTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "crawler_samples_total",
+			Help:      "BEP-51 infohash samples by result (new/duplicate/dropped). A high duplicate ratio confirms bloom filter saturation.",
+		}, []string{"result"}),
+
+		IndexerDBQueryDurationSeconds: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "indexer_db_query_duration_seconds",
+			Help:      "DB query latency inside the indexer by operation (lookup, upsert, insert_files, classify_update). A slow lookup is especially costly since it runs on every infohash.",
+			Buckets:   subSecondBuckets,
+		}, []string{"operation"}),
+		IndexerRateLimiterWaitSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "indexer_rate_limiter_wait_seconds",
+			Help:      "Time blocked waiting for a rate-limiter token before launching each BEP-09 peer goroutine. High values mean the rate limiter is the throughput ceiling.",
+			Buckets:   subSecondBuckets,
+		}),
+		IndexerPeersPerInfohash: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "indexer_peers_per_infohash",
+			Help:      "Number of peers available when a non-duplicate infohash enters the indexer. Zero-heavy distributions mean BEP-09 is structurally supply-limited.",
+			Buckets:   peerCountBuckets,
+		}),
+		DiscoveredChannelDepth: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "discovered_channel_depth",
+			Help:      "Instantaneous depth of the discovered channel between discovery workers and indexer workers. Near-zero means indexer workers are starved.",
+		}),
+		DiscoveryWorkersBusy: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "discovery_workers_busy",
+			Help:      "Number of discovery workers actively running a get_peers lookup.",
+		}),
+		IndexerWorkersBusy: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "indexer_workers_busy",
+			Help:      "Number of indexer workers actively processing an infohash.",
+		}),
 	}
 
 	collectors := []prometheus.Collector{
-		m.DHTNodesDiscoveredTotal,
 		m.DHTDiscoveryQueueDepth,
 		m.DHTQueueCapacity,
 		m.DHTDiscoveryQueueDroppedTotal,
@@ -292,6 +371,13 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.TorrentsTotal,
 		m.TorrentsRejectedTotal,
 		m.IndexerDBErrorsTotal,
+		m.CrawlerSamplesTotal,
+		m.DiscoveredChannelDepth,
+		m.DiscoveryWorkersBusy,
+		m.IndexerWorkersBusy,
+		m.IndexerDBQueryDurationSeconds,
+		m.IndexerRateLimiterWaitSeconds,
+		m.IndexerPeersPerInfohash,
 	}
 
 	for _, c := range collectors {
@@ -321,13 +407,6 @@ func New(reg prometheus.Registerer) (*Recorder, error) {
 	}
 
 	return &Recorder{m: m, now: time.Now}, nil
-}
-
-func (r *Recorder) IncDHTNodesDiscoveredTotal(result string) {
-	if r.m == nil {
-		return
-	}
-	r.m.DHTNodesDiscoveredTotal.WithLabelValues(result).Inc()
 }
 
 func (r *Recorder) SetDHTDiscoveryQueueDepth(v float64) {
@@ -566,4 +645,53 @@ func (r *Recorder) IncIndexerDBErrorsTotal(operation string) {
 		return
 	}
 	r.m.IndexerDBErrorsTotal.WithLabelValues(operation).Inc()
+}
+
+func (r *Recorder) AddCrawlerSamplesTotal(result string, n int) {
+	if r.m == nil {
+		return
+	}
+	r.m.CrawlerSamplesTotal.WithLabelValues(result).Add(float64(n))
+}
+
+func (r *Recorder) SetDiscoveredChannelDepth(v float64) {
+	if r.m == nil {
+		return
+	}
+	r.m.DiscoveredChannelDepth.Set(v)
+}
+
+func (r *Recorder) AddDiscoveryWorkersBusy(delta float64) {
+	if r.m == nil {
+		return
+	}
+	r.m.DiscoveryWorkersBusy.Add(delta)
+}
+
+func (r *Recorder) AddIndexerWorkersBusy(delta float64) {
+	if r.m == nil {
+		return
+	}
+	r.m.IndexerWorkersBusy.Add(delta)
+}
+
+func (r *Recorder) ObserveIndexerDBQueryDurationSeconds(operation string, v float64) {
+	if r.m == nil {
+		return
+	}
+	r.m.IndexerDBQueryDurationSeconds.WithLabelValues(operation).Observe(v)
+}
+
+func (r *Recorder) ObserveIndexerRateLimiterWaitSeconds(v float64) {
+	if r.m == nil {
+		return
+	}
+	r.m.IndexerRateLimiterWaitSeconds.Observe(v)
+}
+
+func (r *Recorder) ObserveIndexerPeersPerInfohash(v float64) {
+	if r.m == nil {
+		return
+	}
+	r.m.IndexerPeersPerInfohash.Observe(v)
 }

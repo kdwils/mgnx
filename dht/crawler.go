@@ -641,14 +641,12 @@ func (c *crawlerInstance) processSamples(ctx context.Context, samples string, it
 	}
 	if c.rec != nil {
 		c.rec.SetDHTQueueCapacity(float64(cap(c.discoveryQueue)))
-		if new > 0 {
-			c.rec.IncDHTNodesDiscoveredTotal("inserted")
-		}
-		if total-new-dropped > 0 {
-			c.rec.IncDHTNodesDiscoveredTotal("duplicate")
-		}
+		duplicate := total - new - dropped
+		c.rec.AddCrawlerSamplesTotal("new", new)
+		c.rec.AddCrawlerSamplesTotal("duplicate", duplicate)
 		if dropped > 0 {
 			c.rec.IncDHTDiscoveryQueueDroppedTotal()
+			c.rec.AddCrawlerSamplesTotal("dropped", dropped)
 		}
 	}
 	logger.FromContext(ctx).Debug("samples processed",
@@ -668,7 +666,9 @@ func (c *discoveryWorker) discover(ctx context.Context) {
 			return
 		case work := <-c.discoveryQueue:
 			c.rec.SetDHTDiscoveryQueueDepth(float64(len(c.discoveryQueue)))
+			c.rec.AddDiscoveryWorkersBusy(1)
 			c.discoverPeers(ctx, work.infohash, work.sourceNode)
+			c.rec.AddDiscoveryWorkersBusy(-1)
 		}
 	}
 }
