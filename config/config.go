@@ -41,21 +41,34 @@ type DHT struct {
 	FileSettleTime    time.Duration `mapstructure:"file_settle_time"`
 }
 
+type CrawlerDedup struct {
+	BloomN        int           `mapstructure:"bloom_n"`
+	BloomP        float64       `mapstructure:"bloom_p"`
+	BloomRotation time.Duration `mapstructure:"bloom_rotation"`
+}
+
 type Crawler struct {
-	Crawlers             int           `mapstructure:"crawlers"`
-	DiscoveryWorkers     int           `mapstructure:"discovery_workers"`
-	DiscoveryQueueSize   int           `mapstructure:"discovery_queue_size"`
-	BootstrapNodes       []string      `mapstructure:"bootstrap_nodes"`
-	Alpha                int           `mapstructure:"alpha"`
-	MaxIterations        int           `mapstructure:"max_iterations"`
-	TraversalWidth       int           `mapstructure:"traversal_width"`
-	DefaultCooldown      time.Duration `mapstructure:"default_cooldown"`
-	DefaultInterval      time.Duration `mapstructure:"default_interval"`
-	MaxNodeFailures      int           `mapstructure:"max_node_failures"`
-	MaxJitter            time.Duration `mapstructure:"max_jitter"`
-	EmptySpinWait        time.Duration `mapstructure:"empty_spin_wait"`
-	SampleEnqueueTimeout time.Duration `mapstructure:"sample_enqueue_timeout"`
-	NodeCacheCleanup     time.Duration `mapstructure:"node_cache_cleanup"`
+	Crawlers               int           `mapstructure:"crawlers"`
+	DiscoveryWorkers       int           `mapstructure:"discovery_workers"`
+	DiscoveryQueueSize     int           `mapstructure:"discovery_queue_size"`
+	BootstrapNodes         []string      `mapstructure:"bootstrap_nodes"`
+	Alpha                  int           `mapstructure:"alpha"`
+	MaxIterations          int           `mapstructure:"max_iterations"`
+	TraversalWidth         int           `mapstructure:"traversal_width"`
+	RateLimit              float64       `mapstructure:"rate_limit"`
+	RateBurst              int           `mapstructure:"rate_burst"`
+	DefaultCooldown        time.Duration `mapstructure:"default_cooldown"`
+	DefaultInterval        time.Duration `mapstructure:"default_interval"`
+	MaxNodeFailures        int           `mapstructure:"max_node_failures"`
+	MaxJitter              time.Duration `mapstructure:"max_jitter"`
+	EmptySpinWait          time.Duration `mapstructure:"empty_spin_wait"`
+	SampleEnqueueTimeout   time.Duration `mapstructure:"sample_enqueue_timeout"`
+	NodeCacheCleanup       time.Duration `mapstructure:"node_cache_cleanup"`
+	InflightCacheCleanup   time.Duration `mapstructure:"inflight_cache_cleanup"`
+	SeenCacheCleanup       time.Duration `mapstructure:"seen_cache_cleanup"`
+	MaxSamplesPerNode      int           `mapstructure:"max_samples_per_node"`
+	TargetRotationStrategy string        `mapstructure:"target_rotation_strategy"`
+	Dedup                  CrawlerDedup  `mapstructure:"dedup"`
 }
 
 type Indexer struct {

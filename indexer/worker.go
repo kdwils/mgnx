@@ -126,7 +126,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 
 	resultCh := make(chan *metadata.TorrentInfo, 1)
 
-	for i := 0; i < maxPeers; i++ {
+	for i := range maxPeers {
 		if err := w.rateLimiter.Wait(gctx); err != nil {
 			break
 		}

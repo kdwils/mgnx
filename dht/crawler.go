@@ -768,7 +768,7 @@ func (c *discoveryWorker) queryParallel(ctx context.Context, nodes []*Node, h [2
 	respCh := make(chan *Msg, alpha)
 	var wg sync.WaitGroup
 
-	for i := 0; i < alpha; i++ {
+	for i := range alpha {
 		node := nodes[i]
 		wg.Add(1)
 		go c.queryNodeAsync(ctx, node, h, respCh, &wg)

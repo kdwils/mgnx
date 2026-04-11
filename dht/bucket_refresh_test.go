@@ -130,7 +130,7 @@ func TestBucketRefresh_markSuccessDoesNotResetStaleness(t *testing.T) {
 	require.Empty(t, rt.StaleBuckets(), "bucket should not be stale immediately after insert")
 
 	// Simulate the node responding to queries repeatedly.
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		rt.MarkSuccess(nodeID)
 	}
 
