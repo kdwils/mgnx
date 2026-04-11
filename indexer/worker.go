@@ -110,6 +110,8 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		return
 	}
 
+	w.rec.IncIndexerPeersProcessedTotal("processed")
+
 	maxPeers := min(len(ev.Peers), w.maxPeers)
 
 	var info *metadata.TorrentInfo
