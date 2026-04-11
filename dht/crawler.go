@@ -458,14 +458,23 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 			i, item := i, item
 			go func() {
 				defer wg.Done()
+
+				// get_peers is always the primary query: it drives routing
+				// regardless of whether the node supports BEP-51.
 				qCtx, cancel := context.WithTimeout(ctx, c.transactionTimeout)
-				resp, supported, err := c.queryForSamples(qCtx, item)
+				resp, err := c.getPeers(qCtx, item)
 				cancel()
-				if err == nil && !supported {
-					qCtx2, cancel2 := context.WithTimeout(ctx, c.transactionTimeout)
-					resp, err = c.getPeers(qCtx2, item)
-					cancel2()
+				c.rec.IncCrawlerQueriesTotal("get_peers", "crawling", c.id)
+
+				// sample_infohashes is optional: queryForSamples skips nodes
+				// known to not support BEP-51, so this is cheap for those nodes.
+				sqCtx, scancel := context.WithTimeout(ctx, c.transactionTimeout)
+				sResp, supported, sErr := c.queryForSamples(sqCtx, item)
+				scancel()
+				if sErr == nil && supported && sResp != nil && sResp.R != nil && len(sResp.R.Samples) > 0 {
+					c.processSamples(ctx, sResp.R.Samples, item)
 				}
+
 				results[i] = queryResult{item, resp, err}
 			}()
 		}
@@ -487,9 +496,6 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 			}
 
 			if r.resp != nil && r.resp.R != nil {
-				if len(r.resp.R.Samples) > 0 {
-					c.processSamples(ctx, r.resp.R.Samples, r.item)
-				}
 				if len(r.resp.R.Nodes) > 0 {
 					c.processNodes(ctx, r.resp.R.Nodes, r.item.target)
 				}
