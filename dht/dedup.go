@@ -8,9 +8,9 @@ import (
 )
 
 const (
-	bloomN        = 1_000_000
+	bloomN        = 10_000_000
 	bloomP        = 0.001
-	bloomRotation = 12 * time.Hour
+	bloomRotation = 5 * time.Minute
 )
 
 // BloomFilter is a double-rotating bloom filter for infohash deduplication.
@@ -48,4 +48,18 @@ func (b *BloomFilter) SeenOrAdd(h [20]byte) bool {
 
 	b.active.Add(h[:])
 	return false
+}
+
+func (b *BloomFilter) StartRotator() {
+	go func() {
+		ticker := time.NewTicker(bloomRotation)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			b.mu.Lock()
+			b.previous = b.active
+			b.active = bloom.NewWithEstimates(bloomN, bloomP)
+			b.mu.Unlock()
+		}
+	}()
 }
