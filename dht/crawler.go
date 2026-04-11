@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"maps"
+	mrand "math/rand"
 	"net"
 	"sort"
 	"sync"
@@ -139,6 +140,7 @@ func (c *crawler) Start(ctx context.Context) error {
 	c.nodeSampleSupport.StartCleanup(crawlCtx)
 
 	for i := 0; i < c.crawlers; i++ {
+		i := i
 		c.wg.Go(func() {
 			instance := crawlerInstance{
 				id:       i,
@@ -151,6 +153,7 @@ func (c *crawler) Start(ctx context.Context) error {
 		})
 	}
 	for i := 0; i < c.discoveryWorkers; i++ {
+		i := i
 		c.wg.Go(func() {
 			w := discoveryWorker{
 				id:      i,
@@ -288,7 +291,17 @@ const (
 	defaultCooldown = 2 * time.Second  // retry interval after a failed/timed-out query
 	defaultInterval = 10 * time.Second // re-query interval when BEP-51 response carries no Interval
 	maxNodeFailures = 3                // evict node after this many consecutive failures
+	maxJitter       = 500 * time.Millisecond
 )
+
+// jitter returns a random duration in [0, max) to spread cooldown expiries
+// and prevent synchronized query bursts across crawler instances.
+func jitter(max time.Duration) time.Duration {
+	if max <= 0 {
+		return 0
+	}
+	return time.Duration(mrand.Int63n(int64(max)))
+}
 
 // computeInterval returns the re-query interval for a node.
 // BEP-51 nodes advertise an Interval field; default to defaultInterval if absent or too small.
@@ -320,7 +333,12 @@ func (c *crawlerInstance) promoteReady(now time.Time) {
 // crawl implements the BEP-51 active traversal loop. Eligible nodes live in
 // the ready heap; nodes waiting for their cooldown live in the cooldown heap.
 // seen is the single authoritative dedup guard: a key present in seen means
-// the node is in cooldownHeap and must not be pushed to readyHeap.
+// the node is in-flight, in cooldownHeap, or both; it must not be pushed to
+// readyHeap until its cooldown expires and it is promoted by promoteReady.
+//
+// Each iteration collects up to alpha items from the ready heap, marks them
+// in-flight in seen, then queries them concurrently. Results are processed
+// sequentially so that heap/cooldown mutations remain single-threaded.
 func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 	log := logger.FromContext(ctx).With("service", "crawler")
 
@@ -331,6 +349,12 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 	heap.Init(&c.cooldown)
 
 	c.seedQueue(target)
+
+	type queryResult struct {
+		item *traversalItem
+		resp *Msg
+		err  error
+	}
 
 	for {
 		if ctx.Err() != nil {
@@ -359,8 +383,22 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 			)
 		}
 
-		item := c.nextEligible(time.Now())
-		if item == nil {
+		// Collect up to alpha items and mark them in-flight before dispatching.
+		// Marking in-flight here (rather than relying on a retained seen entry)
+		// ensures processNodes cannot re-queue these nodes while queries are
+		// outstanding.
+		now := time.Now()
+		var batch []*traversalItem
+		for len(batch) < c.alpha {
+			item := c.nextEligible(now)
+			if item == nil {
+				break
+			}
+			c.seen[item.node.ID] = now // in-flight sentinel
+			batch = append(batch, item)
+		}
+
+		if len(batch) == 0 {
 			if c.cooldown.Len() > 0 {
 				wait := time.Until(c.cooldown[0].nextAllowed)
 				if wait > 0 {
@@ -388,49 +426,72 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 			continue
 		}
 
-		qCtx, cancel := context.WithTimeout(ctx, c.transactionTimeout)
-		resp, err := c.queryForSamples(qCtx, item)
-		cancel()
+		// Query the batch concurrently. Each goroutine is self-contained: it
+		// only reads item and calls server.Query / nodeSampleSupport, which are
+		// both concurrency-safe. The seen/heap structures are not touched until
+		// the sequential result loop below.
+		results := make([]queryResult, len(batch))
+		var wg sync.WaitGroup
+		for i, item := range batch {
+			wg.Add(1)
+			i, item := i, item
+			go func() {
+				defer wg.Done()
+				qCtx, cancel := context.WithTimeout(ctx, c.transactionTimeout)
+				resp, err := c.queryForSamples(qCtx, item)
+				cancel()
+				if err == nil && resp == nil {
+					qCtx2, cancel2 := context.WithTimeout(ctx, c.transactionTimeout)
+					resp, err = c.getPeers(qCtx2, item)
+					cancel2()
+				}
+				results[i] = queryResult{item, resp, err}
+			}()
+		}
+		wg.Wait()
 
-		if err != nil {
-			c.server.table.MarkFailure(item.node.ID)
-			item.failures++
-			if item.failures >= maxNodeFailures {
-				delete(c.seen, item.node.ID)
+		// Process results sequentially so heap/cooldown mutations are single-threaded.
+		for _, r := range results {
+			if r.err != nil {
+				c.server.table.MarkFailure(r.item.node.ID)
+				r.item.failures++
+				if r.item.failures >= maxNodeFailures {
+					delete(c.seen, r.item.node.ID)
+					continue
+				}
+				next := time.Now().Add(defaultCooldown + jitter(maxJitter))
+				c.seen[r.item.node.ID] = next
+				heap.Push(&c.cooldown, &cooldownItem{item: r.item, nextAllowed: next})
 				continue
 			}
-			next := time.Now().Add(defaultCooldown)
-			c.seen[item.node.ID] = next
-			heap.Push(&c.cooldown, &cooldownItem{item: item, nextAllowed: next})
-			continue
-		}
 
-		if resp != nil && resp.R != nil {
-			if len(resp.R.Samples) > 0 {
-				c.processSamples(ctx, resp.R.Samples, item)
+			if r.resp != nil && r.resp.R != nil {
+				if len(r.resp.R.Samples) > 0 {
+					c.processSamples(ctx, r.resp.R.Samples, r.item)
+				}
+				if len(r.resp.R.Nodes) > 0 {
+					c.processNodes(ctx, r.resp.R.Nodes, r.item.target)
+				}
 			}
-			if len(resp.R.Nodes) > 0 {
-				c.processNodes(ctx, resp.R.Nodes, item.target)
+
+			c.server.table.MarkSuccess(r.item.node.ID)
+			r.item.failures = 0
+			next := time.Now().Add(computeInterval(r.resp) + jitter(maxJitter))
+			c.seen[r.item.node.ID] = next
+			heap.Push(&c.cooldown, &cooldownItem{item: r.item, nextAllowed: next})
+
+			nodesReturned := 0
+			if r.resp != nil && r.resp.R != nil {
+				nodesReturned = len(r.resp.R.Nodes) / 26
 			}
+			log.Debug("query complete",
+				"node", r.item.node.Addr.String(),
+				"ready_size", c.ready.Len(),
+				"cooldown_size", c.cooldown.Len(),
+				"nodes_returned", nodesReturned,
+				"table_size", c.server.table.NodeCount(),
+			)
 		}
-
-		c.server.table.MarkSuccess(item.node.ID)
-		item.failures = 0
-		next := time.Now().Add(computeInterval(resp))
-		c.seen[item.node.ID] = next
-		heap.Push(&c.cooldown, &cooldownItem{item: item, nextAllowed: next})
-
-		nodesReturned := 0
-		if resp != nil && resp.R != nil {
-			nodesReturned = len(resp.R.Nodes) / 26
-		}
-		log.Debug("query complete",
-			"node", item.node.Addr.String(),
-			"ready_size", c.ready.Len(),
-			"cooldown_size", c.cooldown.Len(),
-			"nodes_returned", nodesReturned,
-			"table_size", c.server.table.NodeCount(),
-		)
 	}
 }
 
@@ -450,11 +511,9 @@ func (c *crawlerInstance) seedQueue(target NodeID) {
 }
 
 // nextEligible promotes cooled-down nodes then pops the closest ready node.
-// The seen entry is intentionally retained after the pop: the node is now
-// in-flight and seen acts as the dedup guard that prevents seedQueue and
-// processNodes from re-inserting it while the query is outstanding. The
-// caller is responsible for updating seen with the new cooldown time once
-// the query completes.
+// The caller is responsible for immediately marking the returned node in seen
+// as an in-flight sentinel before dispatching queries, so that seedQueue and
+// processNodes cannot re-insert it while the query is outstanding.
 func (c *crawlerInstance) nextEligible(now time.Time) *traversalItem {
 	c.promoteReady(now)
 
@@ -486,7 +545,7 @@ func (c *crawlerInstance) processSamples(ctx context.Context, samples string, it
 		new++
 		select {
 		case c.discoveryQueue <- discoveryWork{h, item.node}:
-		default:
+		case <-time.After(100 * time.Millisecond):
 			dropped++
 			c.droppedDiscoveries.Add(1)
 		}
@@ -584,8 +643,8 @@ func (c *discoveryWorker) discoverPeers(ctx context.Context, h [20]byte, initial
 
 		responses := c.queryParallel(ctx, toQuery, h)
 
-		alpha := min(len(toQuery), c.alpha)
-		for i := range alpha {
+		numQueried := min(len(toQuery), c.alpha)
+		for i := 0; i < numQueried; i++ {
 			queried[toQuery[i].ID] = true
 		}
 
