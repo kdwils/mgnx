@@ -10,24 +10,24 @@ import (
 const (
 	bloomN        = 10_000_000
 	bloomP        = 0.001
-	bloomRotation = 5 * time.Minute
+	bloomRotation = 10 * time.Minute
 )
 
-// BloomFilter is a double-rotating bloom filter for infohash deduplication.
+// BloomFilter is a filter for infohash deduplication.
 type BloomFilter struct {
 	active   *bloom.BloomFilter
-	previous *bloom.BloomFilter
 	mu       sync.Mutex
 	rotateAt time.Time
 }
 
-// NewBloomFilter creates a BloomFilter with n=1,000,000 and p=0.001.
 func NewBloomFilter() *BloomFilter {
-	return &BloomFilter{
+	bf := &BloomFilter{
 		active:   bloom.NewWithEstimates(bloomN, bloomP),
-		previous: bloom.NewWithEstimates(bloomN, bloomP),
 		rotateAt: time.Now().Add(bloomRotation),
 	}
+	go bf.startRotator()
+
+	return bf
 }
 
 // SeenOrAdd returns true if h was already seen (in either filter).
@@ -37,12 +37,11 @@ func (b *BloomFilter) SeenOrAdd(h [20]byte) bool {
 	defer b.mu.Unlock()
 
 	if time.Now().After(b.rotateAt) {
-		b.previous = b.active
 		b.active = bloom.NewWithEstimates(bloomN, bloomP)
 		b.rotateAt = time.Now().Add(bloomRotation)
 	}
 
-	if b.active.Test(h[:]) || b.previous.Test(h[:]) {
+	if b.active.Test(h[:]) {
 		return true
 	}
 
@@ -50,16 +49,13 @@ func (b *BloomFilter) SeenOrAdd(h [20]byte) bool {
 	return false
 }
 
-func (b *BloomFilter) StartRotator() {
-	go func() {
-		ticker := time.NewTicker(bloomRotation)
-		defer ticker.Stop()
+func (b *BloomFilter) startRotator() {
+	ticker := time.NewTicker(bloomRotation)
+	defer ticker.Stop()
 
-		for range ticker.C {
-			b.mu.Lock()
-			b.previous = b.active
-			b.active = bloom.NewWithEstimates(bloomN, bloomP)
-			b.mu.Unlock()
-		}
-	}()
+	for range ticker.C {
+		b.mu.Lock()
+		b.active = bloom.NewWithEstimates(bloomN, bloomP)
+		b.mu.Unlock()
+	}
 }

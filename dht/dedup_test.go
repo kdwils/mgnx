@@ -3,8 +3,6 @@ package dht
 import (
 	"crypto/rand"
 	"testing"
-
-	"github.com/bits-and-blooms/bloom/v3"
 )
 
 func TestBloomFilter_SeenOrAdd(t *testing.T) {
@@ -20,27 +18,6 @@ func TestBloomFilter_SeenOrAdd(t *testing.T) {
 	}
 	if !bf.SeenOrAdd(h) {
 		t.Fatal("expected true on second call")
-	}
-}
-
-func TestBloomFilter_PreviousWindowVisible(t *testing.T) {
-	bf := NewBloomFilter()
-
-	var h [20]byte
-	if _, err := rand.Read(h[:]); err != nil {
-		t.Fatal(err)
-	}
-	bf.SeenOrAdd(h)
-
-	// Manually rotate: simulate the rotation by backdating rotateAt.
-	bf.mu.Lock()
-	bf.previous = bf.active
-	bf.active = bloom.NewWithEstimates(bloomN, bloomP)
-	bf.mu.Unlock()
-
-	// h is now in previous; SeenOrAdd should still detect it.
-	if !bf.SeenOrAdd(h) {
-		t.Fatal("expected true: hash should be visible in previous filter")
 	}
 }
 
