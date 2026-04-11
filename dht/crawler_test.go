@@ -16,7 +16,19 @@ import (
 
 func makeCrawler(t *testing.T) *crawler {
 	t.Helper()
-	cr, err := NewCrawler(config.Crawler{Crawlers: 2, Alpha: 3, MaxIterations: 4, TraversalWidth: 20}, testServerCfg(t), recorder.NewNoOp())
+	cr, err := NewCrawler(config.Crawler{
+		Crawlers:             2,
+		Alpha:                3,
+		MaxIterations:        4,
+		TraversalWidth:       20,
+		DefaultCooldown:      2 * time.Second,
+		DefaultInterval:      10 * time.Second,
+		MaxNodeFailures:      3,
+		MaxJitter:            500 * time.Millisecond,
+		EmptySpinWait:        5 * time.Second,
+		SampleEnqueueTimeout: 1 * time.Second,
+		NodeCacheCleanup:     1 * time.Hour,
+	}, testServerCfg(t), recorder.NewNoOp())
 	require.NoError(t, err)
 	cr.discoveryQueue = make(chan discoveryWork, 64)
 	t.Cleanup(func() { cr.Stop(t.Context()) })
@@ -109,7 +121,9 @@ func TestNewCrawler(t *testing.T) {
 		c := makeCrawler(t)
 		assert.Equal(t, c.discovered, c.server.discovered)
 	})
+
 }
+
 
 func TestBep51PQ_ordering(t *testing.T) {
 	t.Run("pop returns closest item first", func(t *testing.T) {
@@ -908,5 +922,104 @@ func TestCrawler_processResponses(t *testing.T) {
 
 		assert.Equal(t, true, foundPeers)
 		assert.Nil(t, gotNodes)
+	})
+}
+
+
+func TestCrawler_pruneStaleInFlight(t *testing.T) {
+	t.Run("removes entries older than 2x transactionTimeout", func(t *testing.T) {
+		cr := makeCrawler(t)
+		w := crawlerInstance{
+			crawler: cr,
+			seen:    make(map[NodeID]time.Time),
+		}
+
+		// transactionTimeout=2s → cutoff = now-4s; entries at now-10s are stale.
+		var staleID NodeID
+		staleID[0] = 0x01
+		w.seen[staleID] = time.Now().Add(-10 * time.Second)
+
+		// Entry within the window — must survive.
+		var freshID NodeID
+		freshID[0] = 0x02
+		w.seen[freshID] = time.Now().Add(-time.Second)
+
+		w.pruneStaleInFlight()
+
+		_, staleGone := w.seen[staleID]
+		assert.False(t, staleGone, "stale entry must be evicted")
+		_, freshPresent := w.seen[freshID]
+		assert.True(t, freshPresent, "recent entry must be kept")
+	})
+
+	t.Run("caps seen map at 4x traversalWidth by evicting past-timed entries", func(t *testing.T) {
+		cr := makeCrawler(t)
+		cr.traversalWidth = 2 // maxSize = 8
+		w := crawlerInstance{
+			crawler: cr,
+			seen:    make(map[NodeID]time.Time),
+		}
+
+		// 9 entries at now-1s: not stale (within 4s window) but exceed maxSize=8.
+		past := time.Now().Add(-time.Second)
+		for i := range 9 {
+			var id NodeID
+			id[0] = byte(i + 1)
+			w.seen[id] = past
+		}
+		require.Equal(t, 9, len(w.seen))
+
+		w.pruneStaleInFlight()
+
+		assert.LessOrEqual(t, len(w.seen), 4*cr.traversalWidth)
+	})
+
+	t.Run("size cap preserves future-timed cooldown entries", func(t *testing.T) {
+		cr := makeCrawler(t)
+		cr.traversalWidth = 2 // maxSize = 8
+		w := crawlerInstance{
+			crawler: cr,
+			seen:    make(map[NodeID]time.Time),
+		}
+
+		// 8 future-timed entries (active cooldowns) + 1 past-timed = 9 total.
+		future := time.Now().Add(time.Hour)
+		var futureIDs [8]NodeID
+		for i := range 8 {
+			futureIDs[i][0] = byte(i + 1)
+			w.seen[futureIDs[i]] = future
+		}
+		var pastID NodeID
+		pastID[19] = 0xFF
+		w.seen[pastID] = time.Now().Add(-time.Second)
+
+		w.pruneStaleInFlight()
+
+		_, pastEvicted := w.seen[pastID]
+		assert.False(t, pastEvicted, "past-timed in-flight sentinel must be evicted to meet size cap")
+		for i, id := range futureIDs {
+			_, present := w.seen[id]
+			assert.True(t, present, "future-timed cooldown entry %d must be preserved", i)
+		}
+	})
+
+	t.Run("no-op when seen is within size cap", func(t *testing.T) {
+		cr := makeCrawler(t)
+		cr.traversalWidth = 4 // maxSize = 16
+		w := crawlerInstance{
+			crawler: cr,
+			seen:    make(map[NodeID]time.Time),
+		}
+
+		future := time.Now().Add(time.Hour)
+		for i := range 5 {
+			var id NodeID
+			id[0] = byte(i + 1)
+			w.seen[id] = future
+		}
+
+		w.pruneStaleInFlight()
+
+		assert.Equal(t, 5, len(w.seen))
 	})
 }

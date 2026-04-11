@@ -42,13 +42,20 @@ type DHT struct {
 }
 
 type Crawler struct {
-	Crawlers           int      `mapstructure:"crawlers"`
-	DiscoveryWorkers   int      `mapstructure:"discovery_workers"`
-	DiscoveryQueueSize int      `mapstructure:"discovery_queue_size"`
-	BootstrapNodes     []string `mapstructure:"bootstrap_nodes"`
-	Alpha              int      `mapstructure:"alpha"`
-	MaxIterations      int      `mapstructure:"max_iterations"`
-	TraversalWidth     int      `mapstructure:"traversal_width"`
+	Crawlers             int           `mapstructure:"crawlers"`
+	DiscoveryWorkers     int           `mapstructure:"discovery_workers"`
+	DiscoveryQueueSize   int           `mapstructure:"discovery_queue_size"`
+	BootstrapNodes       []string      `mapstructure:"bootstrap_nodes"`
+	Alpha                int           `mapstructure:"alpha"`
+	MaxIterations        int           `mapstructure:"max_iterations"`
+	TraversalWidth       int           `mapstructure:"traversal_width"`
+	DefaultCooldown      time.Duration `mapstructure:"default_cooldown"`
+	DefaultInterval      time.Duration `mapstructure:"default_interval"`
+	MaxNodeFailures      int           `mapstructure:"max_node_failures"`
+	MaxJitter            time.Duration `mapstructure:"max_jitter"`
+	EmptySpinWait        time.Duration `mapstructure:"empty_spin_wait"`
+	SampleEnqueueTimeout time.Duration `mapstructure:"sample_enqueue_timeout"`
+	NodeCacheCleanup     time.Duration `mapstructure:"node_cache_cleanup"`
 }
 
 type Indexer struct {
