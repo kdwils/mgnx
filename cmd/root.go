@@ -105,7 +105,6 @@ func initConfig() {
 	viper.SetDefault("crawler.sample_enqueue_timeout", 1*time.Second)
 	viper.SetDefault("crawler.empty_spin_wait", 5*time.Second)
 	viper.SetDefault("crawler.node_cache_cleanup", 1*time.Hour)
-	viper.SetDefault("crawler.barren_rotate_threshold", 20)
 	viper.SetDefault("crawler.inflight_cache_cleanup", 5*time.Minute)
 	viper.SetDefault("crawler.seen_cache_cleanup", 1*time.Hour)
 	viper.SetDefault("crawler.max_samples_per_node", 50)

@@ -57,7 +57,6 @@ type Crawler struct {
 	SampleEnqueueTimeout  time.Duration `mapstructure:"sample_enqueue_timeout"`
 	NodeCacheCleanup      time.Duration `mapstructure:"node_cache_cleanup"`
 	MaxInterval           time.Duration `mapstructure:"max_interval"`
-	BarrenRotateThreshold int           `mapstructure:"barren_rotate_threshold"`
 }
 
 type Indexer struct {
