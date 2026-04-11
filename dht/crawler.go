@@ -61,9 +61,8 @@ type crawler struct {
 	maxNodeFailures      int
 	maxJitter            time.Duration
 	emptySpinWait        time.Duration
-	sampleEnqueueTimeout  time.Duration
-	maxInterval           time.Duration
-	barrenRotateThreshold int
+	sampleEnqueueTimeout time.Duration
+	maxInterval          time.Duration
 }
 
 type discoveryWork struct {
@@ -100,9 +99,8 @@ func NewCrawler(cfg config.Crawler, dhtCfg config.DHT, rec *recorder.Recorder) (
 		maxNodeFailures:      cfg.MaxNodeFailures,
 		maxJitter:            cfg.MaxJitter,
 		emptySpinWait:        cfg.EmptySpinWait,
-		sampleEnqueueTimeout:  cfg.SampleEnqueueTimeout,
-		maxInterval:           cfg.MaxInterval,
-		barrenRotateThreshold: cfg.BarrenRotateThreshold,
+		sampleEnqueueTimeout: cfg.SampleEnqueueTimeout,
+		maxInterval:          cfg.MaxInterval,
 		nodeSampleSupport: pkgcache.New[NodeID, bool](
 			pkgcache.WithCleanup[NodeID, bool](
 				cfg.NodeCacheCleanup,
@@ -369,13 +367,10 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 	c.seedQueue(target)
 
 	type queryResult struct {
-		item        *traversalItem
-		resp        *Msg
-		err         error
-		samplesSeen bool
+		item *traversalItem
+		resp *Msg
+		err  error
 	}
-
-	var consecutiveBarrenBatches int
 
 	var iteration int
 	for {
@@ -476,12 +471,11 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 				sqCtx, scancel := context.WithTimeout(ctx, c.transactionTimeout)
 				sResp, supported, sErr := c.queryForSamples(sqCtx, item)
 				scancel()
-				samplesSeen := sErr == nil && supported && sResp != nil && sResp.R != nil && len(sResp.R.Samples) > 0
-				if samplesSeen {
+				if sErr == nil && supported && sResp != nil && sResp.R != nil && len(sResp.R.Samples) > 0 {
 					c.processSamples(ctx, sResp.R.Samples, item)
 				}
 
-				results[i] = queryResult{item, resp, err, samplesSeen}
+				results[i] = queryResult{item, resp, err}
 			}()
 		}
 		wg.Wait()
@@ -524,26 +518,6 @@ func (c *crawlerInstance) crawl(ctx context.Context, id int) {
 				"nodes_returned", nodesReturned,
 				"table_size", c.server.table.NodeCount(),
 			)
-		}
-
-		batchHadSamples := false
-		for _, r := range results {
-			if r.samplesSeen {
-				batchHadSamples = true
-				break
-			}
-		}
-		if batchHadSamples {
-			consecutiveBarrenBatches = 0
-		}
-		if !batchHadSamples {
-			consecutiveBarrenBatches++
-		}
-		if c.barrenRotateThreshold > 0 && consecutiveBarrenBatches >= c.barrenRotateThreshold {
-			consecutiveBarrenBatches = 0
-			rand.Read(target[:])
-			c.seedQueue(target)
-			log.Debug("barren rotate", "target", hex.EncodeToString(target[:]))
 		}
 
 		iteration++
@@ -701,14 +675,14 @@ func (c *discoveryWorker) discoverPeers(ctx context.Context, h [20]byte, initial
 
 	queried := make(map[NodeID]bool)
 
+	var collectedPeers []PeerAddr
+	result := "max_iterations"
+
 	for iter := 0; iter < c.maxIterations; iter++ {
 		entries := c.sortByDistance(shortlist, target)
 		if len(entries) == 0 {
-			if c.rec != nil {
-				c.rec.IncDiscoveryWorkItemsTotal("no_peers")
-			}
-			log.Debug("peer discovery complete", "iterations", iter, "result", "empty_shortlist")
-			return
+			result = "empty_shortlist"
+			break
 		}
 
 		var toQuery []*Node
@@ -718,11 +692,8 @@ func (c *discoveryWorker) discoverPeers(ctx context.Context, h [20]byte, initial
 			}
 		}
 		if len(toQuery) == 0 {
-			if c.rec != nil {
-				c.rec.IncDiscoveryWorkItemsTotal("no_peers")
-			}
-			log.Debug("peer discovery complete", "iterations", iter, "result", "all_queried")
-			return
+			result = "all_queried"
+			break
 		}
 
 		// Mark exactly the nodes that queryParallel will dispatch (first alpha).
@@ -735,28 +706,35 @@ func (c *discoveryWorker) discoverPeers(ctx context.Context, h [20]byte, initial
 
 		responses := c.queryParallel(ctx, toQuery, h)
 
-		foundPeers, newNodes := c.processResponses(ctx, responses, h)
-		if foundPeers {
-			if c.rec != nil {
-				c.rec.IncDiscoveryWorkItemsTotal("success")
-			}
-			log.Debug("peer discovery complete", "iterations", iter+1, "result", "peers_found")
-			return
-		}
-		if len(newNodes) == 0 {
-			if c.rec != nil {
-				c.rec.IncDiscoveryWorkItemsTotal("no_peers")
-			}
-			log.Debug("peer discovery complete", "iterations", iter+1, "result", "no_new_nodes")
-			return
-		}
+		peers, newNodes := c.processResponses(ctx, responses, h)
+		collectedPeers = append(collectedPeers, peers...)
 
+		if len(newNodes) == 0 {
+			// No new nodes to add; the toQuery == 0 check on the next iteration
+			// will terminate the loop once all shortlist nodes are queried.
+			continue
+		}
 		shortlist = c.trimToKClosest(c.mergeNodes(shortlist, newNodes), target)
 	}
-	if c.rec != nil {
-		c.rec.IncDiscoveryWorkItemsTotal("no_peers")
+
+	if len(collectedPeers) == 0 {
+		if c.rec != nil {
+			c.rec.IncDiscoveryWorkItemsTotal("no_peers")
+		}
+		log.Debug("peer discovery complete", "result", result)
+		return
 	}
-	log.Debug("peer discovery complete", "iterations", c.maxIterations, "result", "max_iterations")
+
+	select {
+	case c.discovered <- DiscoveredPeers{Infohash: h, Peers: collectedPeers, SeenAt: time.Now()}:
+		log.Debug("peers emitted", "count", len(collectedPeers))
+	default:
+		log.Debug("discovered channel full, peers dropped", "count", len(collectedPeers))
+	}
+	if c.rec != nil {
+		c.rec.IncDiscoveryWorkItemsTotal("success")
+	}
+	log.Debug("peer discovery complete", "result", result, "peers", len(collectedPeers))
 }
 
 // trimReadyToK sorts the ready heap by XOR distance and discards all items
@@ -847,13 +825,12 @@ func (c *discoveryWorker) queryNodeAsync(ctx context.Context, node *Node, h [20]
 	}
 }
 
-// processResponses inspects get_peers responses per BEP-05 §4.2: if any
-// response carries peer Values, all peer addresses are collected across every
-// response and emitted as a single DiscoveredPeers event (more peers increases
-// the chance of a successful metadata fetch given the high failure rate observed
-// in production). Nodes are returned for the next shortlist iteration.
-func (c *crawler) processResponses(ctx context.Context, responses []*Msg, h [20]byte) (bool, map[NodeID]*Node) {
-	log := logger.FromContext(ctx).With("service", "crawler", "infohash", hex.EncodeToString(h[:]))
+// processResponses inspects get_peers responses per BEP-05 §4.2: peer Values
+// are collected across all responses and returned to the caller for
+// accumulation. Nodes are returned for the next shortlist iteration.
+// Emitting to the discovered channel is the caller's responsibility so that
+// peers can be aggregated across multiple iterations before dispatch.
+func (c *crawler) processResponses(ctx context.Context, responses []*Msg, h [20]byte) ([]PeerAddr, map[NodeID]*Node) {
 	var newNodes map[NodeID]*Node
 	var allPeers []PeerAddr
 
@@ -874,17 +851,7 @@ func (c *crawler) processResponses(ctx context.Context, responses []*Msg, h [20]
 		maps.Copy(newNodes, extractedNodes)
 	}
 
-	if len(allPeers) > 0 {
-		select {
-		case c.discovered <- DiscoveredPeers{Infohash: h, Peers: allPeers, SeenAt: time.Now()}:
-			log.Debug("peers emitted", "count", len(allPeers))
-		default:
-			log.Debug("discovered channel full, peers dropped", "count", len(allPeers))
-		}
-		return true, nil
-	}
-
-	return false, newNodes
+	return allPeers, newNodes
 }
 
 // extractPeers decodes the compact 6-byte peer list from a BEP-05 get_peers
