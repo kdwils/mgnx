@@ -39,6 +39,9 @@ type Metrics struct {
 	DHTPacketsInTotal   prometheus.Counter
 	DHTPacketsOutTotal  prometheus.Counter
 	DHTRoutingTableSize prometheus.Gauge
+	// DHTNodesDiscoveredTotal counts routing table insert outcomes by result:
+	// inserted (new active slot), updated (refresh), cached (replacement cache), dropped (both full).
+	DHTNodesDiscoveredTotal *prometheus.CounterVec
 
 	IndexerWorkersActive        prometheus.Gauge
 	IndexerPeersProcessedTotal  *prometheus.CounterVec
@@ -175,6 +178,11 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name:      "dht_routing_table_size",
 			Help:      "Routing table node count.",
 		}),
+		DHTNodesDiscoveredTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "dht_nodes_discovered_total",
+			Help:      "Routing table insert outcomes: inserted (new active slot), updated (liveness refresh), cached (replacement cache), dropped (both full).",
+		}, []string{"result"}),
 
 		IndexerWorkersActive: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
@@ -349,6 +357,7 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.DHTPacketsInTotal,
 		m.DHTPacketsOutTotal,
 		m.DHTRoutingTableSize,
+		m.DHTNodesDiscoveredTotal,
 		m.IndexerWorkersActive,
 		m.IndexerPeersProcessedTotal,
 		m.IndexerMetadataFetchedTotal,
@@ -491,6 +500,13 @@ func (r *Recorder) SetDHTRoutingTableSize(v float64) {
 		return
 	}
 	r.m.DHTRoutingTableSize.Set(v)
+}
+
+func (r *Recorder) IncDHTNodesDiscoveredTotal(result string) {
+	if r.m == nil {
+		return
+	}
+	r.m.DHTNodesDiscoveredTotal.WithLabelValues(result).Inc()
 }
 
 func (r *Recorder) SetIndexerWorkersActive(v float64) {

@@ -287,7 +287,8 @@ func (s *Server) updateTableFromResponse(addr *net.UDPAddr, msg *Msg) {
 	if err != nil {
 		return
 	}
-	s.table.Insert(&Node{ID: id, Addr: addr, LastSeen: time.Now()})
+	result := s.table.Insert(&Node{ID: id, Addr: addr, LastSeen: time.Now()})
+	s.rec.IncDHTNodesDiscoveredTotal(result)
 	s.table.MarkSuccess(id)
 	s.rec.SetDHTRoutingTableSize(float64(s.table.NodeCount()))
 }
@@ -317,7 +318,8 @@ func (s *Server) processQuery(ctx context.Context, in inMsg) {
 
 	if in.msg.A != nil {
 		if id, err := ParseNodeID(in.msg.A.ID); err == nil {
-			s.table.Insert(&Node{ID: id, Addr: in.addr, LastSeen: time.Now()})
+			result := s.table.Insert(&Node{ID: id, Addr: in.addr, LastSeen: time.Now()})
+			s.rec.IncDHTNodesDiscoveredTotal(result)
 		}
 	}
 
@@ -530,8 +532,10 @@ func (s *Server) insertNodesFromFindNode(ctx context.Context, resp *Msg, from *n
 		return
 	}
 	for _, node := range nodes {
-		s.table.Insert(node)
+		result := s.table.Insert(node)
+		s.rec.IncDHTNodesDiscoveredTotal(result)
 	}
+	s.rec.SetDHTRoutingTableSize(float64(s.table.NodeCount()))
 	logger.FromContext(ctx).Debug(logKey+" nodes inserted",
 		"service", "dht",
 		"from", from.String(),

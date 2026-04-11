@@ -58,15 +58,24 @@ func (rt *RoutingTable) SetOurID(id NodeID) {
 	rt.mu.Unlock()
 }
 
+// NodeInsertResult describes the outcome of a routing table Insert call.
+const (
+	NodeInsertUpdated  = "updated"  // node already present; address/liveness refreshed
+	NodeInsertInserted = "inserted" // new node added to an active bucket
+	NodeInsertCached   = "cached"   // bucket full; node added to replacement cache
+	NodeInsertDropped  = "dropped"  // bucket and replacement cache both full; node discarded
+)
+
 // Insert adds node to the routing table or updates it if already present.
-func (rt *RoutingTable) Insert(node *Node) {
+// It returns one of the NodeInsert* constants describing the outcome.
+func (rt *RoutingTable) Insert(node *Node) string {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	rt.insert(node)
+	return rt.insert(node)
 }
 
 // insert is the lock-free inner implementation; callers must hold rt.mu.
-func (rt *RoutingTable) insert(node *Node) {
+func (rt *RoutingTable) insert(node *Node) string {
 	for {
 		idx := rt.bucketFor(node.ID)
 		b := rt.buckets[idx]
@@ -78,13 +87,13 @@ func (rt *RoutingTable) insert(node *Node) {
 			n.Addr = node.Addr
 			n.LastSeen = node.LastSeen
 			n.FailureCount = 0
-			return
+			return NodeInsertUpdated
 		}
 
 		if !b.IsFull(rt.cfg.BucketSize) {
 			b.Nodes = append(b.Nodes, node)
 			b.LastChanged = time.Now()
-			return
+			return NodeInsertInserted
 		}
 
 		if b.Contains(rt.ourID) {
@@ -102,17 +111,17 @@ func (rt *RoutingTable) insert(node *Node) {
 			n.Addr = node.Addr
 			n.LastSeen = node.LastSeen
 			n.FailureCount = 0
-			return
+			return NodeInsertUpdated
 		}
 		if len(b.ReplacementCache) < rt.cfg.BucketSize {
 			b.ReplacementCache = append(b.ReplacementCache, node)
+			if rt.pinger != nil && len(b.Nodes) > 0 {
+				lrs := b.Nodes[0] // slice is ordered by LastSeen ascending
+				go rt.pinger.PingAsync(context.Background(), lrs)
+			}
+			return NodeInsertCached
 		}
-		if rt.pinger == nil || len(b.Nodes) == 0 {
-			return
-		}
-		lrs := b.Nodes[0] // slice is ordered by LastSeen ascending
-		go rt.pinger.PingAsync(context.Background(), lrs)
-		return
+		return NodeInsertDropped
 	}
 }
 
