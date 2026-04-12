@@ -4,3 +4,4 @@ schema.sql
 docs/
 *.dat
 scripts/
+.dolt

@@ -87,7 +87,7 @@ func NewServer(cfg config.DHT, rec *recorder.Recorder) (*Server, error) {
 		token:                 token,
 		rec:                   rec,
 		rate:                  rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateBurst),
-		ipLimiter:             newIPLimiter(cfg.RateLimit, cfg.RateBurst, 5*time.Minute),
+		ipLimiter:             newIPLimiter(cfg.RateLimit, cfg.RateBurst, 5*time.Minute, cfg.IPLimiterMaxSize),
 		workers:               cfg.Workers,
 		nodeID:                cfg.NodeID,
 		handlers:              make(chan inMsg, 512),

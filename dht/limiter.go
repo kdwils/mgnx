@@ -20,12 +20,13 @@ type ipLimiter struct {
 }
 
 type perIPLimit struct {
-	rate  float64
-	burst int
-	ttl   time.Duration
+	rate    float64
+	burst   int
+	ttl     time.Duration
+	maxSize int // 0 = unlimited
 }
 
-func newIPLimiter(rateLimit float64, burst int, ttl time.Duration) *ipLimiter {
+func newIPLimiter(rateLimit float64, burst int, ttl time.Duration, maxSize int) *ipLimiter {
 	cl := cache.New[string, *clientLimiter](
 		cache.WithCleanup[string, *clientLimiter](
 			ttl,
@@ -37,9 +38,10 @@ func newIPLimiter(rateLimit float64, burst int, ttl time.Duration) *ipLimiter {
 	return &ipLimiter{
 		cache: cl,
 		cfg: perIPLimit{
-			rate:  rateLimit,
-			burst: burst,
-			ttl:   ttl,
+			rate:    rateLimit,
+			burst:   burst,
+			ttl:     ttl,
+			maxSize: maxSize,
 		},
 	}
 }
@@ -51,7 +53,12 @@ func (l *ipLimiter) Allow(ip net.IP) bool {
 	key := ip.String()
 	cl, ok := l.cache.Get(key)
 	if ok {
+		cl.lastSeen = time.Now()
 		return cl.limiter.Allow()
+	}
+
+	if l.cfg.maxSize > 0 && l.cache.Size() >= l.cfg.maxSize {
+		return false
 	}
 
 	cl = &clientLimiter{
