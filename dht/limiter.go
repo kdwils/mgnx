@@ -3,6 +3,7 @@ package dht
 import (
 	"context"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/kdwils/mgnx/pkg/cache"
@@ -11,7 +12,7 @@ import (
 
 type clientLimiter struct {
 	limiter  *rate.Limiter
-	lastSeen time.Time
+	lastSeen atomic.Int64 // unix nanoseconds
 }
 
 type ipLimiter struct {
@@ -31,7 +32,7 @@ func newIPLimiter(rateLimit float64, burst int, ttl time.Duration, maxSize int) 
 		cache.WithCleanup[string, *clientLimiter](
 			ttl,
 			func(_ string, cl *clientLimiter) bool {
-				return time.Since(cl.lastSeen) > ttl
+				return time.Since(time.Unix(0, cl.lastSeen.Load())) > ttl
 			},
 		),
 	)
@@ -53,7 +54,7 @@ func (l *ipLimiter) Allow(ip net.IP) bool {
 	key := ip.String()
 	cl, ok := l.cache.Get(key)
 	if ok {
-		cl.lastSeen = time.Now()
+		cl.lastSeen.Store(time.Now().UnixNano())
 		return cl.limiter.Allow()
 	}
 
@@ -62,9 +63,9 @@ func (l *ipLimiter) Allow(ip net.IP) bool {
 	}
 
 	cl = &clientLimiter{
-		limiter:  rate.NewLimiter(rate.Limit(l.cfg.rate), l.cfg.burst),
-		lastSeen: time.Now(),
+		limiter: rate.NewLimiter(rate.Limit(l.cfg.rate), l.cfg.burst),
 	}
+	cl.lastSeen.Store(time.Now().UnixNano())
 	l.cache.Set(key, cl)
 	return cl.limiter.Allow()
 }
