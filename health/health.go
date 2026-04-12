@@ -19,8 +19,10 @@ type NodeCounter interface {
 
 // State holds the readiness gate values.
 type State struct {
-	pool    *pgxpool.Pool
-	crawler NodeCounter
+	pool           *pgxpool.Pool
+	crawler        NodeCounter
+	crawlerEnabled bool
+	torznabEnabled bool
 }
 
 // Server owns the HTTP listener and health state.
@@ -30,14 +32,15 @@ type Server struct {
 	state *State
 }
 
-// New constructs a Server. crawler may be nil at construction time and set later
-// via SetCrawler once the DHT crawler has been initialized.
-func New(port int, pool *pgxpool.Pool, crawler NodeCounter) *Server {
+// New constructs a Server.
+func New(port int, pool *pgxpool.Pool, crawler NodeCounter, crawlerEnabled, torznabEnabled bool) *Server {
 	s := &Server{
 		port: port,
 		state: &State{
-			pool:    pool,
-			crawler: crawler,
+			pool:           pool,
+			crawler:        crawler,
+			crawlerEnabled: crawlerEnabled,
+			torznabEnabled: torznabEnabled,
 		},
 	}
 
@@ -108,11 +111,7 @@ func (s *State) check(ctx context.Context) (bool, []string) {
 		reasons = append(reasons, "db ping failed")
 	}
 
-	if s.crawler == nil {
-		reasons = append(reasons, "crawler not initialized")
-	}
-
-	if s.crawler.NodeCount() == 0 {
+	if s.crawlerEnabled && s.crawler.NodeCount() == 0 {
 		reasons = append(reasons, "routing table node count is 0")
 	}
 

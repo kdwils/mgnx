@@ -89,18 +89,15 @@ var serveCmd = &cobra.Command{
 			return fmt.Errorf("create recorder: %w", err)
 		}
 
-		crawler, err := dht.NewCrawler(ctx, cfg.Crawler, cfg.DHT, rec)
-		if err != nil {
-			return fmt.Errorf("dht crawler: %w", err)
+		var crawler indexer.Crawler
+		if cfg.Crawler.Enabled {
+			crawler, err = dht.NewCrawler(ctx, cfg.Crawler, cfg.DHT, rec)
+			if err != nil {
+				return fmt.Errorf("dht crawler: %w", err)
+			}
 		}
 
-		scrapeClient, err := scrape.NewClient(cfg.Scrape.DialTimeout, cfg.Scrape.ReadTimeout, cfg.Scrape.Trackers...)
-		if err != nil {
-			return fmt.Errorf("scrape client: %w", err)
-		}
-		scrapeWorker := scrape.New(queries, scrapeClient, cfg.Scrape, rec)
-
-		hs := health.New(cfg.Server.HealthPort, pool, crawler)
+		hs := health.New(cfg.Server.HealthPort, pool, crawler, cfg.Crawler.Enabled, cfg.Torznab.Enabled)
 		g.Go(func() error {
 			return hs.Start(ctx)
 		})
@@ -117,16 +114,6 @@ var serveCmd = &cobra.Command{
 			return err
 		}
 
-		metaClient := metadata.NewClient(
-			metadata.TimeoutDialer{
-				Dialer:      &net.Dialer{KeepAlive: -1},
-				DialTimeout: 3 * time.Second,
-			},
-			cfg.DHT.MaxMessageSize,
-			cfg.DHT.MaxMetadataSize,
-			rec,
-		)
-
 		g.Go(func() error {
 			err := gluetun.WatchFiles(ctx, cancel, cfg.DHT.ForwardedPortFile, cfg.DHT.ExternalIPFile, settledPort, settledIP)
 			if err != nil {
@@ -134,33 +121,54 @@ var serveCmd = &cobra.Command{
 			}
 			return err
 		})
-		g.Go(func() error {
-			if err := crawler.Start(ctx); err != nil && err != context.Canceled {
-				logger.FromContext(ctx).Error("crawler start error", "error", err)
+
+		if cfg.Crawler.Enabled {
+			metaClient := metadata.NewClient(
+				metadata.TimeoutDialer{
+					Dialer:      &net.Dialer{KeepAlive: -1},
+					DialTimeout: 3 * time.Second,
+				},
+				cfg.DHT.MaxMessageSize,
+				cfg.DHT.MaxMetadataSize,
+				rec,
+			)
+
+			scrapeClient, err := scrape.NewClient(cfg.Scrape.DialTimeout, cfg.Scrape.ReadTimeout, cfg.Scrape.Trackers...)
+			if err != nil {
+				return fmt.Errorf("scrape client: %w", err)
+			}
+			scrapeWorker := scrape.New(queries, scrapeClient, cfg.Scrape, rec)
+
+			g.Go(func() error {
+				if err := crawler.Start(ctx); err != nil && err != context.Canceled {
+					logger.FromContext(ctx).Error("crawler start error", "error", err)
+					return err
+				}
+				<-ctx.Done()
+				return crawler.Stop(ctx)
+			})
+			idxWorker := indexer.New(crawler, metaClient, queries, cfg.Indexer, rec)
+			g.Go(func() error {
+				idxWorker.Run(ctx)
+				return nil
+			})
+			g.Go(func() error {
+				scrapeWorker.Run(ctx)
+				return nil
+			})
+		}
+
+		if cfg.Torznab.Enabled {
+			g.Go(func() error {
+				svc := service.New(queries, cfg)
+				srv := torznab.New(cfg.Torznab.Port, l, svc, rec)
+				err := srv.Serve(ctx)
+				if err != nil && err != context.Canceled {
+					logger.FromContext(ctx).Error("torznab server error", "error", err)
+				}
 				return err
-			}
-			<-ctx.Done()
-			err := crawler.Stop(ctx)
-			return err
-		})
-		idxWorker := indexer.New(crawler, metaClient, queries, cfg.Indexer, rec)
-		g.Go(func() error {
-			idxWorker.Run(ctx)
-			return nil
-		})
-		g.Go(func() error {
-			scrapeWorker.Run(ctx)
-			return nil
-		})
-		g.Go(func() error {
-			svc := service.New(queries, cfg)
-			srv := torznab.New(cfg.Server.TorznabPort, l, svc, rec)
-			err := srv.Serve(ctx)
-			if err != nil && err != context.Canceled {
-				logger.FromContext(ctx).Error("torznab server error", "error", err)
-			}
-			return err
-		})
+			})
+		}
 
 		signalChan := make(chan os.Signal, 1)
 		signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)

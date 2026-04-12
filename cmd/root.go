@@ -116,9 +116,13 @@ func initConfig() {
 	viper.SetDefault("crawler.bloom_p", 0.001)
 	viper.SetDefault("crawler.bloom_rotation", 10*time.Minute)
 
-	viper.SetDefault("server.torznab_port", 8080)
 	viper.SetDefault("server.health_port", 8081)
 	viper.SetDefault("server.metrics_port", 9090)
+
+	viper.SetDefault("crawler.enabled", false)
+
+	viper.SetDefault("torznab.port", 8080)
+	viper.SetDefault("torznab.enabled", false)
 
 	viper.SetDefault("scrape.batch_size", 74)
 	viper.SetDefault("scrape.poll_interval", 30*time.Second)
