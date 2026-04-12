@@ -85,6 +85,7 @@ func initConfig() {
 	viper.SetDefault("dht.bucket_refresh_interval", time.Minute)
 	viper.SetDefault("dht.max_message_size", 16*1024*1024)
 	viper.SetDefault("dht.max_metadata_size", 10*1024*1024)
+	viper.SetDefault("dht.ip_limiter_max_size", 65536)
 
 	viper.SetDefault("dht.file_wait_timeout", 5*time.Minute)
 	viper.SetDefault("dht.file_settle_time", 30*time.Second)

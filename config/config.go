@@ -35,6 +35,7 @@ type DHT struct {
 	BucketRefreshInterval time.Duration `mapstructure:"bucket_refresh_interval"`
 	MaxMessageSize        int           `mapstructure:"max_message_size"`
 	MaxMetadataSize       int           `mapstructure:"max_metadata_size"`
+	IPLimiterMaxSize      int           `mapstructure:"ip_limiter_max_size"`
 	ForwardedPortFile     string        `mapstructure:"forwarded_port_file"`
 	ExternalIPFile        string        `mapstructure:"external_ip_file"`
 	FileWaitTimeout       time.Duration `mapstructure:"file_wait_timeout"`

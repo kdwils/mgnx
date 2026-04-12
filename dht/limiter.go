@@ -3,6 +3,7 @@ package dht
 import (
 	"context"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/kdwils/mgnx/pkg/cache"
@@ -11,7 +12,7 @@ import (
 
 type clientLimiter struct {
 	limiter  *rate.Limiter
-	lastSeen time.Time
+	lastSeen atomic.Int64 // unix nanoseconds
 }
 
 type ipLimiter struct {
@@ -20,26 +21,28 @@ type ipLimiter struct {
 }
 
 type perIPLimit struct {
-	rate  float64
-	burst int
-	ttl   time.Duration
+	rate    float64
+	burst   int
+	ttl     time.Duration
+	maxSize int // 0 = unlimited
 }
 
-func newIPLimiter(rateLimit float64, burst int, ttl time.Duration) *ipLimiter {
+func newIPLimiter(rateLimit float64, burst int, ttl time.Duration, maxSize int) *ipLimiter {
 	cl := cache.New[string, *clientLimiter](
 		cache.WithCleanup[string, *clientLimiter](
 			ttl,
 			func(_ string, cl *clientLimiter) bool {
-				return time.Since(cl.lastSeen) > ttl
+				return time.Since(time.Unix(0, cl.lastSeen.Load())) > ttl
 			},
 		),
 	)
 	return &ipLimiter{
 		cache: cl,
 		cfg: perIPLimit{
-			rate:  rateLimit,
-			burst: burst,
-			ttl:   ttl,
+			rate:    rateLimit,
+			burst:   burst,
+			ttl:     ttl,
+			maxSize: maxSize,
 		},
 	}
 }
@@ -51,13 +54,18 @@ func (l *ipLimiter) Allow(ip net.IP) bool {
 	key := ip.String()
 	cl, ok := l.cache.Get(key)
 	if ok {
+		cl.lastSeen.Store(time.Now().UnixNano())
 		return cl.limiter.Allow()
 	}
 
-	cl = &clientLimiter{
-		limiter:  rate.NewLimiter(rate.Limit(l.cfg.rate), l.cfg.burst),
-		lastSeen: time.Now(),
+	if l.cfg.maxSize > 0 && l.cache.Size() >= l.cfg.maxSize {
+		return false
 	}
+
+	cl = &clientLimiter{
+		limiter: rate.NewLimiter(rate.Limit(l.cfg.rate), l.cfg.burst),
+	}
+	cl.lastSeen.Store(time.Now().UnixNano())
 	l.cache.Set(key, cl)
 	return cl.limiter.Allow()
 }
