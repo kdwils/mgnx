@@ -77,8 +77,58 @@ var (
 	// Release group: last hyphen-prefixed token at end of name (before any extension).
 	reReleaseGroup = regexp.MustCompile(`-([A-Za-z0-9]{2,15})$`)
 
-	// Adult content: scene names use X{3,} (XXX, XXXX, etc.) as a genre tag.
-	reAdult = regexp.MustCompile(`(?i)\bX{3,}\b`)
+	// reAdult matches adult content indicators in torrent names.
+	reAdult = regexp.MustCompile(`(?i)` +
+		`\banal\b` + `|` +
+		`\bass\b` + `|` +
+		`\bblowjobs?\b` + `|` +
+		`\bboob\w*` + `|` +
+		`\bcocks?\b` + `|` +
+		`\bcum\w*\b` + `|` +
+		`\bdicks?\b` + `|` +
+		`\berotic\w*` + `|` +
+		`fuck` + `|` +
+		`gloryhole` + `|` +
+		`\bhardcore\b` + `|` +
+		`\bkink\w*` + `|` +
+		`\bmilf\w*` + `|` +
+		`\bnubile\w*` + `|` +
+		`\bonlyfans\b` + `|` +
+		`\borgasm\w*` + `|` +
+		`\borgy\b` + `|` +
+		`porn` + `|` +
+		`\bpov\b` + `|` +
+		`\bpussy\b` + `|` +
+		`\bseduc\w*` + `|` +
+		`\bslut\w*` + `|` +
+		`\btits?\b` + `|` +
+		`\bthreesome\b` + `|` +
+		`wank` + `|` +
+		`xxx`,
+	)
+
+	// reBlockedContent matches known CSAM-related terms and distribution codes.
+	// Derived from bitmagnet's banned keyword list. Checked against torrent name and all file paths.
+	reBlockedContent = regexp.MustCompile(`(?i)` +
+		`pa?edo(?:fil\w*|phil\w*)?` + `|` +
+		`\bpreteen\b` + `|` +
+		`\bpthc\b` + `|` +
+		`\bptsc\b` + `|` +
+		`\blsbar\b` + `|` +
+		`\blsm\b` + `|` +
+		`\bunderage\b` + `|` +
+		`\bhebefilia\b` + `|` +
+		`\bopva\b` + `|` +
+		`child ?porn\w*` + `|` +
+		`child ?lover\w*` + `|` +
+		`porno ?child\w*` + `|` +
+		`kidd(?:y\w*|ie\w*) ?porn` + `|` +
+		`young ?video ?models` + `|` +
+		`\bchildfugga\b` + `|` +
+		`\bkinderkutje\b` + `|` +
+		`\byvm\b` + `|` +
+		`(?:#|1[0-7]) ?y ?o\b`,
+	)
 
 	// Patterns used to find where the title ends in a normalized name.
 	titleCutPatterns = []*regexp.Regexp{
@@ -171,7 +221,22 @@ func IsVideoExt(ext string) bool {
 	return false
 }
 
+func containsBlockedContent(name string, files []File) bool {
+	if reBlockedContent.MatchString(normalize(name)) {
+		return true
+	}
+	for _, f := range files {
+		if reBlockedContent.MatchString(normalize(f.Path)) {
+			return true
+		}
+	}
+	return false
+}
+
 func shouldReject(ct gen.ContentType, name string, files []File, totalSize int64, minSize, maxSize int64, allowed map[string]struct{}, enableExtensionFilter, excludeAdultContent bool) string {
+	if containsBlockedContent(name, files) {
+		return "blocked_content"
+	}
 	if totalSize < minSize || totalSize > maxSize {
 		return "size"
 	}
