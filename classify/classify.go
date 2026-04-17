@@ -221,7 +221,9 @@ func IsVideoExt(ext string) bool {
 	return false
 }
 
-func containsBlockedContent(name string, files []File) bool {
+// ContainsBlockedContent reports whether the torrent name or any file path
+// matches the blocked content pattern. Used to drop torrents before any DB writes.
+func ContainsBlockedContent(name string, files []File) bool {
 	if reBlockedContent.MatchString(normalize(name)) {
 		return true
 	}
@@ -234,9 +236,6 @@ func containsBlockedContent(name string, files []File) bool {
 }
 
 func shouldReject(ct gen.ContentType, name string, files []File, totalSize int64, minSize, maxSize int64, allowed map[string]struct{}, enableExtensionFilter, excludeAdultContent bool) string {
-	if containsBlockedContent(name, files) {
-		return "blocked_content"
-	}
 	if totalSize < minSize || totalSize > maxSize {
 		return "size"
 	}

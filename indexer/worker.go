@@ -177,6 +177,17 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 
 	info.Name = strings.ToValidUTF8(info.Name, "")
 
+	classifyFiles := make([]classify.File, len(info.Files))
+	for i, f := range info.Files {
+		classifyFiles[i] = classify.File{Path: strings.ToValidUTF8(f.Path, ""), Size: f.Size}
+	}
+
+	if classify.ContainsBlockedContent(info.Name, classifyFiles) {
+		log.DebugContext(ctx, "dropping blocked torrent", "infohash", infohashHex)
+		w.rec.IncTorrentsRejectedTotal("blocked_content")
+		return
+	}
+
 	upsertStart := time.Now()
 	tag, err := w.queries.UpsertTorrentPending(ctx, gen.UpsertTorrentPendingParams{
 		Infohash:  infohashHex,
@@ -195,22 +206,19 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		return
 	}
 	w.rec.IncIndexerDBUpsertsTotal()
-	classifyFiles := make([]classify.File, len(info.Files))
 	infohashes := make([]string, len(info.Files))
 	paths := make([]string, len(info.Files))
 	sizes := make([]int64, len(info.Files))
 	extensions := make([]string, len(info.Files))
 	isVideos := make([]bool, len(info.Files))
 
-	for i, f := range info.Files {
-		f.Path = strings.ToValidUTF8(f.Path, "")
+	for i, f := range classifyFiles {
 		ext := filepath.Ext(f.Path)
 		infohashes[i] = infohashHex
 		paths[i] = f.Path
 		sizes[i] = f.Size
 		extensions[i] = ext
 		isVideos[i] = classify.IsVideoExt(ext)
-		classifyFiles[i] = classify.File{Path: f.Path, Size: f.Size}
 	}
 
 	insertFilesStart := time.Now()
