@@ -17,6 +17,7 @@ const (
 	ContentTypeMovie   ContentType = "movie"
 	ContentTypeTv      ContentType = "tv"
 	ContentTypeUnknown ContentType = "unknown"
+	ContentTypeAnime   ContentType = "anime"
 )
 
 func (e *ContentType) Scan(src interface{}) error {

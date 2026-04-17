@@ -49,8 +49,9 @@ var (
 	episodePattern = regexp.MustCompile(`(?i)\b(?:S\d{1,2}E\d{1,2}(?:[E-]\d{1,2})*|\d{1,2}x\d{2,})\b`)
 
 	// episodeNumberPattern extracts season/episode numbers.
-	// Handles S01E01, S01E01E02 (multi-episode), S01E01-E03 (range), 5x12, Ep.5
-	episodeNumberPattern = regexp.MustCompile(`(?i)\b(?:S(\d{1,2})E(\d{1,2})(?:[E-]\d{1,2})*|(\d{1,2})x(\d{2,})|Ep\.?(\d{1,2}))\b`)
+	// Handles S01E01, S01E01E02 (multi-episode), S01E01-E03 (range), 5x12, Ep.5,
+	// and fansub-style S2 - 01 (season-space-dash-space-episode).
+	episodeNumberPattern = regexp.MustCompile(`(?i)\b(?:S(\d{1,2})E(\d{1,2})(?:[E-]\d{1,2})*|(\d{1,2})x(\d{2,})|Ep\.?(\d{1,2})|S(\d{1,2})\s+[-–]\s+(\d{1,4}))\b`)
 
 	seasonNumberPattern = regexp.MustCompile(`(?i)\bS(?:eason)?[\s._-]?(\d{1,2})\b`)
 
@@ -104,8 +105,42 @@ var (
 		`\btits?\b` + `|` +
 		`\bthreesome\b` + `|` +
 		`wank` + `|` +
-		`xxx`,
+		`xxx` + `|` +
+		// Adult studio/network names
+		`\brealitykings\b` + `|` +
+		`\bbrazzers\b` + `|` +
+		`\bnaughtyamerica\b` + `|` +
+		`\bbangbros\b` + `|` +
+		`\bdigitalpayground\b` + `|` +
+		`\bevil\s*angel\b` + `|` +
+		`\bkink\.com\b` + `|` +
+		`\bnubilefilms\b` + `|` +
+		`\bprivate\.com\b` + `|` +
+		`\bprivatemovies\b` + `|` +
+		`\bwicked\s*pictures\b` + `|` +
+		`\bvividceleb\b` + `|` +
+		`\bmindgeek\b` + `|` +
+		`\bmanwin\b` + `|` +
+		`\bpornhub\b` + `|` +
+		`\bredtube\b` + `|` +
+		`\byouporn\b` + `|` +
+		`\bxvideos\b` + `|` +
+		`\bxhamster\b` + `|` +
+		`\bxnxx\b`,
 	)
+
+	// reAnimeBracketPrefix matches a fansub/release group tag at the very start of a name.
+	// Almost all fansub and raw anime releases begin with "[GroupName]".
+	reAnimeBracketPrefix = regexp.MustCompile(`^\[.+?\]\s*`)
+
+	// reAnimeStreamingSource matches known anime streaming services embedded in a name.
+	// Used as a secondary signal for SxxExx releases that lack a bracket prefix.
+	reAnimeStreamingSource = regexp.MustCompile(`(?i)\b(?:Crunchyroll|Funimation|HiDive|HIDIVE)\b`)
+
+	// reAnimeAbsoluteEpisode matches absolute episode numbers common in fansub releases:
+	//   " 168-189"  — episode range (3+ digit to avoid cutting short title numbers)
+	//   " - 01"     — SubsPlease/Erai-raws style spacer with 1–4 digit episode
+	reAnimeAbsoluteEpisode = regexp.MustCompile(`\s+(?:\d{3,4}(?:\s*[-–]\s*\d{1,4})?|-\s+\d{1,4})\b`)
 
 	// reBlockedContent matches known CSAM-related terms and distribution codes.
 	// Derived from bitmagnet's banned keyword list. Checked against torrent name and all file paths.
@@ -151,6 +186,10 @@ func detectTV(normalized string) tvInfo {
 		if m[5] != "" {
 			episode, _ = strconv.Atoi(m[5])
 		}
+		if m[6] != "" {
+			season, _ = strconv.Atoi(m[6])
+			episode, _ = strconv.Atoi(m[7])
+		}
 		return tvInfo{true, season, episode}
 	}
 
@@ -166,6 +205,32 @@ func detectTV(normalized string) tvInfo {
 	}
 
 	return tvInfo{}
+}
+
+// detectAnime returns true when the torrent name looks like an anime release.
+// Signal A: bracket-prefixed group at the start (fansub/raw convention).
+// Signal B: known anime streaming service tag combined with SxxExx TV detection.
+func detectAnime(name, normalized string, tv tvInfo) bool {
+	if reAnimeBracketPrefix.MatchString(name) {
+		return true
+	}
+	return tv.isTV && reAnimeStreamingSource.MatchString(normalized)
+}
+
+// extractAnimeTitle strips the bracket group prefix then applies the standard
+// title-cut logic, additionally cutting at bare absolute episode numbers.
+func extractAnimeTitle(normalized string) string {
+	s := reAnimeBracketPrefix.ReplaceAllString(normalized, "")
+	cut := len(s)
+	for _, p := range titleCutPatterns {
+		if loc := p.FindStringIndex(s); loc != nil && loc[0] < cut {
+			cut = loc[0]
+		}
+	}
+	if loc := reAnimeAbsoluteEpisode.FindStringIndex(s); loc != nil && loc[0] < cut {
+		cut = loc[0]
+	}
+	return strings.TrimSpace(s[:cut])
 }
 
 // normalize replaces dots and underscores with spaces and collapses whitespace.
@@ -278,23 +343,27 @@ func Classify(name string, files []File, totalSize int64, minSize, maxSize int64
 	normalized := normalize(name)
 	tv := detectTV(normalized)
 
-	if tv.isTV {
+	switch {
+	case detectAnime(name, normalized, tv):
+		result.ContentType = gen.ContentTypeAnime
+		result.Season = tv.season
+		result.Episode = tv.episode
+		result.Title = extractAnimeTitle(normalized)
+	case tv.isTV:
 		result.ContentType = gen.ContentTypeTv
 		result.Season = tv.season
 		result.Episode = tv.episode
-	}
-
-	if result.ContentType == gen.ContentTypeUnknown {
+		result.Title = extractTitle(normalized)
+	default:
 		if reYear.MatchString(normalized) || reResolution.MatchString(normalized) {
 			result.ContentType = gen.ContentTypeMovie
 		}
+		result.Title = extractTitle(normalized)
 	}
 
 	if m := reYear.FindStringSubmatch(normalized); m != nil {
 		result.Year, _ = strconv.Atoi(m[1])
 	}
-
-	result.Title = extractTitle(normalized)
 	result.Quality = firstMatch(reResolution, normalized)
 	result.Encoding = firstMatch(reEncoding, normalized)
 	result.DynamicRange = firstMatch(reDynamicRange, normalized)
