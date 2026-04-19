@@ -49,10 +49,13 @@ func (ix *Indexer) Run(ctx context.Context, dryRun bool, out io.Writer) (IndexRe
 
 	var res IndexResult
 
-	for offset := int32(0); offset < int32(total); offset += batchSize {
+	for offset := int64(0); offset < total; offset += int64(batchSize) {
+		if err := ctx.Err(); err != nil {
+			return res, err
+		}
 		batch, err := ix.queries.GetTorrentsToIndex(ctx, gen.GetTorrentsToIndexParams{
 			Limit:  batchSize,
-			Offset: offset,
+			Offset: int32(offset),
 		})
 		if err != nil {
 			return res, fmt.Errorf("fetching torrents: %w", err)

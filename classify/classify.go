@@ -393,10 +393,9 @@ func detectAnime(name, normalized string, tv tvInfo) bool {
 	if reAdult.MatchString(name) || reAdult.MatchString(normalized) {
 		return false
 	}
-	// Strip encoding tokens and www site prefixes from the raw name before normalizing
-	// so that codec version digits (265, 264) and site separators (" - 9.Title")
-	// don't trigger the 3-digit episode pattern.
-	normalizedNoEncoding := reWWWSitePrefix.ReplaceAllString(normalize(reEncodingBroad.ReplaceAllString(name, "")), "")
+	// Strip encoding tokens from the already-normalized (and www-stripped) string so
+	// that codec version digits (265, 264) don't trigger the 3-digit episode pattern.
+	normalizedNoEncoding := reEncodingBroad.ReplaceAllString(normalized, "")
 	if reAnimeEPFormat.MatchString(normalizedNoEncoding) {
 		return true
 	}

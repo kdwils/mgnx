@@ -151,7 +151,12 @@ func (c *crawler) warmRestart(ctx context.Context) bool {
 	if loaded == 0 {
 		return false
 	}
-	nodes := c.server.table.Closest(c.server.ourID, loaded)
+	const maxWarmPingNodes = 200
+	sample := loaded
+	if sample > maxWarmPingNodes {
+		sample = maxWarmPingNodes
+	}
+	nodes := c.server.table.Closest(c.server.ourID, sample)
 	live := c.server.pingNodes(ctx, nodes)
 	log.Info("warm restart ping complete", "loaded", loaded, "live", live, "threshold", c.warmBootstrapThreshold)
 	if live < c.warmBootstrapThreshold {
