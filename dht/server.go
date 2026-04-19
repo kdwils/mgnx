@@ -14,6 +14,7 @@ import (
 	"github.com/kdwils/mgnx/config"
 	"github.com/kdwils/mgnx/logger"
 	"github.com/kdwils/mgnx/recorder"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 )
 
@@ -230,6 +231,42 @@ func (s *Server) PingAsync(ctx context.Context, node *Node) {
 		}
 		s.table.MarkSuccess(id)
 	}()
+}
+
+// pingNodes pings nodes concurrently (up to 32 in-flight) and returns the
+// number that responded within transactionTimeout.
+func (s *Server) pingNodes(ctx context.Context, nodes []*Node) int {
+	const maxConcurrency = 32
+	sem := make(chan struct{}, maxConcurrency)
+
+	var mu sync.Mutex
+	live := 0
+
+	eg, egCtx := errgroup.WithContext(ctx)
+	for _, n := range nodes {
+		n := n
+		eg.Go(func() error {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			pingCtx, cancel := context.WithTimeout(egCtx, s.transactionTimeout)
+			defer cancel()
+			resp, err := s.Query(pingCtx, n.Addr, n.ID, &Msg{
+				Y: "q",
+				Q: "ping",
+				A: &MsgArgs{ID: string(s.ourID[:])},
+			})
+			if err != nil || resp == nil || resp.R == nil {
+				return nil
+			}
+			mu.Lock()
+			live++
+			mu.Unlock()
+			return nil
+		})
+	}
+	eg.Wait()
+	return live
 }
 
 // readLoop reads datagrams from the socket and routes them.

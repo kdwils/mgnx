@@ -17,6 +17,22 @@ SELECT
     nullif(unnest(sqlc.arg('extension')::text[]), ''),
     unnest(sqlc.arg('is_video')::boolean[]);
 
+-- name: CountTorrents :one
+SELECT COUNT(*) FROM torrents;
+
+-- name: GetTorrentsToIndex :many
+SELECT infohash, name, total_size, state, content_type,
+       classified_title, classified_season, classified_episode
+FROM torrents
+ORDER BY infohash ASC
+LIMIT sqlc.arg('limit')
+OFFSET sqlc.arg('offset');
+
+-- name: GetTorrentFiles :many
+SELECT path, size
+FROM torrent_files
+WHERE infohash = sqlc.arg('infohash');
+
 -- name: UpdateTorrentClassified :exec
 UPDATE torrents
 SET

@@ -61,9 +61,10 @@ type crawler struct {
 	defaultInterval      time.Duration
 	maxNodeFailures      int
 	maxJitter            time.Duration
-	emptySpinWait        time.Duration
-	sampleEnqueueTimeout time.Duration
-	maxInterval          time.Duration
+	emptySpinWait          time.Duration
+	sampleEnqueueTimeout   time.Duration
+	maxInterval            time.Duration
+	warmBootstrapThreshold int
 }
 
 type discoveryWork struct {
@@ -102,8 +103,9 @@ func NewCrawler(ctx context.Context, cfg config.Crawler, dhtCfg config.DHT, rec 
 		maxNodeFailures:      cfg.MaxNodeFailures,
 		maxJitter:            cfg.MaxJitter,
 		emptySpinWait:        cfg.EmptySpinWait,
-		sampleEnqueueTimeout: cfg.SampleEnqueueTimeout,
-		maxInterval:          cfg.MaxInterval,
+		sampleEnqueueTimeout:   cfg.SampleEnqueueTimeout,
+		maxInterval:            cfg.MaxInterval,
+		warmBootstrapThreshold: dhtCfg.WarmBootstrapThreshold,
 		nodeSampleSupport: pkgcache.New[NodeID, bool](
 			pkgcache.WithCleanup[NodeID, bool](
 				cfg.NodeCacheCleanup,
@@ -140,6 +142,30 @@ type discoveryWorker struct {
 	*crawler
 }
 
+// warmRestart pings all nodes currently in the routing table (populated by
+// Load from disk) and returns true if at least warmBootstrapThreshold respond.
+// On success it calls refreshStaleBuckets so gaps are filled organically.
+func (c *crawler) warmRestart(ctx context.Context) bool {
+	log := logger.FromContext(ctx).With("service", "dht")
+	loaded := c.server.table.NodeCount()
+	if loaded == 0 {
+		return false
+	}
+	const maxWarmPingNodes = 200
+	sample := loaded
+	if sample > maxWarmPingNodes {
+		sample = maxWarmPingNodes
+	}
+	nodes := c.server.table.Closest(c.server.ourID, sample)
+	live := c.server.pingNodes(ctx, nodes)
+	log.Info("warm restart ping complete", "loaded", loaded, "live", live, "threshold", c.warmBootstrapThreshold)
+	if live < c.warmBootstrapThreshold {
+		return false
+	}
+	c.server.refreshStaleBuckets(ctx)
+	return true
+}
+
 // Start launches the server, runs bootstrap convergence, and starts the
 // BEP-51 active traversal workers.
 func (c *crawler) Start(ctx context.Context) error {
@@ -147,8 +173,10 @@ func (c *crawler) Start(ctx context.Context) error {
 		return err
 	}
 
-	if err := c.server.Bootstrap(ctx, c.bootstrapNodes); err != nil {
-		return err
+	if !c.warmRestart(ctx) {
+		if err := c.server.Bootstrap(ctx, c.bootstrapNodes); err != nil {
+			return err
+		}
 	}
 
 	if c.server.table.NodeCount() == 0 {

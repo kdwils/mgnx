@@ -70,12 +70,18 @@ func inferTVCategories(quality string) []int {
 	}
 }
 
+func inferAnimeCategories() []int {
+	return []int{CatTVAnime}
+}
+
 func inferCategories(contentType, quality string) []int {
 	switch contentType {
 	case "movie":
 		return inferMovieCategories(quality)
 	case "tv":
 		return inferTVCategories(quality)
+	case "anime":
+		return inferAnimeCategories()
 	default:
 		return []int{CatMovies, CatTV}
 	}

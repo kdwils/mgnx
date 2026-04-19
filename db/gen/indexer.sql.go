@@ -12,6 +12,102 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countTorrents = `-- name: CountTorrents :one
+SELECT COUNT(*) FROM torrents
+`
+
+func (q *Queries) CountTorrents(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countTorrents)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const getTorrentFiles = `-- name: GetTorrentFiles :many
+SELECT path, size
+FROM torrent_files
+WHERE infohash = $1
+`
+
+type GetTorrentFilesRow struct {
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+}
+
+func (q *Queries) GetTorrentFiles(ctx context.Context, infohash string) ([]GetTorrentFilesRow, error) {
+	rows, err := q.db.Query(ctx, getTorrentFiles, infohash)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetTorrentFilesRow
+	for rows.Next() {
+		var i GetTorrentFilesRow
+		if err := rows.Scan(&i.Path, &i.Size); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTorrentsToIndex = `-- name: GetTorrentsToIndex :many
+SELECT infohash, name, total_size, state, content_type,
+       classified_title, classified_season, classified_episode
+FROM torrents
+ORDER BY infohash ASC
+LIMIT $2
+OFFSET $1
+`
+
+type GetTorrentsToIndexParams struct {
+	Offset int32 `json:"offset"`
+	Limit  int32 `json:"limit"`
+}
+
+type GetTorrentsToIndexRow struct {
+	Infohash          string       `json:"infohash"`
+	Name              string       `json:"name"`
+	TotalSize         int64        `json:"total_size"`
+	State             TorrentState `json:"state"`
+	ContentType       ContentType  `json:"content_type"`
+	ClassifiedTitle   pgtype.Text  `json:"classified_title"`
+	ClassifiedSeason  pgtype.Int4  `json:"classified_season"`
+	ClassifiedEpisode pgtype.Int4  `json:"classified_episode"`
+}
+
+func (q *Queries) GetTorrentsToIndex(ctx context.Context, arg GetTorrentsToIndexParams) ([]GetTorrentsToIndexRow, error) {
+	rows, err := q.db.Query(ctx, getTorrentsToIndex, arg.Offset, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetTorrentsToIndexRow
+	for rows.Next() {
+		var i GetTorrentsToIndexRow
+		if err := rows.Scan(
+			&i.Infohash,
+			&i.Name,
+			&i.TotalSize,
+			&i.State,
+			&i.ContentType,
+			&i.ClassifiedTitle,
+			&i.ClassifiedSeason,
+			&i.ClassifiedEpisode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertTorrentFiles = `-- name: InsertTorrentFiles :exec
 INSERT INTO torrent_files (infohash, path, size, extension, is_video)
 SELECT

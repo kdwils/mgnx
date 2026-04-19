@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kdwils/mgnx/classify"
 	"github.com/kdwils/mgnx/config"
 	"github.com/kdwils/mgnx/db/gen"
@@ -49,16 +48,12 @@ type Worker struct {
 }
 
 func New(crawler Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg config.Indexer, rec *recorder.Recorder) *Worker {
-	allowed := make(map[string]struct{}, len(cfg.AllowedExtensions))
-	for _, ext := range cfg.AllowedExtensions {
-		allowed[ext] = struct{}{}
-	}
 	return &Worker{
 		crawler:             crawler,
 		fetcher:             fetcher,
 		queries:             queries,
 		rec:                 rec,
-		allowedExts:         allowed,
+		allowedExts:         allowedExtensions(cfg.AllowedExtensions),
 		peerTimeout:         cfg.RequestTimeout,
 		maxPeers:            cfg.MaxPeers,
 		maxConcurrentPeers:  cfg.MaxConcurrentPeers,
@@ -244,21 +239,7 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 	w.rec.IncTorrentsIndexedTotal(string(result.ContentType))
 
 	classifyStart := time.Now()
-	err = w.queries.UpdateTorrentClassified(ctx, gen.UpdateTorrentClassifiedParams{
-		Infohash:          infohashHex,
-		State:             result.State,
-		ContentType:       result.ContentType,
-		Quality:           nullText(result.Quality),
-		Encoding:          nullText(result.Encoding),
-		DynamicRange:      nullText(result.DynamicRange),
-		Source:            nullText(result.Source),
-		ReleaseGroup:      nullText(result.ReleaseGroup),
-		SceneName:         nullText(result.SceneName),
-		ClassifiedTitle:   nullText(result.Title),
-		ClassifiedYear:    nullInt4(result.Year),
-		ClassifiedSeason:  nullInt4(result.Season),
-		ClassifiedEpisode: nullInt4(result.Episode),
-	})
+	err = w.queries.UpdateTorrentClassified(ctx, classifyParams(infohashHex, result.State, result))
 	w.rec.ObserveIndexerDBQueryDurationSeconds("classify_update", time.Since(classifyStart).Seconds())
 	if err != nil {
 		log.ErrorContext(ctx, "classify torrent failed", "infohash", infohashHex, "err", err)
@@ -274,18 +255,4 @@ func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
 		"quality", result.Quality,
 		"files", len(info.Files),
 	)
-}
-
-func nullText(s string) pgtype.Text {
-	if s == "" {
-		return pgtype.Text{}
-	}
-	return pgtype.Text{String: s, Valid: true}
-}
-
-func nullInt4(n int) pgtype.Int4 {
-	if n == 0 {
-		return pgtype.Int4{}
-	}
-	return pgtype.Int4{Int32: int32(n), Valid: true}
 }

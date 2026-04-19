@@ -12,6 +12,7 @@ import (
 )
 
 type Querier interface {
+	CountTorrents(ctx context.Context) (int64, error)
 	CountTorrentsByState(ctx context.Context) ([]CountTorrentsByStateRow, error)
 	GetDeadCandidates(ctx context.Context, arg GetDeadCandidatesParams) ([]string, error)
 	// Fetch all active encodes of a specific movie by IMDB ID. Used for t=movie&imdbid=.
@@ -19,6 +20,8 @@ type Querier interface {
 	// Fetch TV torrents by IMDB ID, optionally filtered to season/episode. Used for t=tvsearch&imdbid=.
 	GetTVByIMDB(ctx context.Context, arg GetTVByIMDBParams) ([]GetTVByIMDBRow, error)
 	GetTorrentByInfohash(ctx context.Context, infohash string) (GetTorrentByInfohashRow, error)
+	GetTorrentFiles(ctx context.Context, infohash string) ([]GetTorrentFilesRow, error)
+	GetTorrentsToIndex(ctx context.Context, arg GetTorrentsToIndexParams) ([]GetTorrentsToIndexRow, error)
 	GetTorrentsToScrape(ctx context.Context, limit int32) ([]GetTorrentsToScrapeRow, error)
 	InsertScrapeHistory(ctx context.Context, arg InsertScrapeHistoryParams) error
 	InsertTorrentFiles(ctx context.Context, arg InsertTorrentFilesParams) error
