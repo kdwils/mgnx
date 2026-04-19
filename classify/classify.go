@@ -46,12 +46,13 @@ var (
 
 	// episodePattern is used only for title-cut detection.
 	// The multi-episode suffix (?:[E-]\d{1,2})* handles S01E01E02 and S01E01-E03.
-	episodePattern = regexp.MustCompile(`(?i)\b(?:S\d{1,2}E\d{1,2}(?:[E-]\d{1,2})*|\d{1,2}x\d{2,})\b`)
+	// EP\d{2,4} covers absolute episode numbers used in anime scene releases (e.g. EP590).
+	episodePattern = regexp.MustCompile(`(?i)\b(?:S\d{1,2}E\d{1,2}(?:[E-]\d{1,2})*|\d{1,2}x\d{2,}|EP\d{2,4})\b`)
 
 	// episodeNumberPattern extracts season/episode numbers.
 	// Handles S01E01, S01E01E02 (multi-episode), S01E01-E03 (range), 5x12, Ep.5,
-	// and fansub-style S2 - 01 (season-space-dash-space-episode).
-	episodeNumberPattern = regexp.MustCompile(`(?i)\b(?:S(\d{1,2})E(\d{1,2})(?:[E-]\d{1,2})*|(\d{1,2})x(\d{2,})|Ep\.?(\d{1,2})|S(\d{1,2})\s+[-–]\s+(\d{1,4}))\b`)
+	// fansub-style S2 - 01 (season-space-dash-space-episode), and EP590 absolute episodes.
+	episodeNumberPattern = regexp.MustCompile(`(?i)\b(?:S(\d{1,2})E(\d{1,2})(?:[E-]\d{1,2})*|(\d{1,2})x(\d{2,})|Ep\.?(\d{1,2})|S(\d{1,2})\s+[-–]\s+(\d{1,4})|EP(\d{2,4}))\b`)
 
 	seasonNumberPattern = regexp.MustCompile(`(?i)\bS(?:eason)?[\s._-]?(\d{1,2})\b`)
 
@@ -84,17 +85,24 @@ var (
 		`\bass\b` + `|` +
 		`\bblowjobs?\b` + `|` +
 		`\bboob\w*` + `|` +
+		`\bbitch\w*` + `|` +
 		`\bcocks?\b` + `|` +
 		`\bcum\w*\b` + `|` +
+		`deepthroat` + `|` +
 		`\bdicks?\b` + `|` +
 		`\berotic\w*` + `|` +
 		`fuck` + `|` +
 		`gloryhole` + `|` +
 		`\bhardcore\b` + `|` +
+		`\bhorny\b` + `|` +
+		`\bincest\b` + `|` +
 		`\bkink\w*` + `|` +
 		`\bmilf\w*` + `|` +
+		`\bnaughty\b` + `|` +
 		`\bnubile\w*` + `|` +
+		`nude\w*` + `|` +
 		`\bonlyfans\b` + `|` +
+		`onahole` + `|` +
 		`\borgasm\w*` + `|` +
 		`\borgy\b` + `|` +
 		`porn` + `|` +
@@ -102,13 +110,18 @@ var (
 		`\bpussy\b` + `|` +
 		`\bseduc\w*` + `|` +
 		`\bslut\w*` + `|` +
+		`step\s*bro(?:ther)?\b` + `|` +
+		`step\s*mom` + `|` +
+		`step\s*sis` + `|` +
+		`step\s*sibling\w*` + `|` +
 		`\btits?\b` + `|` +
 		`\bthreesome\b` + `|` +
+		`\buncensor\w*` + `|` +
 		`wank` + `|` +
 		`xxx` + `|` +
 		// Adult studio/network names
 		`\brealitykings\b` + `|` +
-		`\bbrazzers\b` + `|` +
+		`\bbrazzers` + `|` +
 		`\bnaughtyamerica\b` + `|` +
 		`\bbangbros\b` + `|` +
 		`\bdigitalpayground\b` + `|` +
@@ -118,6 +131,7 @@ var (
 		`\bprivate\.com\b` + `|` +
 		`\bprivatemovies\b` + `|` +
 		`\bwicked\s*pictures\b` + `|` +
+		`woodmancasting\w*` + `|` +
 		`\bvividceleb\b` + `|` +
 		`\bmindgeek\b` + `|` +
 		`\bmanwin\b` + `|` +
@@ -126,21 +140,143 @@ var (
 		`\byouporn\b` + `|` +
 		`\bxvideos\b` + `|` +
 		`\bxhamster\b` + `|` +
-		`\bxnxx\b`,
+		`\bxnxx\b` + `|` +
+		`\bcastingcouch\w*` + `|` +
+		`\bamateurallure\b` + `|` +
+		`\bblacked\b` + `|` +
+		`\bexploitedteens\b` + `|` +
+		`\bfaceabuse\b` + `|` +
+		`\bfacialabuse\b` + `|` +
+		`\bfakeagent\b` + `|` +
+		`\bfemalefaketaxi\b` + `|` +
+		`\bmanyvids\b` + `|` +
+		`\bmomlover\b` + `|` +
+		`momsbangteens` + `|` +
+		`\bpixy\b` + `|` +
+		`\bpuremature\b` + `|` +
+		`\bsinfulxxx\b` + `|` +
+		`teenslikeitbig` + `|` +
+		// Additional explicit terms
+		`\bjav\b` + `|` +
+		`\bhentai\b` + `|` +
+		`\becchi\b` + `|` +
+		`\beroge\b` + `|` +
+		`creampie` + `|` +
+		`squirt` + `|` +
+		`\bnsfw\b` + `|` +
+		`\bntr\b` + `|` +
+		// Korean/Chinese adult markers
+		`에로` + `|` +
+		`三[级級]` + `|` +
+		// Adult torrent site domains (appear as bracket prefixes)
+		`thz\.la` + `|` +
+		`7sht\.me` + `|` +
+		`44x\.me` + `|` +
+		`168x\.me` + `|` +
+		`\b69av\b` + `|` +
+		`deeper\.com` + `|` +
+		`sexart\.com` + `|` +
+		`topxdvd` + `|` +
+		`jvid\.com` + `|` +
+		`xchina` + `|` +
+		`tooziq` + `|` +
+		`sogclub` + `|` +
+		// Additional studio/site names
+		`\btokyo[-\s]?hot\b` + `|` +
+		`\bchaturbate\b` + `|` +
+		`\bczechcasting\b` + `|` +
+		`\bczechav\b` + `|` +
+		`\bheydouga\b` + `|` +
+		`\bblacksonblondes\b` + `|` +
+		`\bpervmom\b` + `|` +
+		`\bbreedme\b` + `|` +
+		`\bkellymadison\b` + `|` +
+		`\bcarib\b`,
 	)
 
-	// reAnimeBracketPrefix matches a fansub/release group tag at the very start of a name.
-	// Almost all fansub and raw anime releases begin with "[GroupName]".
+	// reEncodingBroad extends reEncoding to also match space-separated variants
+	// (e.g. "H 265" in names that already use spaces as separators). Used only in
+	// detectAnime to strip codec tokens before checking for episode numbers, preventing
+	// codec version digits (265, 264) from triggering the 3-digit episode detector.
+	reEncodingBroad = regexp.MustCompile(`(?i)\b(x265|x264|HEVC|AV1|AVC|XviD|DivX|H[\. ]?265|H[\. ]?264)\b`)
+
+	// reWWWSitePrefix strips "www.domain.tld - " style prefixes inserted by torrent
+	// sites at the start of names. Matched on the normalized (dot-replaced) string.
+	reWWWSitePrefix = regexp.MustCompile(`(?i)^www\s+\S+\s+\S+\s*-\s+`)
+
+	// reAnimeBracketPrefix matches any bracket tag at the very start of a name.
+	// Used only for title extraction (stripping the group prefix), not for detection.
 	reAnimeBracketPrefix = regexp.MustCompile(`^\[.+?\]\s*`)
 
+	// reAnimeFansubGroup matches a known fansub/raw release group at the very start
+	// of a name. The absolute-episode pattern covers lesser-known groups.
+	reAnimeFansubGroup = regexp.MustCompile(`(?i)^\[(?:` +
+		`SubsPlease|SubsPlus\+?|` +
+		`Erai-raws|` +
+		`HorribleSubs|` +
+		`ASW|` +
+		`Yameii|` +
+		`DKB|` +
+		`Judas|` +
+		`Commie|` +
+		`MahjongSoulless|` +
+		`ANi|` +
+		`SweetSub|` +
+		`NanakoRaws|` +
+		`AsukaRaws|` +
+		`neoHEVC|` +
+		`Sakurato|` +
+		`Cyan|` +
+		`BBF|` +
+		`jibaketa|` +
+		`Some-Stuffs|` +
+		`Kamigami|` +
+		`Studio\s+GreenTea|` +
+		`TRC|` +
+		`Sokudo|` +
+		`Trix|` +
+		`Anime\s+Land|` +
+		`MagicStar|` +
+		`Nekomoe\s+kissaten|` +
+		`GJM|` +
+		`Chihiro|` +
+		`Coalgirls|` +
+		`FFF|` +
+		`WhyNot|` +
+		`Underwater|` +
+		`Ohys-Raws|` +
+		`SmallSizedAnime|SSA|` +
+		`DeadFish|` +
+		`Eclipse|` +
+		`Hiryuu|` +
+		`Hatsuyuki|` +
+		`Vivid` +
+		`)\]`)
+
 	// reAnimeStreamingSource matches known anime streaming services embedded in a name.
-	// Used as a secondary signal for SxxExx releases that lack a bracket prefix.
 	reAnimeStreamingSource = regexp.MustCompile(`(?i)\b(?:Crunchyroll|Funimation|HiDive|HIDIVE)\b`)
 
 	// reAnimeAbsoluteEpisode matches absolute episode numbers common in fansub releases:
 	//   " 168-189"  — episode range (3+ digit to avoid cutting short title numbers)
 	//   " - 01"     — SubsPlease/Erai-raws style spacer with 1–4 digit episode
+	// Used for title extraction only; see reAnimeEpisodeDetect for detection.
 	reAnimeAbsoluteEpisode = regexp.MustCompile(`\s+(?:\d{3,4}(?:\s*[-–]\s*\d{1,4})?|-\s+\d{1,4})\b`)
+
+	// reAnimeEPFormat detects scene-release absolute episodes like EP590.
+	// Reliable without a bracket-prefix guard since the EP token is unambiguous.
+	reAnimeEPFormat = regexp.MustCompile(`\bEP\d{2,4}\b`)
+
+	// reAnimeNumericEpisode detects 3-digit bare numbers and "- NN" spacers used in
+	// fansub releases. These produce false positives for Western names with episode
+	// titles that happen to contain numbers ("900 A M", "- 3 Movies", "264-PBS"),
+	// so detectAnime only trusts them when the name has a bracket prefix at the start.
+	reAnimeNumericEpisode = regexp.MustCompile(`\s+(?:\d{3}(?:\s*[-–]\s*\d{1,3})?|-\s+\d{1,3})\b`)
+
+	// reAnimeBracketEpisode matches bracket-enclosed episode numbers used by some
+	// fansub groups: "[01]", "[793]". Limited to 1–3 digits to avoid matching
+	// quality tags like "[1080p]" or hash strings like "[B206D783]".
+	// Only trusted when the name has a bracket prefix (same guard as reAnimeNumericEpisode).
+	reAnimeBracketEpisode = regexp.MustCompile(`\[\d{1,3}\]`)
 
 	// reBlockedContent matches known CSAM-related terms and distribution codes.
 	// Derived from bitmagnet's banned keyword list. Checked against torrent name and all file paths.
@@ -190,6 +326,9 @@ func detectTV(normalized string) tvInfo {
 			season, _ = strconv.Atoi(m[6])
 			episode, _ = strconv.Atoi(m[7])
 		}
+		if m[8] != "" {
+			episode, _ = strconv.Atoi(m[8])
+		}
 		return tvInfo{true, season, episode}
 	}
 
@@ -208,10 +347,28 @@ func detectTV(normalized string) tvInfo {
 }
 
 // detectAnime returns true when the torrent name looks like an anime release.
-// Signal A: bracket-prefixed group at the start (fansub/raw convention).
-// Signal B: known anime streaming service tag combined with SxxExx TV detection.
+// Signal A: EP-format absolute episode (EP590) — reliable without bracket context.
+// Signal B: 3-digit bare numbers / "- NN" spacers / bracket episode tags — only
+//           trusted when the name has a bracket prefix (fansub style), since these
+//           patterns produce false positives for Western episode titles with numbers.
+// Signal C: known fansub group at the start combined with any TV episode marker.
+// Signal D: known anime streaming service tag combined with SxxExx TV detection.
 func detectAnime(name, normalized string, tv tvInfo) bool {
-	if reAnimeBracketPrefix.MatchString(name) {
+	if reAdult.MatchString(name) || reAdult.MatchString(normalized) {
+		return false
+	}
+	// Strip encoding tokens and www site prefixes from the raw name before normalizing
+	// so that codec version digits (265, 264) and site separators (" - 9.Title")
+	// don't trigger the 3-digit episode pattern.
+	normalizedNoEncoding := reWWWSitePrefix.ReplaceAllString(normalize(reEncodingBroad.ReplaceAllString(name, "")), "")
+	if reAnimeEPFormat.MatchString(normalizedNoEncoding) {
+		return true
+	}
+	if reAnimeBracketPrefix.MatchString(name) &&
+		(reAnimeNumericEpisode.MatchString(normalizedNoEncoding) || reAnimeBracketEpisode.MatchString(name)) {
+		return true
+	}
+	if reAnimeFansubGroup.MatchString(name) && tv.isTV {
 		return true
 	}
 	return tv.isTV && reAnimeStreamingSource.MatchString(normalized)
@@ -230,7 +387,7 @@ func extractAnimeTitle(normalized string) string {
 	if loc := reAnimeAbsoluteEpisode.FindStringIndex(s); loc != nil && loc[0] < cut {
 		cut = loc[0]
 	}
-	return strings.TrimSpace(s[:cut])
+	return trimTitle(s[:cut])
 }
 
 // normalize replaces dots and underscores with spaces and collapses whitespace.
@@ -254,7 +411,13 @@ func extractTitle(normalized string) string {
 			cut = loc[0]
 		}
 	}
-	return strings.TrimSpace(normalized[:cut])
+	return trimTitle(normalized[:cut])
+}
+
+// trimTitle trims trailing junk left when a title-cut pattern lands just after a
+// separator or an opening bracket/paren (e.g. " - S04E01", "Title (1991)").
+func trimTitle(s string) string {
+	return strings.TrimRight(strings.TrimSpace(s), " -–_.([")
 }
 
 func firstMatch(re *regexp.Regexp, s string) string {
@@ -280,7 +443,8 @@ func analyzeFiles(files []File, allowed map[string]struct{}) (videoCount, badCou
 // IsVideoExt reports whether ext is a recognised video file extension.
 func IsVideoExt(ext string) bool {
 	switch ext {
-	case ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".ts", ".m2ts", ".vob", ".flv", ".webm":
+	case ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".ts", ".m2ts", ".vob", ".flv", ".webm",
+		".iso", ".mpg", ".mpeg":
 		return true
 	}
 	return false
@@ -300,15 +464,15 @@ func ContainsBlockedContent(name string, files []File) bool {
 	return false
 }
 
-func shouldReject(ct gen.ContentType, name string, files []File, totalSize int64, minSize, maxSize int64, allowed map[string]struct{}, enableExtensionFilter, excludeAdultContent bool) string {
+func shouldReject(ct gen.ContentType, name, normalized string, files []File, totalSize int64, minSize, maxSize int64, allowed map[string]struct{}, enableExtensionFilter, excludeAdultContent bool) string {
 	if totalSize < minSize || totalSize > maxSize {
 		return "size"
 	}
+	if excludeAdultContent && (reAdult.MatchString(name) || reAdult.MatchString(normalized)) {
+		return "adult"
+	}
 	if ct == gen.ContentTypeUnknown {
 		return "unknown_type"
-	}
-	if excludeAdultContent && reAdult.MatchString(name) {
-		return "adult"
 	}
 	videoCount, badCount := analyzeFiles(files, allowed)
 	if videoCount == 0 {
@@ -340,22 +504,34 @@ func Classify(name string, files []File, totalSize int64, minSize, maxSize int64
 		ContentType: gen.ContentTypeUnknown,
 	}
 
-	normalized := normalize(name)
+	normalized := reWWWSitePrefix.ReplaceAllString(normalize(name), "")
 	tv := detectTV(normalized)
 
+	// Require at least one video file before classifying as a media type.
+	// Bracket-prefixed names (manga, doujinshi, archives) share the same
+	// [Group] naming convention as fansub releases but contain no video.
+	// When no file info is available (len == 0) we allow classification.
+	hasVideo := len(files) == 0
+	for _, f := range files {
+		if IsVideoExt(strings.ToLower(filepath.Ext(f.Path))) {
+			hasVideo = true
+			break
+		}
+	}
+
 	switch {
-	case detectAnime(name, normalized, tv):
+	case hasVideo && detectAnime(name, normalized, tv):
 		result.ContentType = gen.ContentTypeAnime
 		result.Season = tv.season
 		result.Episode = tv.episode
 		result.Title = extractAnimeTitle(normalized)
-	case tv.isTV:
+	case hasVideo && tv.isTV:
 		result.ContentType = gen.ContentTypeTv
 		result.Season = tv.season
 		result.Episode = tv.episode
 		result.Title = extractTitle(normalized)
 	default:
-		if reYear.MatchString(normalized) || reResolution.MatchString(normalized) {
+		if hasVideo && (reYear.MatchString(normalized) || reResolution.MatchString(normalized)) {
 			result.ContentType = gen.ContentTypeMovie
 		}
 		result.Title = extractTitle(normalized)
@@ -373,7 +549,7 @@ func Classify(name string, files []File, totalSize int64, minSize, maxSize int64
 		result.ReleaseGroup = m[1]
 	}
 
-	if reason := shouldReject(result.ContentType, name, files, totalSize, minSize, maxSize, allowed, enableExtensionFilter, excludeAdultContent); reason != "" {
+	if reason := shouldReject(result.ContentType, name, normalized, files, totalSize, minSize, maxSize, allowed, enableExtensionFilter, excludeAdultContent); reason != "" {
 		result.State = gen.TorrentStateRejected
 		result.RejectionReason = reason
 		return result
