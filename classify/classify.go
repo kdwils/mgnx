@@ -204,6 +204,11 @@ var (
 	// sites at the start of names. Matched on the normalized (dot-replaced) string.
 	reWWWSitePrefix = regexp.MustCompile(`(?i)^www\s+\S+\s+\S+\s*-\s+`)
 
+	// reBracketSitePrefix strips bracket-enclosed domain prefixes like
+	// "[ FreeCourseWeb.com ] " that piracy/course sites prepend to torrent names.
+	// Must be stripped before the anime bracket-prefix guard to avoid false positives.
+	reBracketSitePrefix = regexp.MustCompile(`(?i)^\[[\s\w.-]{1,60}\.[a-z]{2,4}\s*\]\s*`)
+
 	// reAnimeBracketPrefix matches any bracket tag at the very start of a name.
 	// Used only for title extraction (stripping the group prefix), not for detection.
 	reAnimeBracketPrefix = regexp.MustCompile(`^\[.+?\]\s*`)
@@ -277,6 +282,37 @@ var (
 	// quality tags like "[1080p]" or hash strings like "[B206D783]".
 	// Only trusted when the name has a bracket prefix (same guard as reAnimeNumericEpisode).
 	reAnimeBracketEpisode = regexp.MustCompile(`\[\d{1,3}\]`)
+
+	// reSoftware matches software application releases. Checked against both the
+	// raw name and the normalized form so dot/underscore-separated names are covered.
+	reSoftware = regexp.MustCompile(`(?i)` +
+		// Unambiguous software distribution tokens
+		`\bRTM\b` + `|` +
+		`\bLTSC\b` + `|` +
+		`\bC2R\b` + `|` +
+		`\bMultilingual\b` + `|` +
+		`\bWinPE\b` + `|` +
+		`\bx86_64\b` + `|` +
+		`\bKeygen\b` + `|` +
+		`\bActivator\b` + `|` +
+		// Architecture tokens — distinct from codec names (x264, x265)
+		`\bx64\b` + `|` +
+		`\bx86\b` + `|` +
+		// Operating system names with a version identifier
+		`\bWindows\s+(?:XP|Vista|\d+|Server)\b` + `|` +
+		// Software brands and products
+		`\bAdobe\b` + `|` +
+		`\bPhotoshop\b` + `|` +
+		`\bIllustrator\b` + `|` +
+		`\bPremiere\s+Pro\b` + `|` +
+		`\bAfter\s+Effects\b` + `|` +
+		`\bAutoCAD\b` + `|` +
+		`\bAutodesk\b` + `|` +
+		`\b3ds\s+Max\b` + `|` +
+		`\bSQL\s+Server\b` + `|` +
+		`\bMicrosoft\s+Office\b` + `|` +
+		`\bVisual\s+Studio\b`,
+	)
 
 	// reBlockedContent matches known CSAM-related terms and distribution codes.
 	// Derived from bitmagnet's banned keyword list. Checked against torrent name and all file paths.
@@ -364,8 +400,9 @@ func detectAnime(name, normalized string, tv tvInfo) bool {
 	if reAnimeEPFormat.MatchString(normalizedNoEncoding) {
 		return true
 	}
-	if reAnimeBracketPrefix.MatchString(name) &&
-		(reAnimeNumericEpisode.MatchString(normalizedNoEncoding) || reAnimeBracketEpisode.MatchString(name)) {
+	nameNoBracketSite := reBracketSitePrefix.ReplaceAllString(name, "")
+	if reAnimeBracketPrefix.MatchString(nameNoBracketSite) &&
+		(reAnimeNumericEpisode.MatchString(normalizedNoEncoding) || reAnimeBracketEpisode.MatchString(nameNoBracketSite)) {
 		return true
 	}
 	if reAnimeFansubGroup.MatchString(name) && tv.isTV {
@@ -471,15 +508,20 @@ func shouldReject(ct gen.ContentType, name, normalized string, files []File, tot
 	if excludeAdultContent && (reAdult.MatchString(name) || reAdult.MatchString(normalized)) {
 		return "adult"
 	}
+	if reSoftware.MatchString(name) || reSoftware.MatchString(normalized) {
+		return "software"
+	}
 	if ct == gen.ContentTypeUnknown {
 		return "unknown_type"
 	}
-	videoCount, badCount := analyzeFiles(files, allowed)
-	if videoCount == 0 {
-		return "no_video"
-	}
-	if enableExtensionFilter && badCount > 0 {
-		return "bad_extension"
+	if len(files) > 0 {
+		videoCount, badCount := analyzeFiles(files, allowed)
+		if videoCount == 0 {
+			return "no_video"
+		}
+		if enableExtensionFilter && badCount > 0 {
+			return "bad_extension"
+		}
 	}
 	return ""
 }
@@ -507,31 +549,19 @@ func Classify(name string, files []File, totalSize int64, minSize, maxSize int64
 	normalized := reWWWSitePrefix.ReplaceAllString(normalize(name), "")
 	tv := detectTV(normalized)
 
-	// Require at least one video file before classifying as a media type.
-	// Bracket-prefixed names (manga, doujinshi, archives) share the same
-	// [Group] naming convention as fansub releases but contain no video.
-	// When no file info is available (len == 0) we allow classification.
-	hasVideo := len(files) == 0
-	for _, f := range files {
-		if IsVideoExt(strings.ToLower(filepath.Ext(f.Path))) {
-			hasVideo = true
-			break
-		}
-	}
-
 	switch {
-	case hasVideo && detectAnime(name, normalized, tv):
+	case detectAnime(name, normalized, tv):
 		result.ContentType = gen.ContentTypeAnime
 		result.Season = tv.season
 		result.Episode = tv.episode
 		result.Title = extractAnimeTitle(normalized)
-	case hasVideo && tv.isTV:
+	case tv.isTV:
 		result.ContentType = gen.ContentTypeTv
 		result.Season = tv.season
 		result.Episode = tv.episode
 		result.Title = extractTitle(normalized)
 	default:
-		if hasVideo && (reYear.MatchString(normalized) || reResolution.MatchString(normalized)) {
+		if reYear.MatchString(normalized) || reResolution.MatchString(normalized) {
 			result.ContentType = gen.ContentTypeMovie
 		}
 		result.Title = extractTitle(normalized)
