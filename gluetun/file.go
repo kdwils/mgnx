@@ -65,7 +65,7 @@ func readSettled[T any](ctx context.Context, path, name string, settleTime time.
 		data, err := os.ReadFile(path)
 		if err != nil {
 			w.Close()
-			log.Warn("failed to read file, retrying", "name", name, "path", path, "err", err)
+			log.Warn("failed to read file", "name", name, "path", path, "err", err)
 			select {
 			case <-ctx.Done():
 				return zero, ctx.Err()
@@ -77,7 +77,7 @@ func readSettled[T any](ctx context.Context, path, name string, settleTime time.
 		value, ok := parseFn(strings.TrimSpace(string(data)))
 		if !ok {
 			w.Close()
-			log.Warn("invalid content in file, retrying", "name", name, "path", path)
+			log.Warn("invalid content in file", "name", name, "path", path, "data", string(data))
 			select {
 			case <-ctx.Done():
 				return zero, ctx.Err()
