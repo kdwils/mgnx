@@ -22,7 +22,6 @@ type State struct {
 	pool           *pgxpool.Pool
 	crawler        NodeCounter
 	crawlerEnabled bool
-	torznabEnabled bool
 }
 
 // Server owns the HTTP listener and health state.
@@ -33,14 +32,13 @@ type Server struct {
 }
 
 // New constructs a Server.
-func New(port int, pool *pgxpool.Pool, crawler NodeCounter, crawlerEnabled, torznabEnabled bool) *Server {
+func New(port int, pool *pgxpool.Pool, crawler NodeCounter, crawlerEnabled bool) *Server {
 	s := &Server{
 		port: port,
 		state: &State{
 			pool:           pool,
 			crawler:        crawler,
 			crawlerEnabled: crawlerEnabled,
-			torznabEnabled: torznabEnabled,
 		},
 	}
 

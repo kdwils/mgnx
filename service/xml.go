@@ -7,8 +7,6 @@ import (
 	"time"
 )
 
-// --- Caps response ---
-
 type XMLCaps struct {
 	XMLName    xml.Name          `xml:"caps"`
 	Server     XMLCapsServer     `xml:"server"`
@@ -93,8 +91,6 @@ func newXMLCaps(caps CapsResponse) XMLCaps {
 		Categories: XMLCapsCategories{Categories: categories},
 	}
 }
-
-// --- RSS feed response ---
 
 type XMLRSS struct {
 	XMLName   xml.Name   `xml:"rss"`
@@ -220,8 +216,6 @@ func newXMLItem(t TorrentItem) XMLItem {
 func torznabAttr(name, value string) XMLTorznabAttr {
 	return XMLTorznabAttr{Name: name, Value: value}
 }
-
-// --- Error response ---
 
 type XMLError struct {
 	XMLName     xml.Name `xml:"error"`

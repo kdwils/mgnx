@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kdwils/mgnx/api"
 	"github.com/kdwils/mgnx/config"
 	"github.com/kdwils/mgnx/db"
 	"github.com/kdwils/mgnx/db/gen"
@@ -23,7 +24,6 @@ import (
 	"github.com/kdwils/mgnx/recorder"
 	"github.com/kdwils/mgnx/scrape"
 	"github.com/kdwils/mgnx/service"
-	"github.com/kdwils/mgnx/torznab"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -154,7 +154,7 @@ func TestEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 
 	svc := service.New(queries, cfg)
-	srv := torznab.New(0, logger.New("error"), svc, recorder.NewNoOp())
+	srv := api.New(0, logger.New("error"), svc, recorder.NewNoOp())
 	go srv.ServeListener(ctx, ln)
 
 	serverURL := "http://127.0.0.1:" + strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
@@ -178,7 +178,7 @@ func TestEndToEnd(t *testing.T) {
 	}
 
 	t.Run("Capabilities", func(t *testing.T) {
-		resp, err := http.Get(serverURL + "/api?t=caps")
+		resp, err := http.Get(serverURL + "/api/torznab?t=caps")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -188,26 +188,26 @@ func TestEndToEnd(t *testing.T) {
 	})
 
 	t.Run("SearchAll", func(t *testing.T) {
-		rss := getRSS(t, serverURL+"/api?t=search")
+		rss := getRSS(t, serverURL+"/api/torznab?t=search")
 		assertGUID(t, rss, movieHex)
 		assertGUID(t, rss, tvHex)
 	})
 
 	t.Run("RejectedNotVisible", func(t *testing.T) {
-		rss := getRSS(t, serverURL+"/api?t=search")
+		rss := getRSS(t, serverURL+"/api/torznab?t=search")
 		assertNoGUID(t, rss, rejHex)
 	})
 
 	t.Run("Pagination", func(t *testing.T) {
-		rss1 := getRSS(t, serverURL+"/api?t=search&limit=1&offset=0")
+		rss1 := getRSS(t, serverURL+"/api/torznab?t=search&limit=1&offset=0")
 		require.Len(t, rss1.Channel.Items, 1)
-		rss2 := getRSS(t, serverURL+"/api?t=search&limit=1&offset=1")
+		rss2 := getRSS(t, serverURL+"/api/torznab?t=search&limit=1&offset=1")
 		require.Len(t, rss2.Channel.Items, 1)
 		assert.NotEqual(t, rss1.Channel.Items[0].GUID.Value, rss2.Channel.Items[0].GUID.Value)
 	})
 
 	t.Run("UnknownFunction", func(t *testing.T) {
-		resp, err := http.Get(serverURL + "/api?t=unknown")
+		resp, err := http.Get(serverURL + "/api/torznab?t=unknown")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)

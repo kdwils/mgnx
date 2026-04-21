@@ -15,7 +15,6 @@ type Config struct {
 	Crawler  Crawler  `mapstructure:"crawler"`
 	Indexer  Indexer  `mapstructure:"indexer"`
 	Scrape   Scrape   `mapstructure:"scrape"`
-	Torznab  Torznab  `mapstructure:"torznab"`
 }
 
 type DHT struct {
@@ -98,12 +97,9 @@ type Database struct {
 type Server struct {
 	HealthPort  int    `mapstructure:"health_port"`
 	MetricsPort int    `mapstructure:"metrics_port"`
+	APIPort     int    `mapstructure:"api_port"`
+	APIEnabled  bool   `mapstructure:"api_enabled"`
 	LogLevel    string `mapstructure:"log_level"`
-}
-
-type Torznab struct {
-	Port    int  `mapstructure:"port"`
-	Enabled bool `mapstructure:"enabled"`
 }
 
 func New(v *viper.Viper) (Config, error) {

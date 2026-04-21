@@ -14,6 +14,7 @@ import (
 type Querier interface {
 	CountTorrents(ctx context.Context) (int64, error)
 	CountTorrentsByState(ctx context.Context) ([]CountTorrentsByStateRow, error)
+	DeleteTorrent(ctx context.Context, infohash string) error
 	GetDeadCandidates(ctx context.Context, arg GetDeadCandidatesParams) ([]string, error)
 	// Fetch all active encodes of a specific movie by IMDB ID. Used for t=movie&imdbid=.
 	GetMoviesByIMDB(ctx context.Context, imdbID pgtype.Text) ([]GetMoviesByIMDBRow, error)
@@ -25,6 +26,7 @@ type Querier interface {
 	GetTorrentsToScrape(ctx context.Context, limit int32) ([]GetTorrentsToScrapeRow, error)
 	InsertScrapeHistory(ctx context.Context, arg InsertScrapeHistoryParams) error
 	InsertTorrentFiles(ctx context.Context, arg InsertTorrentFilesParams) error
+	ListTorrents(ctx context.Context, arg ListTorrentsParams) ([]ListTorrentsRow, error)
 	PruneScrapeHistory(ctx context.Context, cutoff pgtype.Timestamptz) error
 	// General search across all active torrents. Used for t=search.
 	SearchAll(ctx context.Context, arg SearchAllParams) ([]SearchAllRow, error)
@@ -35,6 +37,7 @@ type Querier interface {
 	UpdateTorrentClassified(ctx context.Context, arg UpdateTorrentClassifiedParams) error
 	UpdateTorrentDead(ctx context.Context, infohash string) error
 	UpdateTorrentScrape(ctx context.Context, arg UpdateTorrentScrapeParams) error
+	UpdateTorrentState(ctx context.Context, arg UpdateTorrentStateParams) error
 	UpsertTorrentPending(ctx context.Context, arg UpsertTorrentPendingParams) (pgconn.CommandTag, error)
 	UpsertTorrentTracker(ctx context.Context, arg UpsertTorrentTrackerParams) error
 	UpsertTracker(ctx context.Context, url string) (Tracker, error)

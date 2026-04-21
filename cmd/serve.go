@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kdwils/mgnx/api"
 	"github.com/kdwils/mgnx/config"
 	"github.com/kdwils/mgnx/db"
 	"github.com/kdwils/mgnx/db/gen"
@@ -23,7 +24,6 @@ import (
 	"github.com/kdwils/mgnx/recorder"
 	"github.com/kdwils/mgnx/scrape"
 	"github.com/kdwils/mgnx/service"
-	"github.com/kdwils/mgnx/torznab"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -97,7 +97,7 @@ var serveCmd = &cobra.Command{
 			}
 		}
 
-		hs := health.New(cfg.Server.HealthPort, pool, crawler, cfg.Crawler.Enabled, cfg.Torznab.Enabled)
+		hs := health.New(cfg.Server.HealthPort, pool, crawler, cfg.Crawler.Enabled)
 		g.Go(func() error {
 			return hs.Start(ctx)
 		})
@@ -158,13 +158,13 @@ var serveCmd = &cobra.Command{
 			})
 		}
 
-		if cfg.Torznab.Enabled {
+		if cfg.Server.APIEnabled {
 			g.Go(func() error {
 				svc := service.New(queries, cfg)
-				srv := torznab.New(cfg.Torznab.Port, l, svc, rec)
+				srv := api.New(cfg.Server.APIPort, l, svc, rec)
 				err := srv.Serve(ctx)
 				if err != nil && err != context.Canceled {
-					logger.FromContext(ctx).Error("torznab server error", "error", err)
+					logger.FromContext(ctx).Error("api server error", "error", err)
 				}
 				return err
 			})
