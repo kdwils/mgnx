@@ -14,10 +14,8 @@ import (
 
 func (s *Server) handleTorznab() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		log := logger.FromContext(r.Context())
 		t := r.URL.Query().Get("t")
 
-		log.Debug("torznab request", "t", t, "query", r.URL.RawQuery)
 		s.rec.IncTorznabRequestsTotal()
 
 		start := time.Now()
