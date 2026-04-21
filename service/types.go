@@ -2,6 +2,18 @@ package service
 
 import "time"
 
+type ListTorrentsRequest struct {
+	Limit       int
+	Offset      int
+	State       string
+	ContentType string
+}
+
+type UpdateTorrentStateRequest struct {
+	Infohash string
+	State    string
+}
+
 // Torznab/Newznab standard category IDs.
 const (
 	CatMovies        = 2000
@@ -59,15 +71,13 @@ type TorrentItem struct {
 	DynamicRange string
 	Source       string
 	ReleaseGroup string
-	// Movie enrichment
-	ImdbID     string
-	MovieTitle string
-	Year       int32
-	// TV enrichment
-	SeriesName  string
-	Season      int32
-	Episode     int32
-	EpisodeName string
+	ImdbID       string
+	MovieTitle   string
+	Year         int32
+	SeriesName   string
+	Season       int32
+	Episode      int32
+	EpisodeName  string
 }
 
 type SearchResponse struct {
