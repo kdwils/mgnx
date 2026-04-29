@@ -1,6 +1,7 @@
 package dht
 
 import (
+	"container/list"
 	"net"
 	"testing"
 	"time"
@@ -19,8 +20,7 @@ func TestPeerStore_Add(t *testing.T) {
 
 		got := ps.Get(ih)
 		require.Len(t, got, 1)
-		want := []peerEntry{{IP: net.ParseIP("1.2.3.4"), Port: 6881, SeenAt: got[0].SeenAt}}
-		assert.Equal(t, want, got)
+		assert.Equal(t, []peerEntry{{IP: net.ParseIP("1.2.3.4"), Port: 6881, SeenAt: got[0].SeenAt}}, got)
 	})
 
 	t.Run("appends multiple peers for the same infohash", func(t *testing.T) {
@@ -33,11 +33,10 @@ func TestPeerStore_Add(t *testing.T) {
 
 		got := ps.Get(ih)
 		require.Len(t, got, 2)
-		want := []peerEntry{
+		assert.Equal(t, []peerEntry{
 			{IP: net.ParseIP("1.2.3.4"), Port: 6881, SeenAt: got[0].SeenAt},
 			{IP: net.ParseIP("5.6.7.8"), Port: 6882, SeenAt: got[1].SeenAt},
-		}
-		assert.Equal(t, want, got)
+		}, got)
 	})
 
 	t.Run("evicts oldest infohash when store is at capacity", func(t *testing.T) {
@@ -69,10 +68,7 @@ func TestPeerStore_Add(t *testing.T) {
 		ps.Add(ih, net.ParseIP("1.2.3.4"), 6881)
 		ps.Add(ih, net.ParseIP("5.6.7.8"), 6882)
 
-		ps.mu.Lock()
-		orderLen := ps.insertOrder.Len()
-		ps.mu.Unlock()
-		assert.Equal(t, 1, orderLen, "same infohash should not appear in insertOrder twice")
+		assert.Equal(t, 1, ps.insertOrder.Len(), "same infohash should not appear in insertOrder twice")
 	})
 
 	t.Run("does not exceed maxPeersPerHash for a single infohash", func(t *testing.T) {
@@ -89,22 +85,28 @@ func TestPeerStore_Add(t *testing.T) {
 	})
 
 	t.Run("deduplicates same peer on re-announce", func(t *testing.T) {
-		ps := newPeerStore(100, 50, time.Minute)
+		base := time.Now()
+		refreshed := base.Add(10 * time.Millisecond)
+		tick := base
+		ps := &PeerStore{
+			entries:         make(map[[20]byte][]peerEntry),
+			insertOrder:     list.New(),
+			orderIndex:      make(map[[20]byte]*list.Element),
+			maxHashes:       100,
+			maxPeersPerHash: 50,
+			ttl:             time.Minute,
+			now:             func() time.Time { return tick },
+		}
 		var ih [20]byte
 		ih[0] = 0x06
 
 		ip := net.ParseIP("1.2.3.4")
 		ps.Add(ih, ip, 6881)
-
-		time.Sleep(10 * time.Millisecond)
-
+		tick = refreshed
 		ps.Add(ih, ip, 6881)
 
 		got := ps.Get(ih)
-		require.Len(t, got, 1, "duplicate peer should not be added")
-		assert.Equal(t, ip, got[0].IP)
-		assert.Equal(t, 6881, got[0].Port)
-		assert.WithinDuration(t, time.Now(), got[0].SeenAt, time.Second, "SeenAt should be refreshed")
+		assert.Equal(t, []peerEntry{{IP: ip, Port: 6881, SeenAt: refreshed}}, got)
 	})
 }
 
@@ -126,71 +128,101 @@ func TestPeerStore_Get(t *testing.T) {
 
 		got := ps.Get(ih)
 		require.Len(t, got, 1)
-		want := []peerEntry{{IP: net.ParseIP("1.2.3.4"), Port: 6881, SeenAt: got[0].SeenAt}}
-		assert.Equal(t, want, got)
+		assert.Equal(t, []peerEntry{{IP: net.ParseIP("1.2.3.4"), Port: 6881, SeenAt: got[0].SeenAt}}, got)
 	})
 
 	t.Run("returns nil and removes infohash after TTL expires", func(t *testing.T) {
-		ps := newPeerStore(100, 50, 50*time.Millisecond)
 		var ih [20]byte
 		ih[0] = 0x03
-
-		ps.Add(ih, net.ParseIP("1.2.3.4"), 6881)
-		time.Sleep(100 * time.Millisecond)
+		ps := &PeerStore{
+			entries: map[[20]byte][]peerEntry{
+				ih: {{IP: net.ParseIP("1.2.3.4"), Port: 6881, SeenAt: time.Now().Add(-1 * time.Hour)}},
+			},
+			insertOrder:     list.New(),
+			orderIndex:      make(map[[20]byte]*list.Element),
+			maxHashes:       100,
+			maxPeersPerHash: 50,
+			ttl:             50 * time.Millisecond,
+			now:             time.Now,
+		}
 
 		assert.Nil(t, ps.Get(ih))
-
-		_, exists := ps.c.Get(ih)
+		_, exists := ps.entries[ih]
 		assert.False(t, exists, "expired infohash should be removed from store")
 	})
 
 	t.Run("filters expired peers but returns remaining live ones", func(t *testing.T) {
-		ps := newPeerStore(100, 50, 80*time.Millisecond)
 		var ih [20]byte
 		ih[0] = 0x04
-
-		ps.Add(ih, net.ParseIP("1.2.3.4"), 6881)
-		time.Sleep(100 * time.Millisecond)
-		ps.Add(ih, net.ParseIP("5.6.7.8"), 6882)
+		liveIP := net.ParseIP("5.6.7.8")
+		liveSeenAt := time.Now()
+		ps := &PeerStore{
+			entries: map[[20]byte][]peerEntry{
+				ih: {
+					{IP: net.ParseIP("1.2.3.4"), Port: 6881, SeenAt: time.Now().Add(-1 * time.Hour)},
+					{IP: liveIP, Port: 6882, SeenAt: liveSeenAt},
+				},
+			},
+			insertOrder:     list.New(),
+			orderIndex:      make(map[[20]byte]*list.Element),
+			maxHashes:       100,
+			maxPeersPerHash: 50,
+			ttl:             50 * time.Millisecond,
+			now:             time.Now,
+		}
 
 		got := ps.Get(ih)
-		require.Len(t, got, 1, "only the live peer should be returned")
-		want := []peerEntry{{IP: net.ParseIP("5.6.7.8"), Port: 6882, SeenAt: got[0].SeenAt}}
-		assert.Equal(t, want, got)
+		assert.Equal(t, []peerEntry{{IP: liveIP, Port: 6882, SeenAt: liveSeenAt}}, got)
 	})
 }
 
-func TestPeerStore_startCleanup(t *testing.T) {
+func TestPeerStore_pruneExpired(t *testing.T) {
 	t.Run("removes infohash when all peers have expired", func(t *testing.T) {
-		ps := newPeerStore(100, 50, 50*time.Millisecond)
 		var ih [20]byte
 		ih[0] = 0x01
+		ps := &PeerStore{
+			entries: map[[20]byte][]peerEntry{
+				ih: {{IP: net.ParseIP("1.2.3.4"), Port: 6881, SeenAt: time.Now().Add(-1 * time.Hour)}},
+			},
+			insertOrder:     list.New(),
+			orderIndex:      make(map[[20]byte]*list.Element),
+			maxHashes:       100,
+			maxPeersPerHash: 50,
+			ttl:             50 * time.Millisecond,
+			now:             time.Now,
+		}
+		el := ps.insertOrder.PushBack(ih)
+		ps.orderIndex[ih] = el
 
-		ps.Add(ih, net.ParseIP("1.2.3.4"), 6881)
+		ps.pruneExpired()
 
-		go ps.startCleanup(t.Context())
-		time.Sleep(200 * time.Millisecond)
-
-		_, exists := ps.c.Get(ih)
+		_, exists := ps.entries[ih]
 		assert.False(t, exists, "infohash should be removed after all peers expire")
 	})
 
 	t.Run("removes from insertOrder when infohash is evicted", func(t *testing.T) {
-		ps := newPeerStore(100, 50, 50*time.Millisecond)
 		var ih [20]byte
 		ih[0] = 0x02
+		ps := &PeerStore{
+			entries: map[[20]byte][]peerEntry{
+				ih: {{IP: net.ParseIP("1.2.3.4"), Port: 6881, SeenAt: time.Now().Add(-1 * time.Hour)}},
+			},
+			insertOrder:     list.New(),
+			orderIndex:      make(map[[20]byte]*list.Element),
+			maxHashes:       100,
+			maxPeersPerHash: 50,
+			ttl:             50 * time.Millisecond,
+			now:             time.Now,
+		}
+		el := ps.insertOrder.PushBack(ih)
+		ps.orderIndex[ih] = el
 
-		ps.Add(ih, net.ParseIP("1.2.3.4"), 6881)
+		ps.pruneExpired()
 
-		go ps.startCleanup(t.Context())
-		time.Sleep(200 * time.Millisecond)
-
-		ps.mu.Lock()
 		for el := ps.insertOrder.Front(); el != nil; el = el.Next() {
 			if el.Value.([20]byte) == ih {
 				t.Fatal("infohash should be removed from insertOrder after eviction")
 			}
 		}
-		ps.mu.Unlock()
 	})
 }
