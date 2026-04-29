@@ -40,10 +40,6 @@ var (
 			Padding(0, 1).
 			Background(lipgloss.Color("235")).Foreground(ColorMuted)
 
-	StatusBarKeyStyle = lipgloss.NewStyle().
-				Padding(0, 1).
-				Background(lipgloss.Color("235")).Foreground(lipgloss.Color("252")).Bold(true)
-
 	SelectedRowStyle = lipgloss.NewStyle().
 				Background(ColorSelected).Bold(true)
 

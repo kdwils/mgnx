@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"log"
-
 	"github.com/kdwils/mgnx/config"
 	"github.com/kdwils/mgnx/tui"
 	"github.com/spf13/cobra"
@@ -15,9 +13,9 @@ var tuiCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.New(viper.GetViper())
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
-		return tui.Run(cfg.TUI.Host)
+		return tui.Run(cmd.Context(), cfg.TUI.Host)
 	},
 }
 

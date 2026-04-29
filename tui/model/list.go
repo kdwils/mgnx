@@ -24,7 +24,7 @@ const (
 	fixedColW   = stateColW + typeColW + seedersColW + sizeColW + 4*colSpacing
 )
 
-var stateOptions = []string{"all", "active", "pending", "classified", "enriched", "dead", "rejected"}
+var stateOptions = append([]string{"all"}, client.ValidStates...)
 var typeOptions = []string{"all", "movie", "tv", "anime", "unknown"}
 
 type ListModel struct {
@@ -68,7 +68,7 @@ func (m ListModel) SetSize(w, h int) ListModel {
 }
 
 func (m ListModel) RemoveTorrent(infohash string) ListModel {
-	filtered := m.torrents[:0]
+	var filtered []client.Torrent
 	for _, t := range m.torrents {
 		if t.Infohash != infohash {
 			filtered = append(filtered, t)
@@ -248,7 +248,6 @@ func (m ListModel) View() string {
 func (m ListModel) renderHeader() string {
 	title := "mgnx"
 	if m.client != nil {
-		// baseURL is unexported; just show "connected"
 		title = "mgnx  •  ● connected"
 	}
 	if m.loading {
@@ -365,7 +364,7 @@ func (m ListModel) renderStatusBar() string {
 	}
 
 	keys1 := counts + "  •  ↑↓ move  ←→ page  enter open"
-	keys2 := "/ ctrl+f search  s state  t type  d delete  r refresh  c config  q quit"
+	keys2 := "/ ctrl+f search (page only)  s state  t type  d delete  r refresh  c config  q quit"
 
 	line1 := ui.StatusBarStyle.Width(m.width).Render(keys1)
 	line2 := ui.StatusBarStyle.Width(m.width).Render(keys2)

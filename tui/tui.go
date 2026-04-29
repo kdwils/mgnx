@@ -6,11 +6,11 @@ import (
 	"github.com/kdwils/mgnx/tui/model"
 )
 
-// Run starts the bubbletea program.
-// If host is empty, the app opens the Config view first.
-// If host is provided, it skips straight to the List view.
 func Run(host string) error {
-	c := client.New(host, nil)
+	var c *client.Client
+	if host != "" {
+		c = client.New(host, nil)
+	}
 	p := tea.NewProgram(model.NewApp(c), tea.WithAltScreen())
 	_, err := p.Run()
 	return err

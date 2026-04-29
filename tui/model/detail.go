@@ -3,10 +3,9 @@ package model
 import (
 	"context"
 	"fmt"
-	"os/exec"
-	"runtime"
 	"strings"
 
+	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/kdwils/mgnx/pkg/client"
@@ -34,7 +33,7 @@ func (m DetailModel) SetSize(w, h int) DetailModel {
 	return m
 }
 
-func (m DetailModel) SetLoading(infohash string) DetailModel {
+func (m DetailModel) SetLoading() DetailModel {
 	m.loading = true
 	m.err = ""
 	m.torrent = nil
@@ -136,14 +135,13 @@ func (m DetailModel) View() string {
 	header := ui.HeaderStyle.Width(m.width).Render("← Esc   " + truncate(title, m.width-12))
 
 	var body string
-	if m.loading {
-		body = "  loading…"
-	}
-	if m.err != "" {
-		body = ui.ErrorStyle.Render("  " + m.err)
-	}
-	if m.torrent != nil {
+	switch {
+	case m.torrent != nil:
 		body = m.renderFields()
+	case m.err != "":
+		body = ui.ErrorStyle.Render("  " + m.err)
+	case m.loading:
+		body = "  loading…"
 	}
 
 	statusBar := ui.StatusBarStyle.Width(m.width).Render("[s] state  [d] delete  [y] copy magnet  [Esc] back")
@@ -154,10 +152,9 @@ func (m DetailModel) View() string {
 func (m DetailModel) renderFields() string {
 	t := m.torrent
 	label := ui.LabelStyle
-	val := lipgloss.NewStyle()
 
 	row := func(l, v string) string {
-		return label.Render(l) + val.Render(v)
+		return label.Render(l) + v
 	}
 
 	lines := []string{
@@ -222,19 +219,7 @@ func updateStateCmd(c *client.Client, infohash, state string) tea.Cmd {
 
 func copyToClipboard(text string) tea.Cmd {
 	return func() tea.Msg {
-		var cmd *exec.Cmd
-		switch runtime.GOOS {
-		case "darwin":
-			cmd = exec.Command("pbcopy")
-		case "linux":
-			cmd = exec.Command("xclip", "-selection", "clipboard")
-		case "windows":
-			cmd = exec.Command("clip")
-		default:
-			return nil
-		}
-		cmd.Stdin = strings.NewReader(text)
-		_ = cmd.Run()
+		_ = clipboard.WriteAll(text)
 		return nil
 	}
 }

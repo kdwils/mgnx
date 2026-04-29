@@ -31,14 +31,11 @@ func (m ConfirmModel) Update(msg tea.Msg) (ConfirmModel, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "enter":
-			infohash := m.infohash
-			return m, deleteCmd(m.client, infohash)
+			return m, deleteCmd(m.client, m.infohash)
 		case "esc", "n":
-			from := m.fromView
-			infohash := m.infohash
 			return m, func() tea.Msg {
-				if from == viewDetail {
-					return NavigateDetailMsg{Infohash: infohash}
+				if m.fromView == viewDetail {
+					return NavigateDetailMsg{Infohash: m.infohash}
 				}
 				return NavigateListMsg{}
 			}

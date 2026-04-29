@@ -109,7 +109,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case NavigateDetailMsg:
 		a.prevView = a.activeView
 		a.activeView = viewDetail
-		a.detail = a.detail.SetLoading(msg.Infohash)
+		a.detail = a.detail.SetLoading()
 		return a, getTorrent(a.client, msg.Infohash)
 
 	case NavigateConfigMsg:
@@ -126,10 +126,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ClientConnectedMsg:
 		a.client = msg.Client
 		a.config = a.config.SetHasClient(true)
-		a.list = NewListModel(msg.Client)
-		a.list = a.list.SetSize(a.width, a.height)
-		a.detail = NewDetailModel(msg.Client)
-		a.detail = a.detail.SetSize(a.width, a.height)
+		a.list = NewListModel(msg.Client).SetSize(a.width, a.height)
+		a.detail = NewDetailModel(msg.Client).SetSize(a.width, a.height)
 		a.activeView = viewList
 		return a, fetchTorrents(msg.Client, a.list.listParams())
 
