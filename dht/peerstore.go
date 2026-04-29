@@ -1,6 +1,7 @@
 package dht
 
 import (
+	"container/list"
 	"context"
 	"net"
 	"sync"
@@ -15,12 +16,13 @@ type peerEntry struct {
 	SeenAt time.Time
 }
 
-// PeerStore is a bounded, TTL-aware store mapping infohash to peer entries,
-// backed by pkg/cache. insertOrder tracks insertion sequence for FIFO eviction.
+// PeerStore is a bounded, TTL-aware store mapping infohash to peer entries.
+// insertOrder is a FIFO list for eviction; orderIndex provides O(1) removal.
 type PeerStore struct {
 	c               *pkgcache.Cache[[20]byte, []peerEntry]
 	mu              sync.Mutex
-	insertOrder     [][20]byte
+	insertOrder     *list.List
+	orderIndex      map[[20]byte]*list.Element
 	maxHashes       int
 	maxPeersPerHash int
 	ttl             time.Duration
@@ -28,9 +30,9 @@ type PeerStore struct {
 
 func newPeerStore(maxHashes, maxPeersPerHash int, ttl time.Duration) *PeerStore {
 	return &PeerStore{
-		c: pkgcache.New[[20]byte, []peerEntry](
-			pkgcache.WithCleanupInterval[[20]byte, []peerEntry](ttl / 2),
-		),
+		c:               pkgcache.New[[20]byte, []peerEntry](),
+		insertOrder:     list.New(),
+		orderIndex:      make(map[[20]byte]*list.Element),
 		maxHashes:       maxHashes,
 		maxPeersPerHash: maxPeersPerHash,
 		ttl:             ttl,
@@ -86,7 +88,8 @@ func (ps *PeerStore) prepareNewInfohash(ih [20]byte) {
 	if ps.c.Size() >= ps.maxHashes {
 		ps.evictOldest()
 	}
-	ps.insertOrder = append(ps.insertOrder, ih)
+	el := ps.insertOrder.PushBack(ih)
+	ps.orderIndex[ih] = el
 }
 
 // Get returns all live (non-expired) peers for ih, pruning expired entries in place.
@@ -98,9 +101,7 @@ func (ps *PeerStore) Get(ih [20]byte) []peerEntry {
 	if !ok {
 		return nil
 	}
-	snapshot := make([]peerEntry, len(entries))
-	copy(snapshot, entries)
-	live := filterLivePeers(snapshot, ps.ttl)
+	live := filterLivePeers(entries, ps.ttl)
 	if len(live) == 0 {
 		ps.c.Delete(ih)
 		ps.removeFromOrder(ih)
@@ -110,48 +111,78 @@ func (ps *PeerStore) Get(ih [20]byte) []peerEntry {
 	return live
 }
 
-// startCleanup blocks, delegating periodic eviction of fully-expired infohashes
-// to the cache's Cleanup method. Intended to be launched via go.
+// startCleanup runs a periodic sweep that evicts fully-expired infohashes and
+// prunes stale peer entries. Uses a consistent lock order (ps.mu → cache.mu)
+// matching Add and Get, which avoids deadlock.
 func (ps *PeerStore) startCleanup(ctx context.Context) {
-	ps.c.Cleanup(ctx, func(ih [20]byte, entries []peerEntry) bool {
-		snapshot := make([]peerEntry, len(entries))
-		copy(snapshot, entries)
-		if len(filterLivePeers(snapshot, ps.ttl)) == 0 {
-			ps.mu.Lock()
-			ps.removeFromOrder(ih)
-			ps.mu.Unlock()
-			return true
+	ticker := time.NewTicker(ps.ttl / 2)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			ps.pruneExpired()
 		}
-		return false
-	})
+	}
+}
+
+func (ps *PeerStore) pruneExpired() {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	var next *list.Element
+	for el := ps.insertOrder.Front(); el != nil; el = next {
+		next = el.Next()
+		ih := el.Value.([20]byte)
+		entries, exists := ps.c.Get(ih)
+		if !exists {
+			ps.insertOrder.Remove(el)
+			delete(ps.orderIndex, ih)
+			continue
+		}
+		live := filterLivePeers(entries, ps.ttl)
+		if len(live) == 0 {
+			ps.c.Delete(ih)
+			ps.insertOrder.Remove(el)
+			delete(ps.orderIndex, ih)
+			continue
+		}
+		if len(live) < len(entries) {
+			ps.c.Set(ih, live)
+		}
+	}
 }
 
 // evictOldest removes the oldest live infohash. Skips ghost entries that were
-// already evicted by background TTL cleanup, keeping insertOrder in sync.
+// already evicted by a prior pruneExpired pass.
 func (ps *PeerStore) evictOldest() {
-	for len(ps.insertOrder) > 0 {
-		oldest := ps.insertOrder[0]
-		ps.insertOrder = ps.insertOrder[1:]
-		if _, exists := ps.c.Get(oldest); exists {
-			ps.c.Delete(oldest)
+	for ps.insertOrder.Len() > 0 {
+		front := ps.insertOrder.Front()
+		ih := front.Value.([20]byte)
+		ps.insertOrder.Remove(front)
+		delete(ps.orderIndex, ih)
+		if _, exists := ps.c.Get(ih); exists {
+			ps.c.Delete(ih)
 			return
 		}
 	}
 }
 
 func (ps *PeerStore) removeFromOrder(ih [20]byte) {
-	for i, id := range ps.insertOrder {
-		if id != ih {
-			continue
-		}
-		ps.insertOrder = append(ps.insertOrder[:i], ps.insertOrder[i+1:]...)
+	el, ok := ps.orderIndex[ih]
+	if !ok {
 		return
 	}
+	ps.insertOrder.Remove(el)
+	delete(ps.orderIndex, ih)
 }
 
+// filterLivePeers returns a new slice containing only peers whose SeenAt is
+// within ttl of now.
 func filterLivePeers(entries []peerEntry, ttl time.Duration) []peerEntry {
 	cutoff := time.Now().Add(-ttl)
-	live := entries[:0] // reuses backing array; callers must pass a copy
+	var live []peerEntry
 	for _, e := range entries {
 		if e.SeenAt.After(cutoff) {
 			live = append(live, e)

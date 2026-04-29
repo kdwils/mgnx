@@ -70,7 +70,7 @@ func TestPeerStore_Add(t *testing.T) {
 		ps.Add(ih, net.ParseIP("5.6.7.8"), 6882)
 
 		ps.mu.Lock()
-		orderLen := len(ps.insertOrder)
+		orderLen := ps.insertOrder.Len()
 		ps.mu.Unlock()
 		assert.Equal(t, 1, orderLen, "same infohash should not appear in insertOrder twice")
 	})
@@ -186,8 +186,8 @@ func TestPeerStore_startCleanup(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 
 		ps.mu.Lock()
-		for _, id := range ps.insertOrder {
-			if id == ih {
+		for el := ps.insertOrder.Front(); el != nil; el = el.Next() {
+			if el.Value.([20]byte) == ih {
 				t.Fatal("infohash should be removed from insertOrder after eviction")
 			}
 		}

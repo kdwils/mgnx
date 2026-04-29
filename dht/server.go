@@ -88,7 +88,7 @@ func NewServer(cfg config.DHT, rec *recorder.Recorder) (*Server, error) {
 		outbound:              make(chan *outMsg, 512),
 		discovered:            make(chan DiscoveredPeers, cfg.DiscoveryBuffer),
 		token:                 token,
-		peerStore:             newPeerStore(cfg.PeerStoreMaxEntries, cfg.MaxPeersPerResponse, cfg.PeerStoreTTL),
+		peerStore:             newPeerStore(cfg.PeerStoreMaxEntries, cfg.PeerStoreMaxPeersPerHash, cfg.PeerStoreTTL),
 		rec:                   rec,
 		rate:                  rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateBurst),
 		ipLimiter:             newIPLimiter(cfg.RateLimit, cfg.RateBurst, 5*time.Minute, cfg.IPLimiterMaxSize),
