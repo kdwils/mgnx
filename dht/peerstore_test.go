@@ -155,4 +155,42 @@ func TestPeerStore_startCleanup(t *testing.T) {
 		_, exists := ps.c.Get(ih)
 		assert.False(t, exists, "infohash should be removed after all peers expire")
 	})
+
+	t.Run("removes from insertOrder when infohash is evicted", func(t *testing.T) {
+		ps := newPeerStore(100, 50, 50*time.Millisecond)
+		var ih [20]byte
+		ih[0] = 0x02
+
+		ps.Add(ih, net.ParseIP("1.2.3.4"), 6881)
+
+		go ps.startCleanup(t.Context())
+		time.Sleep(200 * time.Millisecond)
+
+		ps.mu.Lock()
+		for _, id := range ps.insertOrder {
+			if id == ih {
+				t.Fatal("infohash should be removed from insertOrder after eviction")
+			}
+		}
+		ps.mu.Unlock()
+	})
+}
+
+func TestPeerStore_Add_DeduplicatesSamePeer(t *testing.T) {
+	ps := newPeerStore(100, 50, time.Minute)
+	var ih [20]byte
+	ih[0] = 0x01
+
+	ip := net.ParseIP("1.2.3.4")
+	ps.Add(ih, ip, 6881)
+
+	time.Sleep(10 * time.Millisecond) // ensure SeenAt differs
+
+	ps.Add(ih, ip, 6881) // duplicate add
+
+	got := ps.Get(ih)
+	require.Len(t, got, 1, "duplicate peer should not be added")
+	assert.Equal(t, ip, got[0].IP)
+	assert.Equal(t, 6881, got[0].Port)
+	assert.WithinDuration(t, time.Now(), got[0].SeenAt, time.Second, "SeenAt should be refreshed")
 }

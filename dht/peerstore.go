@@ -43,16 +43,15 @@ func (ps *PeerStore) Add(ih [20]byte, ip net.IP, port int) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 
-	existing, exists := ps.c.Get(ih)
-	if !exists {
-		if ps.c.Size() >= ps.maxHashes {
-			ps.evictOldest()
-		}
-		ps.insertOrder = append(ps.insertOrder, ih)
+	existing, done := ps.getOrPrepare(ih, ip, port)
+	if done {
+		return
 	}
+
 	if len(existing) >= ps.maxPeersPerHash {
 		return
 	}
+
 	updated := make([]peerEntry, len(existing)+1)
 	copy(updated, existing)
 	updated[len(existing)] = peerEntry{
@@ -61,6 +60,33 @@ func (ps *PeerStore) Add(ih [20]byte, ip net.IP, port int) {
 		SeenAt: time.Now(),
 	}
 	ps.c.Set(ih, updated)
+}
+
+// getOrPrepare returns existing entries and whether to stop. Handles new infohash setup and duplicate refresh.
+func (ps *PeerStore) getOrPrepare(ih [20]byte, ip net.IP, port int) ([]peerEntry, bool) {
+	existing, exists := ps.c.Get(ih)
+
+	if !exists {
+		ps.prepareNewInfohash(ih)
+		return nil, false
+	}
+
+	for i := range existing {
+		if existing[i].IP.Equal(ip) && existing[i].Port == port {
+			existing[i].SeenAt = time.Now()
+			ps.c.Set(ih, existing)
+			return existing, true
+		}
+	}
+
+	return existing, false
+}
+
+func (ps *PeerStore) prepareNewInfohash(ih [20]byte) {
+	if ps.c.Size() >= ps.maxHashes {
+		ps.evictOldest()
+	}
+	ps.insertOrder = append(ps.insertOrder, ih)
 }
 
 // Get returns all live (non-expired) peers for ih, pruning expired entries in place.
@@ -87,10 +113,16 @@ func (ps *PeerStore) Get(ih [20]byte) []peerEntry {
 // startCleanup blocks, delegating periodic eviction of fully-expired infohashes
 // to the cache's Cleanup method. Intended to be launched via go.
 func (ps *PeerStore) startCleanup(ctx context.Context) {
-	ps.c.Cleanup(ctx, func(_ [20]byte, entries []peerEntry) bool {
+	ps.c.Cleanup(ctx, func(ih [20]byte, entries []peerEntry) bool {
 		snapshot := make([]peerEntry, len(entries))
 		copy(snapshot, entries)
-		return len(filterLivePeers(snapshot, ps.ttl)) == 0
+		if len(filterLivePeers(snapshot, ps.ttl)) == 0 {
+			ps.mu.Lock()
+			ps.removeFromOrder(ih)
+			ps.mu.Unlock()
+			return true
+		}
+		return false
 	})
 }
 
