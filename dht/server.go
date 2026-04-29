@@ -40,6 +40,7 @@ type Server struct {
 	discovered            chan DiscoveredPeers
 	token                 *TokenManager
 	dedup                 *BloomFilter
+	peerStore             *PeerStore
 	rec                   *recorder.Recorder
 	rate                  *rate.Limiter
 	ipLimiter             *ipLimiter
@@ -50,6 +51,7 @@ type Server struct {
 	transactionTimeout    time.Duration
 	bucketSize            int
 	maxNodesPerResponse   int
+	maxPeersPerResponse   int
 	bucketRefreshInterval time.Duration
 }
 
@@ -86,6 +88,7 @@ func NewServer(cfg config.DHT, rec *recorder.Recorder) (*Server, error) {
 		outbound:              make(chan *outMsg, 512),
 		discovered:            make(chan DiscoveredPeers, cfg.DiscoveryBuffer),
 		token:                 token,
+		peerStore:             newPeerStore(cfg.PeerStoreMaxEntries, cfg.PeerStoreMaxPeersPerHash, cfg.PeerStoreTTL),
 		rec:                   rec,
 		rate:                  rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateBurst),
 		ipLimiter:             newIPLimiter(cfg.RateLimit, cfg.RateBurst, 5*time.Minute, cfg.IPLimiterMaxSize),
@@ -94,6 +97,7 @@ func NewServer(cfg config.DHT, rec *recorder.Recorder) (*Server, error) {
 		handlers:              make(chan inMsg, 512),
 		transactionTimeout:    cfg.TransactionTimeout,
 		maxNodesPerResponse:   cfg.MaxNodesPerResponse,
+		maxPeersPerResponse:   cfg.MaxPeersPerResponse,
 		bucketSize:            cfg.BucketSize,
 		bucketRefreshInterval: cfg.BucketRefreshInterval,
 		bufPool: sync.Pool{
@@ -117,6 +121,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.ipLimiter.Start(ctx)
 	s.rec.SetDHTRoutingTableSize(float64(s.table.NodeCount()))
 
+	go s.peerStore.startCleanup(ctx)
 	go s.readLoop(ctx)
 	go s.writeLoop(ctx)
 	for i := 0; i < s.workers; i++ {
@@ -414,9 +419,9 @@ func (s *Server) handleFindNode(ctx context.Context, addr *net.UDPAddr, msg *Msg
 }
 
 // handleGetPeers responds to a BEP-05 get_peers query (BEP-05 §get peers).
-// Since this node is a crawler without a peer store, it always returns the
-// k-closest nodes ("nodes" path) along with a token for future announce_peer.
-// TODO: When peer storage is implemented, use MaxPeersPerResponse to bound Values.
+// When the peer store has live entries for the requested infohash, it returns
+// those peers (values path). Otherwise it falls back to the k-closest nodes
+// (nodes path). Both paths include a token for future announce_peer.
 func (s *Server) handleGetPeers(ctx context.Context, addr *net.UDPAddr, msg *Msg) {
 	log := logger.FromContext(ctx).With("service", "dht", "handler", "get_peers", "addr", addr.String())
 	log.Debug("received request")
@@ -432,15 +437,34 @@ func (s *Server) handleGetPeers(ctx context.Context, addr *net.UDPAddr, msg *Msg
 		s.respondError(addr, msg.T, ErrProtocol, "missing info_hash")
 		return
 	}
+
+	token := s.token.Generate(addr.IP)
+
+	peers := s.peerStore.Get(target)
+	if len(peers) > 0 {
+		if len(peers) > s.maxPeersPerResponse {
+			peers = peers[:s.maxPeersPerResponse]
+		}
+		values := make([]string, len(peers))
+		for i, p := range peers {
+			values[i] = EncodePeer(p.IP, p.Port)
+		}
+		s.respond(addr, msg.T, &Return{
+			ID:     string(s.ourID[:]),
+			Values: values,
+			Token:  token,
+		})
+		return
+	}
+
 	closest := s.table.Closest(target, s.bucketSize)
-	maxNodes := s.maxNodesPerResponse
-	if len(closest) > maxNodes {
-		closest = closest[:maxNodes]
+	if len(closest) > s.maxNodesPerResponse {
+		closest = closest[:s.maxNodesPerResponse]
 	}
 	s.respond(addr, msg.T, &Return{
 		ID:    string(s.ourID[:]),
 		Nodes: EncodeNodes(closest),
-		Token: s.token.Generate(addr.IP),
+		Token: token,
 	})
 }
 
@@ -463,11 +487,6 @@ func (s *Server) handleAnnouncePeer(ctx context.Context, addr *net.UDPAddr, msg 
 	var h [20]byte
 	copy(h[:], msg.A.InfoHash)
 
-	if s.dedup != nil && s.dedup.SeenOrAdd(h) {
-		s.respond(addr, msg.T, &Return{ID: string(s.ourID[:])})
-		return
-	}
-
 	port := msg.A.Port
 	if msg.A.ImpliedPort != nil && *msg.A.ImpliedPort != 0 {
 		port = addr.Port
@@ -476,6 +495,14 @@ func (s *Server) handleAnnouncePeer(ctx context.Context, addr *net.UDPAddr, msg 
 		s.respond(addr, msg.T, &Return{ID: string(s.ourID[:])})
 		return
 	}
+
+	s.peerStore.Add(h, addr.IP, port)
+
+	if s.dedup != nil && s.dedup.SeenOrAdd(h) {
+		s.respond(addr, msg.T, &Return{ID: string(s.ourID[:])})
+		return
+	}
+
 	event := DiscoveredPeers{
 		Infohash: h,
 		Peers:    []PeerAddr{{SourceIP: addr.IP, Port: port}},
