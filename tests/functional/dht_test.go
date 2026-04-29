@@ -485,20 +485,23 @@ func setupDHTServer(t *testing.T) (*dht.Server, *mockNode) {
 func testDHTConfig(t *testing.T) config.DHT {
 	t.Helper()
 	return config.DHT{
-		Port:                0,
-		DiscoveryBuffer:     100,
-		TransactionTimeout:  2 * time.Second,
-		TokenRotation:       5 * time.Minute,
-		BucketSize:          8,
-		BadFailureThreshold: 2,
-		StaleThreshold:      15 * time.Minute,
-		NodeID:              generateTestNodeID(),
-		NodesPath:           t.TempDir() + "/dht_nodes.dat",
-		RateLimit:           100,
-		RateBurst:           100,
-		Workers:             2,
-		MaxNodesPerResponse: 256,
-		MaxPeersPerResponse: 50,
+		Port:                     0,
+		DiscoveryBuffer:          100,
+		TransactionTimeout:       2 * time.Second,
+		TokenRotation:            5 * time.Minute,
+		BucketSize:               8,
+		BadFailureThreshold:      2,
+		StaleThreshold:           15 * time.Minute,
+		NodeID:                   generateTestNodeID(),
+		NodesPath:                t.TempDir() + "/dht_nodes.dat",
+		RateLimit:                100,
+		RateBurst:                100,
+		Workers:                  2,
+		MaxNodesPerResponse:      256,
+		MaxPeersPerResponse:      50,
+		PeerStoreTTL:             30 * time.Minute,
+		PeerStoreMaxEntries:      10_000,
+		PeerStoreMaxPeersPerHash: 200,
 	}
 }
 
