@@ -82,10 +82,29 @@ func TestPeerStore_Add(t *testing.T) {
 
 		ps.Add(ih, net.ParseIP("1.2.3.4"), 6881)
 		ps.Add(ih, net.ParseIP("5.6.7.8"), 6882)
-		ps.Add(ih, net.ParseIP("9.10.11.12"), 6883) // should be dropped
+		ps.Add(ih, net.ParseIP("9.10.11.12"), 6883)
 
 		got := ps.Get(ih)
 		require.Len(t, got, 2, "peer list should be capped at maxPeersPerHash")
+	})
+
+	t.Run("deduplicates same peer on re-announce", func(t *testing.T) {
+		ps := newPeerStore(100, 50, time.Minute)
+		var ih [20]byte
+		ih[0] = 0x06
+
+		ip := net.ParseIP("1.2.3.4")
+		ps.Add(ih, ip, 6881)
+
+		time.Sleep(10 * time.Millisecond)
+
+		ps.Add(ih, ip, 6881)
+
+		got := ps.Get(ih)
+		require.Len(t, got, 1, "duplicate peer should not be added")
+		assert.Equal(t, ip, got[0].IP)
+		assert.Equal(t, 6881, got[0].Port)
+		assert.WithinDuration(t, time.Now(), got[0].SeenAt, time.Second, "SeenAt should be refreshed")
 	})
 }
 
@@ -131,7 +150,7 @@ func TestPeerStore_Get(t *testing.T) {
 		ih[0] = 0x04
 
 		ps.Add(ih, net.ParseIP("1.2.3.4"), 6881)
-		time.Sleep(100 * time.Millisecond) // first peer expires
+		time.Sleep(100 * time.Millisecond)
 		ps.Add(ih, net.ParseIP("5.6.7.8"), 6882)
 
 		got := ps.Get(ih)
@@ -174,23 +193,4 @@ func TestPeerStore_startCleanup(t *testing.T) {
 		}
 		ps.mu.Unlock()
 	})
-}
-
-func TestPeerStore_Add_DeduplicatesSamePeer(t *testing.T) {
-	ps := newPeerStore(100, 50, time.Minute)
-	var ih [20]byte
-	ih[0] = 0x01
-
-	ip := net.ParseIP("1.2.3.4")
-	ps.Add(ih, ip, 6881)
-
-	time.Sleep(10 * time.Millisecond) // ensure SeenAt differs
-
-	ps.Add(ih, ip, 6881) // duplicate add
-
-	got := ps.Get(ih)
-	require.Len(t, got, 1, "duplicate peer should not be added")
-	assert.Equal(t, ip, got[0].IP)
-	assert.Equal(t, 6881, got[0].Port)
-	assert.WithinDuration(t, time.Now(), got[0].SeenAt, time.Second, "SeenAt should be refreshed")
 }
