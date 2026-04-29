@@ -33,6 +33,8 @@ type DHT struct {
 	RateBurst              int           `mapstructure:"rate_burst"`
 	MaxNodesPerResponse    int           `mapstructure:"max_nodes_per_response"`
 	MaxPeersPerResponse    int           `mapstructure:"max_peers_per_response"`
+	PeerStoreTTL           time.Duration `mapstructure:"peer_store_ttl"`
+	PeerStoreMaxEntries    int           `mapstructure:"peer_store_max_entries"`
 	BucketRefreshInterval  time.Duration `mapstructure:"bucket_refresh_interval"`
 	MaxMessageSize         int           `mapstructure:"max_message_size"`
 	MaxMetadataSize        int           `mapstructure:"max_metadata_size"`
