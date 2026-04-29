@@ -18,12 +18,12 @@ type Client struct {
 
 // New constructs a client targeting host:port.
 // If httpClient is nil, a default client with a 10s timeout is used.
-func New(host string, port int, httpClient *http.Client) *Client {
+func New(host string, httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &Client{
-		baseURL:    fmt.Sprintf("http://%s:%d", host, port),
+		baseURL:    host,
 		httpClient: httpClient,
 	}
 }

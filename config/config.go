@@ -15,55 +15,56 @@ type Config struct {
 	Crawler  Crawler  `mapstructure:"crawler"`
 	Indexer  Indexer  `mapstructure:"indexer"`
 	Scrape   Scrape   `mapstructure:"scrape"`
+	TUI      TUI      `mapstructure:"tui"`
 }
 
 type DHT struct {
-	NodeID                string        `mapstructure:"node_id"`
-	Port                  int           `mapstructure:"port"`
-	DiscoveryBuffer       int           `mapstructure:"discovery_buffer"`
-	NodesPath             string        `mapstructure:"nodes_path"`
-	BadFailureThreshold   int           `mapstructure:"bad_failure_threshold"`
-	BucketSize            int           `mapstructure:"bucket_size"`
-	StaleThreshold        time.Duration `mapstructure:"stale_threshold"`
-	TransactionTimeout    time.Duration `mapstructure:"transaction_timeout"`
-	TokenRotation         time.Duration `mapstructure:"token_rotation"`
-	Workers               int           `mapstructure:"workers"`
-	RateLimit             float64       `mapstructure:"rate_limit"`
-	RateBurst             int           `mapstructure:"rate_burst"`
-	MaxNodesPerResponse   int           `mapstructure:"max_nodes_per_response"`
-	MaxPeersPerResponse   int           `mapstructure:"max_peers_per_response"`
-	BucketRefreshInterval time.Duration `mapstructure:"bucket_refresh_interval"`
-	MaxMessageSize        int           `mapstructure:"max_message_size"`
-	MaxMetadataSize       int           `mapstructure:"max_metadata_size"`
+	NodeID                 string        `mapstructure:"node_id"`
+	Port                   int           `mapstructure:"port"`
+	DiscoveryBuffer        int           `mapstructure:"discovery_buffer"`
+	NodesPath              string        `mapstructure:"nodes_path"`
+	BadFailureThreshold    int           `mapstructure:"bad_failure_threshold"`
+	BucketSize             int           `mapstructure:"bucket_size"`
+	StaleThreshold         time.Duration `mapstructure:"stale_threshold"`
+	TransactionTimeout     time.Duration `mapstructure:"transaction_timeout"`
+	TokenRotation          time.Duration `mapstructure:"token_rotation"`
+	Workers                int           `mapstructure:"workers"`
+	RateLimit              float64       `mapstructure:"rate_limit"`
+	RateBurst              int           `mapstructure:"rate_burst"`
+	MaxNodesPerResponse    int           `mapstructure:"max_nodes_per_response"`
+	MaxPeersPerResponse    int           `mapstructure:"max_peers_per_response"`
+	BucketRefreshInterval  time.Duration `mapstructure:"bucket_refresh_interval"`
+	MaxMessageSize         int           `mapstructure:"max_message_size"`
+	MaxMetadataSize        int           `mapstructure:"max_metadata_size"`
 	IPLimiterMaxSize       int           `mapstructure:"ip_limiter_max_size"`
 	WarmBootstrapThreshold int           `mapstructure:"warm_bootstrap_threshold"`
 	ForwardedPortFile      string        `mapstructure:"forwarded_port_file"`
-	ExternalIPFile        string        `mapstructure:"external_ip_file"`
-	FileWaitTimeout       time.Duration `mapstructure:"file_wait_timeout"`
-	FileSettleTime        time.Duration `mapstructure:"file_settle_time"`
+	ExternalIPFile         string        `mapstructure:"external_ip_file"`
+	FileWaitTimeout        time.Duration `mapstructure:"file_wait_timeout"`
+	FileSettleTime         time.Duration `mapstructure:"file_settle_time"`
 }
 
 type Crawler struct {
-	Enabled              bool          `mapstructure:"enabled"`
-	Crawlers             int           `mapstructure:"crawlers"`
-	DiscoveryWorkers     int           `mapstructure:"discovery_workers"`
-	DiscoveryQueueSize   int           `mapstructure:"discovery_queue_size"`
-	BootstrapNodes       []string      `mapstructure:"bootstrap_nodes"`
-	Alpha                int           `mapstructure:"alpha"`
-	MaxIterations        int           `mapstructure:"max_iterations"`
-	DiscoveryMaxIterations int         `mapstructure:"discovery_max_iterations"`
-	TraversalWidth       int           `mapstructure:"traversal_width"`
-	DefaultCooldown      time.Duration `mapstructure:"default_cooldown"`
-	DefaultInterval      time.Duration `mapstructure:"default_interval"`
-	MaxNodeFailures      int           `mapstructure:"max_node_failures"`
-	MaxJitter            time.Duration `mapstructure:"max_jitter"`
-	EmptySpinWait        time.Duration `mapstructure:"empty_spin_wait"`
-	SampleEnqueueTimeout time.Duration `mapstructure:"sample_enqueue_timeout"`
-	NodeCacheCleanup     time.Duration `mapstructure:"node_cache_cleanup"`
-	MaxInterval          time.Duration `mapstructure:"max_interval"`
-	BloomN               uint          `mapstructure:"bloom_n"`
-	BloomP               float64       `mapstructure:"bloom_p"`
-	BloomRotation        time.Duration `mapstructure:"bloom_rotation"`
+	Enabled                bool          `mapstructure:"enabled"`
+	Crawlers               int           `mapstructure:"crawlers"`
+	DiscoveryWorkers       int           `mapstructure:"discovery_workers"`
+	DiscoveryQueueSize     int           `mapstructure:"discovery_queue_size"`
+	BootstrapNodes         []string      `mapstructure:"bootstrap_nodes"`
+	Alpha                  int           `mapstructure:"alpha"`
+	MaxIterations          int           `mapstructure:"max_iterations"`
+	DiscoveryMaxIterations int           `mapstructure:"discovery_max_iterations"`
+	TraversalWidth         int           `mapstructure:"traversal_width"`
+	DefaultCooldown        time.Duration `mapstructure:"default_cooldown"`
+	DefaultInterval        time.Duration `mapstructure:"default_interval"`
+	MaxNodeFailures        int           `mapstructure:"max_node_failures"`
+	MaxJitter              time.Duration `mapstructure:"max_jitter"`
+	EmptySpinWait          time.Duration `mapstructure:"empty_spin_wait"`
+	SampleEnqueueTimeout   time.Duration `mapstructure:"sample_enqueue_timeout"`
+	NodeCacheCleanup       time.Duration `mapstructure:"node_cache_cleanup"`
+	MaxInterval            time.Duration `mapstructure:"max_interval"`
+	BloomN                 uint          `mapstructure:"bloom_n"`
+	BloomP                 float64       `mapstructure:"bloom_p"`
+	BloomRotation          time.Duration `mapstructure:"bloom_rotation"`
 }
 
 type Indexer struct {
@@ -92,6 +93,10 @@ type Scrape struct {
 
 type Database struct {
 	URL string `mapstructure:"url"`
+}
+
+type TUI struct {
+	Host string `mapstructure:"host"`
 }
 
 type Server struct {

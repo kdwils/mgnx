@@ -133,6 +133,8 @@ func initConfig() {
 	viper.SetDefault("scrape.prune_interval", 24*time.Hour)
 	viper.SetDefault("scrape.trackers", []string{})
 
+	viper.SetDefault("tui.host", "http://localhost:8080")
+
 	viper.SetEnvPrefix("mgnx")
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", ""))
 	viper.AutomaticEnv()
