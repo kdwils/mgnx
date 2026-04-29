@@ -18,20 +18,22 @@ type peerEntry struct {
 // PeerStore is a bounded, TTL-aware store mapping infohash to peer entries,
 // backed by pkg/cache. insertOrder tracks insertion sequence for FIFO eviction.
 type PeerStore struct {
-	c           *pkgcache.Cache[[20]byte, []peerEntry]
-	mu          sync.Mutex
-	insertOrder [][20]byte
-	maxHashes   int
-	ttl         time.Duration
+	c               *pkgcache.Cache[[20]byte, []peerEntry]
+	mu              sync.Mutex
+	insertOrder     [][20]byte
+	maxHashes       int
+	maxPeersPerHash int
+	ttl             time.Duration
 }
 
-func newPeerStore(maxHashes int, ttl time.Duration) *PeerStore {
+func newPeerStore(maxHashes, maxPeersPerHash int, ttl time.Duration) *PeerStore {
 	return &PeerStore{
 		c: pkgcache.New[[20]byte, []peerEntry](
 			pkgcache.WithCleanupInterval[[20]byte, []peerEntry](ttl / 2),
 		),
-		maxHashes: maxHashes,
-		ttl:       ttl,
+		maxHashes:       maxHashes,
+		maxPeersPerHash: maxPeersPerHash,
+		ttl:             ttl,
 	}
 }
 
@@ -47,6 +49,9 @@ func (ps *PeerStore) Add(ih [20]byte, ip net.IP, port int) {
 			ps.evictOldest()
 		}
 		ps.insertOrder = append(ps.insertOrder, ih)
+	}
+	if len(existing) >= ps.maxPeersPerHash {
+		return
 	}
 	updated := make([]peerEntry, len(existing)+1)
 	copy(updated, existing)
@@ -89,13 +94,17 @@ func (ps *PeerStore) startCleanup(ctx context.Context) {
 	})
 }
 
+// evictOldest removes the oldest live infohash. Skips ghost entries that were
+// already evicted by background TTL cleanup, keeping insertOrder in sync.
 func (ps *PeerStore) evictOldest() {
-	if len(ps.insertOrder) == 0 {
-		return
+	for len(ps.insertOrder) > 0 {
+		oldest := ps.insertOrder[0]
+		ps.insertOrder = ps.insertOrder[1:]
+		if _, exists := ps.c.Get(oldest); exists {
+			ps.c.Delete(oldest)
+			return
+		}
 	}
-	oldest := ps.insertOrder[0]
-	ps.insertOrder = ps.insertOrder[1:]
-	ps.c.Delete(oldest)
 }
 
 func (ps *PeerStore) removeFromOrder(ih [20]byte) {
@@ -110,7 +119,7 @@ func (ps *PeerStore) removeFromOrder(ih [20]byte) {
 
 func filterLivePeers(entries []peerEntry, ttl time.Duration) []peerEntry {
 	cutoff := time.Now().Add(-ttl)
-	live := entries[:0]
+	live := entries[:0] // reuses backing array; callers must pass a copy
 	for _, e := range entries {
 		if e.SeenAt.After(cutoff) {
 			live = append(live, e)

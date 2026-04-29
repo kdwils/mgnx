@@ -11,7 +11,7 @@ import (
 
 func TestPeerStore_Add(t *testing.T) {
 	t.Run("stores peer for new infohash", func(t *testing.T) {
-		ps := newPeerStore(100, time.Minute)
+		ps := newPeerStore(100, 50, time.Minute)
 		var ih [20]byte
 		ih[0] = 0x01
 
@@ -24,7 +24,7 @@ func TestPeerStore_Add(t *testing.T) {
 	})
 
 	t.Run("appends multiple peers for the same infohash", func(t *testing.T) {
-		ps := newPeerStore(100, time.Minute)
+		ps := newPeerStore(100, 50, time.Minute)
 		var ih [20]byte
 		ih[0] = 0x02
 
@@ -41,7 +41,7 @@ func TestPeerStore_Add(t *testing.T) {
 	})
 
 	t.Run("evicts oldest infohash when store is at capacity", func(t *testing.T) {
-		ps := newPeerStore(2, time.Minute)
+		ps := newPeerStore(2, 50, time.Minute)
 		var ih1, ih2, ih3 [20]byte
 		ih1[0], ih2[0], ih3[0] = 0x01, 0x02, 0x03
 		ip := net.ParseIP("1.2.3.4")
@@ -62,7 +62,7 @@ func TestPeerStore_Add(t *testing.T) {
 	})
 
 	t.Run("does not duplicate insert order for existing infohash", func(t *testing.T) {
-		ps := newPeerStore(2, time.Minute)
+		ps := newPeerStore(2, 50, time.Minute)
 		var ih [20]byte
 		ih[0] = 0x04
 
@@ -74,11 +74,24 @@ func TestPeerStore_Add(t *testing.T) {
 		ps.mu.Unlock()
 		assert.Equal(t, 1, orderLen, "same infohash should not appear in insertOrder twice")
 	})
+
+	t.Run("does not exceed maxPeersPerHash for a single infohash", func(t *testing.T) {
+		ps := newPeerStore(100, 2, time.Minute)
+		var ih [20]byte
+		ih[0] = 0x05
+
+		ps.Add(ih, net.ParseIP("1.2.3.4"), 6881)
+		ps.Add(ih, net.ParseIP("5.6.7.8"), 6882)
+		ps.Add(ih, net.ParseIP("9.10.11.12"), 6883) // should be dropped
+
+		got := ps.Get(ih)
+		require.Len(t, got, 2, "peer list should be capped at maxPeersPerHash")
+	})
 }
 
 func TestPeerStore_Get(t *testing.T) {
 	t.Run("returns nil for unknown infohash", func(t *testing.T) {
-		ps := newPeerStore(100, time.Minute)
+		ps := newPeerStore(100, 50, time.Minute)
 		var ih [20]byte
 		ih[0] = 0x01
 
@@ -86,7 +99,7 @@ func TestPeerStore_Get(t *testing.T) {
 	})
 
 	t.Run("returns live peers", func(t *testing.T) {
-		ps := newPeerStore(100, time.Minute)
+		ps := newPeerStore(100, 50, time.Minute)
 		var ih [20]byte
 		ih[0] = 0x02
 
@@ -99,7 +112,7 @@ func TestPeerStore_Get(t *testing.T) {
 	})
 
 	t.Run("returns nil and removes infohash after TTL expires", func(t *testing.T) {
-		ps := newPeerStore(100, 50*time.Millisecond)
+		ps := newPeerStore(100, 50, 50*time.Millisecond)
 		var ih [20]byte
 		ih[0] = 0x03
 
@@ -113,7 +126,7 @@ func TestPeerStore_Get(t *testing.T) {
 	})
 
 	t.Run("filters expired peers but returns remaining live ones", func(t *testing.T) {
-		ps := newPeerStore(100, 80*time.Millisecond)
+		ps := newPeerStore(100, 50, 80*time.Millisecond)
 		var ih [20]byte
 		ih[0] = 0x04
 
@@ -130,7 +143,7 @@ func TestPeerStore_Get(t *testing.T) {
 
 func TestPeerStore_startCleanup(t *testing.T) {
 	t.Run("removes infohash when all peers have expired", func(t *testing.T) {
-		ps := newPeerStore(100, 50*time.Millisecond)
+		ps := newPeerStore(100, 50, 50*time.Millisecond)
 		var ih [20]byte
 		ih[0] = 0x01
 
