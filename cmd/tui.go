@@ -15,7 +15,7 @@ var tuiCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		return tui.Run(cmd.Context(), cfg.TUI.Host)
+		return tui.Run(cfg.TUI.Host)
 	},
 }
 
