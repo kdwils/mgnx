@@ -16,13 +16,14 @@ import (
 	"github.com/kdwils/mgnx/config"
 	"github.com/kdwils/mgnx/db"
 	"github.com/kdwils/mgnx/db/gen"
-	"github.com/kdwils/mgnx/dht"
+	"github.com/kdwils/mgnx/dht/types"
 	"github.com/kdwils/mgnx/indexer"
 	"github.com/kdwils/mgnx/logger"
 	"github.com/kdwils/mgnx/metadata"
-	"github.com/kdwils/mgnx/mocks"
+	fetcherMocks "github.com/kdwils/mgnx/metadata/mocks"
 	"github.com/kdwils/mgnx/recorder"
 	"github.com/kdwils/mgnx/scrape"
+	scraperMocks "github.com/kdwils/mgnx/scrape/mocks"
 	"github.com/kdwils/mgnx/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,15 +61,10 @@ func TestEndToEnd(t *testing.T) {
 	queries := gen.New(pool)
 
 	ctrl := gomock.NewController(t)
-	discoveredCh := make(chan dht.DiscoveredPeers, 50)
+	discoveredCh := make(chan types.DiscoveredPeers, 50)
 
-	crawler := mocks.NewMockCrawler(ctrl)
-	crawler.EXPECT().Start(gomock.Any()).Return(nil)
-	crawler.EXPECT().Stop(gomock.Any())
-	crawler.EXPECT().Infohashes().Return((<-chan dht.DiscoveredPeers)(discoveredCh)).AnyTimes()
-
-	fetcher := mocks.NewMockFetcher(ctrl)
-	scraper := mocks.NewMockScraper(ctrl)
+	fetcher := fetcherMocks.NewMockFetcher(ctrl)
+	scraper := scraperMocks.NewMockScraper(ctrl)
 
 	movieHex := hex.EncodeToString(movieHash[:])
 	tvHex := hex.EncodeToString(tvHash[:])
@@ -127,9 +123,7 @@ func TestEndToEnd(t *testing.T) {
 		Server: config.Server{LogLevel: "error"},
 	}
 
-	idxWorker := indexer.New(crawler, fetcher, queries, cfg.Indexer, recorder.NewNoOp())
-	require.NoError(t, crawler.Start(ctx))
-	t.Cleanup(func() { crawler.Stop(ctx) })
+	idxWorker := indexer.New(discoveredCh, fetcher, queries, cfg.Indexer, recorder.NewNoOp())
 	go idxWorker.Run(ctx)
 
 	scrapeWorker := scrape.New(queries, scraper, cfg.Scrape, recorder.NewNoOp())
@@ -137,17 +131,17 @@ func TestEndToEnd(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	discoveredCh <- dht.DiscoveredPeers{
+	discoveredCh <- types.DiscoveredPeers{
 		Infohash: movieHash,
-		Peers:    []dht.PeerAddr{{SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}},
+		Peers:    []types.PeerAddr{{SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}},
 	}
-	discoveredCh <- dht.DiscoveredPeers{
+	discoveredCh <- types.DiscoveredPeers{
 		Infohash: tvHash,
-		Peers:    []dht.PeerAddr{{SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}},
+		Peers:    []types.PeerAddr{{SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}},
 	}
-	discoveredCh <- dht.DiscoveredPeers{
+	discoveredCh <- types.DiscoveredPeers{
 		Infohash: rejHash,
-		Peers:    []dht.PeerAddr{{SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}},
+		Peers:    []types.PeerAddr{{SourceIP: net.ParseIP("127.0.0.1"), Port: 6881}},
 	}
 
 	ln, err := net.Listen("tcp", ":0")

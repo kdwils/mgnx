@@ -1,6 +1,6 @@
 package scrape
 
-//go:generate go run go.uber.org/mock/mockgen -destination=../mocks/mock_scraper.go -package=mocks github.com/kdwils/mgnx/scrape Scraper
+//go:generate go run go.uber.org/mock/mockgen -destination=mocks/mock_scraper.go -package=mocks github.com/kdwils/mgnx/scrape Scraper
 
 import (
 	"context"

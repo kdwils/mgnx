@@ -5,7 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/kdwils/mgnx/pkg/client"
+	"github.com/kdwils/mgnx/pkg/torznab"
 	"github.com/kdwils/mgnx/tui/ui"
 )
 
@@ -13,11 +13,11 @@ type ConfirmModel struct {
 	infohash string
 	name     string
 	fromView view
-	client   *client.Client
+	client   *torznab.Client
 	err      string
 }
 
-func NewConfirmModel(infohash, name string, from view, c *client.Client) ConfirmModel {
+func NewConfirmModel(infohash, name string, from view, c *torznab.Client) ConfirmModel {
 	return ConfirmModel{
 		infohash: infohash,
 		name:     name,
@@ -66,7 +66,7 @@ func (m ConfirmModel) View() string {
 	return content
 }
 
-func deleteCmd(c *client.Client, infohash string) tea.Cmd {
+func deleteCmd(c *torznab.Client, infohash string) tea.Cmd {
 	return func() tea.Msg {
 		if err := c.DeleteTorrent(context.Background(), infohash); err != nil {
 			return ErrMsg{err}
