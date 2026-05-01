@@ -14,7 +14,7 @@ import (
 	"github.com/kdwils/mgnx/classify"
 	"github.com/kdwils/mgnx/config"
 	"github.com/kdwils/mgnx/db/gen"
-	"github.com/kdwils/mgnx/dht"
+	"github.com/kdwils/mgnx/dht/types"
 	"github.com/kdwils/mgnx/logger"
 	"github.com/kdwils/mgnx/metadata"
 	"github.com/kdwils/mgnx/recorder"
@@ -22,16 +22,9 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// Crawler is the public interface for the DHT crawler.
-type Crawler interface {
-	Infohashes() <-chan dht.DiscoveredPeers
-	NodeCount() int
-	Start(ctx context.Context) error
-	Stop(ctx context.Context) error
-}
-
+// Worker handles the metadata fetching and classification of discovered torrents.
 type Worker struct {
-	crawler             Crawler
+	ch                  <-chan types.DiscoveredPeers
 	fetcher             metadata.Fetcher
 	queries             gen.Querier
 	rec                 *recorder.Recorder
@@ -47,9 +40,9 @@ type Worker struct {
 	excludeAdultContent bool
 }
 
-func New(crawler Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg config.Indexer, rec *recorder.Recorder) *Worker {
+func New(ch <-chan types.DiscoveredPeers, fetcher metadata.Fetcher, queries gen.Querier, cfg config.Indexer, rec *recorder.Recorder) *Worker {
 	return &Worker{
-		crawler:             crawler,
+		ch:                  ch,
 		fetcher:             fetcher,
 		queries:             queries,
 		rec:                 rec,
@@ -69,18 +62,17 @@ func New(crawler Crawler, fetcher metadata.Fetcher, queries gen.Querier, cfg con
 func (w *Worker) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 	w.rec.SetIndexerWorkersActive(float64(w.workers))
-	ch := w.crawler.Infohashes()
 	for range w.workers {
 		wg.Go(func() {
 			for {
 				select {
 				case <-ctx.Done():
 					return
-				case ev, ok := <-ch:
+				case ev, ok := <-w.ch:
 					if !ok {
 						return
 					}
-					w.rec.SetDiscoveredChannelDepth(float64(len(ch)))
+					w.rec.SetDiscoveredChannelDepth(float64(len(w.ch)))
 					w.rec.AddIndexerWorkersBusy(1)
 					w.process(ctx, ev)
 					w.rec.AddIndexerWorkersBusy(-1)
@@ -91,7 +83,7 @@ func (w *Worker) Run(ctx context.Context) {
 	wg.Wait()
 }
 
-func (w *Worker) process(ctx context.Context, ev dht.DiscoveredPeers) {
+func (w *Worker) process(ctx context.Context, ev types.DiscoveredPeers) {
 	log := logger.FromContext(ctx)
 	infohashHex := hex.EncodeToString(ev.Infohash[:])
 

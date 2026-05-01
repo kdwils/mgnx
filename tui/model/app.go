@@ -5,7 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/kdwils/mgnx/pkg/client"
+	"github.com/kdwils/mgnx/pkg/torznab"
 	"github.com/kdwils/mgnx/tui/ui"
 )
 
@@ -26,10 +26,10 @@ type NavigateConfirmDeleteMsg struct {
 	Name     string
 	From     view
 }
-type ClientConnectedMsg struct{ Client *client.Client }
+type ClientConnectedMsg struct{ Client *torznab.Client }
 
-type TorrentsLoadedMsg struct{ Torrents []client.Torrent }
-type TorrentLoadedMsg struct{ Torrent client.Torrent }
+type TorrentsLoadedMsg struct{ Torrents []torznab.Torrent }
+type TorrentLoadedMsg struct{ Torrent torznab.Torrent }
 type StateUpdatedMsg struct {
 	Infohash string
 	NewState string
@@ -48,12 +48,12 @@ type App struct {
 	list       ListModel
 	detail     DetailModel
 	confirm    ConfirmModel
-	client     *client.Client
+	client     *torznab.Client
 	width      int
 	height     int
 }
 
-func NewApp(c *client.Client) App {
+func NewApp(c *torznab.Client) App {
 	cfg := NewConfigModel()
 	if c != nil {
 		cfg = cfg.SetHasClient(true)
@@ -179,7 +179,7 @@ func (a App) View() string {
 	return ""
 }
 
-func getTorrent(c *client.Client, infohash string) tea.Cmd {
+func getTorrent(c *torznab.Client, infohash string) tea.Cmd {
 	return func() tea.Msg {
 		t, err := c.GetTorrent(context.Background(), infohash)
 		if err != nil {

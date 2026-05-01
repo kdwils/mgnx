@@ -12,7 +12,11 @@ import (
 
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/kdwils/mgnx/config"
-	"github.com/kdwils/mgnx/dht"
+	"github.com/kdwils/mgnx/dht/filter"
+	"github.com/kdwils/mgnx/dht/krpc"
+	"github.com/kdwils/mgnx/dht/server"
+	"github.com/kdwils/mgnx/dht/table"
+	"github.com/kdwils/mgnx/dht/types"
 	"github.com/kdwils/mgnx/recorder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,18 +26,18 @@ func TestDHTBEPProtocol(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	srv, mockNode := setupDHTServer(t)
+	srv, mockNode := setupDHTServer(t, testDHTConfig(t))
 	require.NoError(t, srv.Start(ctx))
 	t.Cleanup(func() { srv.Stop(ctx) })
 
-	serverAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: srv.Addr().Port}
+	serverAddr := srv.Addr()
 
 	t.Run("ping returns our node ID", func(t *testing.T) {
-		resp := mockNode.sendQuery(ctx, serverAddr, &dht.Msg{
+		resp := mockNode.sendQuery(ctx, serverAddr, &krpc.Msg{
 			T: "aa",
 			Y: "q",
 			Q: "ping",
-			A: &dht.MsgArgs{ID: string(mockNode.id[:])},
+			A: &krpc.MsgArgs{ID: string(mockNode.id[:])},
 		})
 
 		require.NotNil(t, resp)
@@ -42,12 +46,12 @@ func TestDHTBEPProtocol(t *testing.T) {
 	})
 
 	t.Run("find_node returns compact nodes", func(t *testing.T) {
-		target := [20]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14}
-		resp := mockNode.sendQuery(ctx, serverAddr, &dht.Msg{
+		target := table.NodeID{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14}
+		resp := mockNode.sendQuery(ctx, serverAddr, &krpc.Msg{
 			T: "bb",
 			Y: "q",
 			Q: "find_node",
-			A: &dht.MsgArgs{
+			A: &krpc.MsgArgs{
 				ID:     string(mockNode.id[:]),
 				Target: string(target[:]),
 			},
@@ -60,12 +64,12 @@ func TestDHTBEPProtocol(t *testing.T) {
 	})
 
 	t.Run("get_peers returns token", func(t *testing.T) {
-		infoHash := [20]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14}
-		resp := mockNode.sendQuery(ctx, serverAddr, &dht.Msg{
+		infoHash := table.NodeID{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14}
+		resp := mockNode.sendQuery(ctx, serverAddr, &krpc.Msg{
 			T: "cc",
 			Y: "q",
 			Q: "get_peers",
-			A: &dht.MsgArgs{
+			A: &krpc.MsgArgs{
 				ID:       string(mockNode.id[:]),
 				InfoHash: string(infoHash[:]),
 			},
@@ -79,13 +83,13 @@ func TestDHTBEPProtocol(t *testing.T) {
 	})
 
 	t.Run("announce_peer requires valid token", func(t *testing.T) {
-		infoHash := [20]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14}
+		infoHash := table.NodeID{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14}
 
-		getPeersResp := mockNode.sendQuery(ctx, serverAddr, &dht.Msg{
+		getPeersResp := mockNode.sendQuery(ctx, serverAddr, &krpc.Msg{
 			T: "dd",
 			Y: "q",
 			Q: "get_peers",
-			A: &dht.MsgArgs{
+			A: &krpc.MsgArgs{
 				ID:       string(mockNode.id[:]),
 				InfoHash: string(infoHash[:]),
 			},
@@ -93,11 +97,11 @@ func TestDHTBEPProtocol(t *testing.T) {
 		require.NotNil(t, getPeersResp)
 		token := getPeersResp.R.Token
 
-		resp := mockNode.sendQuery(ctx, serverAddr, &dht.Msg{
+		resp := mockNode.sendQuery(ctx, serverAddr, &krpc.Msg{
 			T: "ee",
 			Y: "q",
 			Q: "announce_peer",
-			A: &dht.MsgArgs{
+			A: &krpc.MsgArgs{
 				ID:       string(mockNode.id[:]),
 				InfoHash: string(infoHash[:]),
 				Port:     6881,
@@ -111,13 +115,13 @@ func TestDHTBEPProtocol(t *testing.T) {
 	})
 
 	t.Run("announce_peer rejects invalid token", func(t *testing.T) {
-		infoHash := [20]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14}
+		infoHash := table.NodeID{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14}
 
-		resp := mockNode.sendQuery(ctx, serverAddr, &dht.Msg{
+		resp := mockNode.sendQuery(ctx, serverAddr, &krpc.Msg{
 			T: "ff",
 			Y: "q",
 			Q: "announce_peer",
-			A: &dht.MsgArgs{
+			A: &krpc.MsgArgs{
 				ID:       string(mockNode.id[:]),
 				InfoHash: string(infoHash[:]),
 				Port:     6881,
@@ -130,15 +134,15 @@ func TestDHTBEPProtocol(t *testing.T) {
 		require.Len(t, resp.E, 2)
 		code, ok := resp.E[0].(int64)
 		require.True(t, ok, "error code should be int64")
-		assert.Equal(t, int64(dht.ErrProtocol), code)
+		assert.Equal(t, int64(krpc.ErrProtocol), code)
 	})
 
 	t.Run("find_node missing target returns error", func(t *testing.T) {
-		resp := mockNode.sendQuery(ctx, serverAddr, &dht.Msg{
+		resp := mockNode.sendQuery(ctx, serverAddr, &krpc.Msg{
 			T: "gg",
 			Y: "q",
 			Q: "find_node",
-			A: &dht.MsgArgs{ID: string(mockNode.id[:])},
+			A: &krpc.MsgArgs{ID: string(mockNode.id[:])},
 		})
 
 		require.NotNil(t, resp, "should receive error response")
@@ -146,15 +150,15 @@ func TestDHTBEPProtocol(t *testing.T) {
 		require.Len(t, resp.E, 2)
 		code, ok := resp.E[0].(int64)
 		require.True(t, ok, "error code should be int64")
-		assert.Equal(t, int64(dht.ErrProtocol), code)
+		assert.Equal(t, int64(krpc.ErrProtocol), code)
 	})
 
 	t.Run("get_peers missing info_hash returns error", func(t *testing.T) {
-		resp := mockNode.sendQuery(ctx, serverAddr, &dht.Msg{
+		resp := mockNode.sendQuery(ctx, serverAddr, &krpc.Msg{
 			T: "hh",
 			Y: "q",
 			Q: "get_peers",
-			A: &dht.MsgArgs{ID: string(mockNode.id[:])},
+			A: &krpc.MsgArgs{ID: string(mockNode.id[:])},
 		})
 
 		require.NotNil(t, resp, "should receive error response")
@@ -162,7 +166,7 @@ func TestDHTBEPProtocol(t *testing.T) {
 		require.Len(t, resp.E, 2)
 		code, ok := resp.E[0].(int64)
 		require.True(t, ok, "error code should be int64")
-		assert.Equal(t, int64(dht.ErrProtocol), code)
+		assert.Equal(t, int64(krpc.ErrProtocol), code)
 	})
 
 	t.Run("per IP rate limiting", func(t *testing.T) {
@@ -170,42 +174,40 @@ func TestDHTBEPProtocol(t *testing.T) {
 		cfg.RateLimit = 2
 		cfg.RateBurst = 2
 
-		srv2, err := dht.NewServer(cfg, recorder.NewNoOp())
-		require.NoError(t, err)
+		srv2, mockNode2 := setupDHTServer(t, cfg)
 		require.NoError(t, srv2.Start(ctx))
 		t.Cleanup(func() { srv2.Stop(ctx) })
 
-		mockNode := newMockNode()
-		addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: srv2.Addr().Port}
+		addr := srv2.Addr()
 
 		for i := 0; i < 2; i++ {
-			resp := mockNode.sendQuery(ctx, addr, &dht.Msg{
+			resp := mockNode2.sendQuery(ctx, addr, &krpc.Msg{
 				T: fmt.Sprintf("%02d", i),
 				Y: "q",
 				Q: "ping",
-				A: &dht.MsgArgs{ID: string(mockNode.id[:])},
+				A: &krpc.MsgArgs{ID: string(mockNode2.id[:])},
 			})
 			require.NotNil(t, resp, "request %d should succeed", i)
 		}
 
-		resp := mockNode.sendQuery(ctx, addr, &dht.Msg{
+		resp := mockNode2.sendQuery(ctx, addr, &krpc.Msg{
 			T: "xx",
 			Y: "q",
 			Q: "ping",
-			A: &dht.MsgArgs{ID: string(mockNode.id[:])},
+			A: &krpc.MsgArgs{ID: string(mockNode2.id[:])},
 		})
 		require.Nil(t, resp, "third request should be rate limited")
 	})
 
 	t.Run("BEP-42 invalid node ID is rejected", func(t *testing.T) {
-		invalidID := [20]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+		invalidID := table.NodeID{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
 		mockNode := newMockNodeWithID(invalidID)
 
-		resp := mockNode.sendQuery(ctx, serverAddr, &dht.Msg{
+		resp := mockNode.sendQuery(ctx, serverAddr, &krpc.Msg{
 			T: "aa",
 			Y: "q",
 			Q: "ping",
-			A: &dht.MsgArgs{ID: string(mockNode.id[:])},
+			A: &krpc.MsgArgs{ID: string(mockNode.id[:])},
 		})
 
 		require.NotNil(t, resp)
@@ -214,13 +216,13 @@ func TestDHTBEPProtocol(t *testing.T) {
 
 	t.Run("announce_peer validates port range", func(t *testing.T) {
 		mockNode := newMockNode()
-		infoHash := [20]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14}
+		infoHash := table.NodeID{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14}
 
-		getPeersResp := mockNode.sendQuery(ctx, serverAddr, &dht.Msg{
+		getPeersResp := mockNode.sendQuery(ctx, serverAddr, &krpc.Msg{
 			T: "dd",
 			Y: "q",
 			Q: "get_peers",
-			A: &dht.MsgArgs{
+			A: &krpc.MsgArgs{
 				ID:       string(mockNode.id[:]),
 				InfoHash: string(infoHash[:]),
 			},
@@ -228,11 +230,11 @@ func TestDHTBEPProtocol(t *testing.T) {
 		require.NotNil(t, getPeersResp)
 		token := getPeersResp.R.Token
 
-		resp := mockNode.sendQuery(ctx, serverAddr, &dht.Msg{
+		resp := mockNode.sendQuery(ctx, serverAddr, &krpc.Msg{
 			T: "ee",
 			Y: "q",
 			Q: "announce_peer",
-			A: &dht.MsgArgs{
+			A: &krpc.MsgArgs{
 				ID:       string(mockNode.id[:]),
 				InfoHash: string(infoHash[:]),
 				Port:     0,
@@ -246,13 +248,13 @@ func TestDHTBEPProtocol(t *testing.T) {
 
 	t.Run("announce_peer rejects port > 65535", func(t *testing.T) {
 		mockNode := newMockNode()
-		infoHash := [20]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14}
+		infoHash := table.NodeID{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14}
 
-		getPeersResp := mockNode.sendQuery(ctx, serverAddr, &dht.Msg{
+		getPeersResp := mockNode.sendQuery(ctx, serverAddr, &krpc.Msg{
 			T: "ff",
 			Y: "q",
 			Q: "get_peers",
-			A: &dht.MsgArgs{
+			A: &krpc.MsgArgs{
 				ID:       string(mockNode.id[:]),
 				InfoHash: string(infoHash[:]),
 			},
@@ -260,11 +262,11 @@ func TestDHTBEPProtocol(t *testing.T) {
 		require.NotNil(t, getPeersResp)
 		token := getPeersResp.R.Token
 
-		resp := mockNode.sendQuery(ctx, serverAddr, &dht.Msg{
+		resp := mockNode.sendQuery(ctx, serverAddr, &krpc.Msg{
 			T: "gg",
 			Y: "q",
 			Q: "announce_peer",
-			A: &dht.MsgArgs{
+			A: &krpc.MsgArgs{
 				ID:       string(mockNode.id[:]),
 				InfoHash: string(infoHash[:]),
 				Port:     70000,
@@ -282,21 +284,19 @@ func TestDHTBEPProtocol(t *testing.T) {
 		cfg.RateBurst = 100
 		cfg.MaxNodesPerResponse = 8
 
-		srv2, err := dht.NewServer(cfg, recorder.NewNoOp())
-		require.NoError(t, err)
+		srv2, mockNode2 := setupDHTServer(t, cfg)
 		require.NoError(t, srv2.Start(ctx))
 		t.Cleanup(func() { srv2.Stop(ctx) })
 
-		mockNode := newMockNode()
-		addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: srv2.Addr().Port}
-		target := [20]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14}
+		addr := srv2.Addr()
+		target := table.NodeID{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14}
 
-		resp := mockNode.sendQuery(ctx, addr, &dht.Msg{
+		resp := mockNode2.sendQuery(ctx, addr, &krpc.Msg{
 			T: "bb",
 			Y: "q",
 			Q: "find_node",
-			A: &dht.MsgArgs{
-				ID:     string(mockNode.id[:]),
+			A: &krpc.MsgArgs{
+				ID:     string(mockNode2.id[:]),
 				Target: string(target[:]),
 			},
 		})
@@ -311,60 +311,48 @@ func TestDHTBEPProtocol(t *testing.T) {
 
 // TestDHTBucketRefresh_insertsNodesFromResponse verifies end-to-end that nodes
 // returned in a find_node response are inserted into the querying server's
-// routing table. This is the behaviour fixed in bucketRefreshLoop and
-// refreshStaleBuckets: previously the response body was discarded.
+// routing table.
 func TestDHTBucketRefresh_insertsNodesFromResponse(t *testing.T) {
 	t.Run("find_node response nodes are inserted into routing table", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
 		// B knows about C; when A queries B the response will carry C.
-		serverB, err := dht.NewServer(testDHTConfig(t), recorder.NewNoOp())
-		require.NoError(t, err)
+		serverB, _ := setupDHTServer(t, testDHTConfig(t))
 		require.NoError(t, serverB.Start(ctx))
 		t.Cleanup(func() { serverB.Stop(ctx) })
 
-		serverC, err := dht.NewServer(testDHTConfig(t), recorder.NewNoOp())
-		require.NoError(t, err)
+		serverC, _ := setupDHTServer(t, testDHTConfig(t))
 		require.NoError(t, serverC.Start(ctx))
 		t.Cleanup(func() { serverC.Stop(ctx) })
 
 		// Pre-populate B's routing table with C.
-		cAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: serverC.Addr().Port}
-		serverB.InsertNode(serverC.OurID(), cAddr)
+		cAddr := serverC.Addr()
+		serverB.InsertNode(ctx, &table.Node{ID: serverC.NodeID(), Addr: cAddr, LastSeen: time.Now()})
 
-		serverA, err := dht.NewServer(testDHTConfig(t), recorder.NewNoOp())
-		require.NoError(t, err)
+		serverA, _ := setupDHTServer(t, testDHTConfig(t))
 		require.NoError(t, serverA.Start(ctx))
 		t.Cleanup(func() { serverA.Stop(ctx) })
 
-		bAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: serverB.Addr().Port}
+		bAddr := serverB.Addr()
 
-		var target dht.NodeID
-		aID := serverA.OurID()
-		resp, err := serverA.Query(ctx, bAddr, serverB.OurID(), &dht.Msg{
-			Y: "q",
-			Q: "find_node",
-			A: &dht.MsgArgs{
-				ID:     string(aID[:]),
-				Target: string(target[:]),
-			},
-		})
+		var target table.NodeID
+		resp, err := serverA.FindNode(ctx, bAddr, serverB.NodeID(), target)
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 		require.NotNil(t, resp.R)
 		require.NotEmpty(t, resp.R.Nodes, "B should have returned C in its response")
 
-		nodes, err := dht.DecodeNodes(resp.R.Nodes)
+		nodes, err := table.DecodeNodes(resp.R.Nodes)
 		require.NoError(t, err)
 		for _, node := range nodes {
-			serverA.InsertNode(node.ID, node.Addr)
+			serverA.InsertNode(ctx, node)
 		}
 
 		// A should now know about C (learned via B's find_node response).
-		closest := serverA.Closest(serverC.OurID(), 1)
+		closest := serverA.Closest(serverC.NodeID(), 1)
 		require.NotEmpty(t, closest)
-		assert.Equal(t, serverC.OurID(), closest[0].ID)
+		assert.Equal(t, serverC.NodeID(), closest[0].ID)
 	})
 }
 
@@ -374,29 +362,35 @@ func TestDHTRefreshStaleBuckets_insertsNodesFromResponse(t *testing.T) {
 		defer cancel()
 
 		// B knows about C.
-		serverB, err := dht.NewServer(testDHTConfig(t), recorder.NewNoOp())
-		require.NoError(t, err)
+		serverB, _ := setupDHTServer(t, testDHTConfig(t))
 		require.NoError(t, serverB.Start(ctx))
 		t.Cleanup(func() { serverB.Stop(ctx) })
 
-		serverC, err := dht.NewServer(testDHTConfig(t), recorder.NewNoOp())
-		require.NoError(t, err)
+		serverC, _ := setupDHTServer(t, testDHTConfig(t))
 		require.NoError(t, serverC.Start(ctx))
 		t.Cleanup(func() { serverC.Stop(ctx) })
 
-		cAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: serverC.Addr().Port}
-		serverB.InsertNode(serverC.OurID(), cAddr)
+		cAddr := serverC.Addr()
+		serverB.InsertNode(ctx, &table.Node{ID: serverC.NodeID(), Addr: cAddr, LastSeen: time.Now()})
 
 		// A starts with only B in its table; all buckets are stale (threshold=0).
 		cfg := testDHTConfig(t)
 		cfg.StaleThreshold = 0
-		serverA, err := dht.NewServer(cfg, recorder.NewNoOp())
+		
+		discovered := make(chan types.DiscoveredPeers, cfg.DiscoveryBuffer)
+		dedup := filter.NewBloomFilter(cfg.BloomN, cfg.BloomP, cfg.BloomRotation)
+		udpAddr, err := net.ResolveUDPAddr("udp4", "127.0.0.1:0")
+		require.NoError(t, err)
+		conn, err := net.ListenUDP("udp4", udpAddr)
+		require.NoError(t, err)
+
+		serverA, err := server.NewServer(cfg, nil, conn, recorder.NewNoOp(), discovered, dedup)
 		require.NoError(t, err)
 		require.NoError(t, serverA.Start(ctx))
 		t.Cleanup(func() { serverA.Stop(ctx) })
 
-		bAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: serverB.Addr().Port}
-		serverA.InsertNode(serverB.OurID(), bAddr)
+		bAddr := serverB.Addr()
+		serverA.InsertNode(ctx, &table.Node{ID: serverB.NodeID(), Addr: bAddr, LastSeen: time.Now()})
 		initialCount := serverA.NodeCount()
 
 		serverA.RefreshStaleBuckets(ctx)
@@ -408,21 +402,23 @@ func TestDHTRefreshStaleBuckets_insertsNodesFromResponse(t *testing.T) {
 }
 
 type mockNode struct {
-	id dht.NodeID
+	id table.NodeID
 }
 
 func newMockNode() *mockNode {
-	id, _ := dht.DeriveNodeIDFromIP(net.ParseIP("127.0.0.1"))
+	id, _ := table.DeriveNodeIDFromIP(net.ParseIP("127.0.0.1"))
+	// Make it slightly different
+	id[19]++
 	return &mockNode{id: id}
 }
 
 func newMockNodeWithID(id [20]byte) *mockNode {
-	var nid dht.NodeID
+	var nid table.NodeID
 	copy(nid[:], id[:])
 	return &mockNode{id: nid}
 }
 
-func (m *mockNode) sendQuery(ctx context.Context, addr *net.UDPAddr, query *dht.Msg) *dht.Msg {
+func (m *mockNode) sendQuery(ctx context.Context, addr *net.UDPAddr, query *krpc.Msg) *krpc.Msg {
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
 	if err != nil {
 		return nil
@@ -458,7 +454,7 @@ func (m *mockNode) sendQuery(ctx context.Context, addr *net.UDPAddr, query *dht.
 	}
 
 	if y == "e" {
-		resp := &dht.Msg{
+		resp := &krpc.Msg{
 			T: respRaw["t"].(string),
 			Y: y,
 		}
@@ -468,16 +464,23 @@ func (m *mockNode) sendQuery(ctx context.Context, addr *net.UDPAddr, query *dht.
 		return resp
 	}
 
-	resp := &dht.Msg{}
+	resp := &krpc.Msg{}
 	if err := bencode.Unmarshal(buf[:n], resp); err != nil {
 		return nil
 	}
 	return resp
 }
 
-func setupDHTServer(t *testing.T) (*dht.Server, *mockNode) {
-	cfg := testDHTConfig(t)
-	srv, err := dht.NewServer(cfg, recorder.NewNoOp())
+func setupDHTServer(t *testing.T, cfg config.DHT) (*server.Server, *mockNode) {
+	discovered := make(chan types.DiscoveredPeers, cfg.DiscoveryBuffer)
+	dedup := filter.NewBloomFilter(cfg.BloomN, cfg.BloomP, cfg.BloomRotation)
+
+	udpAddr, err := net.ResolveUDPAddr("udp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	conn, err := net.ListenUDP("udp4", udpAddr)
+	require.NoError(t, err)
+
+	srv, err := server.NewServer(cfg, nil, conn, recorder.NewNoOp(), discovered, dedup)
 	require.NoError(t, err)
 	return srv, newMockNode()
 }
@@ -493,7 +496,6 @@ func testDHTConfig(t *testing.T) config.DHT {
 		BadFailureThreshold:      2,
 		StaleThreshold:           15 * time.Minute,
 		NodeID:                   generateTestNodeID(),
-		NodesPath:                t.TempDir() + "/dht_nodes.dat",
 		RateLimit:                100,
 		RateBurst:                100,
 		Workers:                  2,
@@ -502,11 +504,15 @@ func testDHTConfig(t *testing.T) config.DHT {
 		PeerStoreTTL:             30 * time.Minute,
 		PeerStoreMaxEntries:      10_000,
 		PeerStoreMaxPeersPerHash: 200,
+		BucketRefreshInterval:    1 * time.Hour,
+		BloomN:                   1000,
+		BloomP:                   0.01,
+		BloomRotation:            time.Hour,
 	}
 }
 
 func generateTestNodeID() string {
-	id, err := dht.DeriveNodeIDFromIP(net.ParseIP("127.0.0.1"))
+	id, err := table.DeriveNodeIDFromIP(net.ParseIP("127.0.0.1"))
 	if err != nil {
 		return hex.EncodeToString(make([]byte, 20))
 	}

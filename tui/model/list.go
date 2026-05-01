@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/kdwils/mgnx/pkg/client"
+	"github.com/kdwils/mgnx/pkg/torznab"
 	"github.com/kdwils/mgnx/tui/ui"
 )
 
@@ -24,11 +24,11 @@ const (
 	fixedColW   = stateColW + typeColW + seedersColW + sizeColW + 4*colSpacing
 )
 
-var stateOptions = append([]string{"all"}, client.ValidStates...)
+var stateOptions = append([]string{"all"}, torznab.ValidStates...)
 var typeOptions = []string{"all", "movie", "tv", "anime", "unknown"}
 
 type ListModel struct {
-	torrents    []client.Torrent
+	torrents    []torznab.Torrent
 	cursor      int
 	page        int
 	isLastPage  bool
@@ -40,12 +40,12 @@ type ListModel struct {
 	loading     bool
 	err         string
 	spinner     spinner.Model
-	client      *client.Client
+	client      *torznab.Client
 	width       int
 	height      int
 }
 
-func NewListModel(c *client.Client) ListModel {
+func NewListModel(c *torznab.Client) ListModel {
 	si := textinput.New()
 	si.Placeholder = "search…"
 	si.Width = 14
@@ -68,7 +68,7 @@ func (m ListModel) SetSize(w, h int) ListModel {
 }
 
 func (m ListModel) RemoveTorrent(infohash string) ListModel {
-	var filtered []client.Torrent
+	var filtered []torznab.Torrent
 	for _, t := range m.torrents {
 		if t.Infohash != infohash {
 			filtered = append(filtered, t)
@@ -81,8 +81,8 @@ func (m ListModel) RemoveTorrent(infohash string) ListModel {
 	return m
 }
 
-func (m ListModel) listParams() client.ListParams {
-	p := client.ListParams{
+func (m ListModel) listParams() torznab.ListParams {
+	p := torznab.ListParams{
 		Limit:  pageSize,
 		Offset: m.page * pageSize,
 	}
@@ -95,12 +95,12 @@ func (m ListModel) listParams() client.ListParams {
 	return p
 }
 
-func (m ListModel) visibleTorrents() []client.Torrent {
+func (m ListModel) visibleTorrents() []torznab.Torrent {
 	if m.searchQuery == "" {
 		return m.torrents
 	}
 	q := strings.ToLower(m.searchQuery)
-	var out []client.Torrent
+	var out []torznab.Torrent
 	for _, t := range m.torrents {
 		if strings.Contains(strings.ToLower(t.Name), q) {
 			out = append(out, t)
@@ -286,27 +286,15 @@ func (m ListModel) renderSidebar() string {
 		typeLabel + "\n" + typeVal + "\n\n" +
 		searchLabel + "\n" + m.searchInput.View()
 
-	tableH := m.height - 3
-	if tableH < 4 {
-		tableH = 4
-	}
+	tableH := max(m.height-3, 4)
 	return ui.SidebarStyle.Height(tableH).Render(content)
 }
 
 func (m ListModel) renderTable() string {
-	tableWidth := m.width - sidebarW
-	if tableWidth < 20 {
-		tableWidth = 20
-	}
-	nameWidth := tableWidth - fixedColW - 2
-	if nameWidth < 10 {
-		nameWidth = 10
-	}
+	tableWidth := max(m.width-sidebarW, 20)
+	nameWidth := max(tableWidth-fixedColW-2, 10)
 
-	tableH := m.height - 3
-	if tableH < 4 {
-		tableH = 4
-	}
+	tableH := max(m.height-3, 4)
 	maxRows := tableH - 1 // minus header row
 
 	header := m.renderTableHeader(nameWidth, tableWidth)
@@ -338,7 +326,7 @@ func (m ListModel) renderTableHeader(nameWidth, tableWidth int) string {
 	return name + state + ctype + seeders + size
 }
 
-func (m ListModel) renderRow(t client.Torrent, selected bool, nameWidth int) string {
+func (m ListModel) renderRow(t torznab.Torrent, selected bool, nameWidth int) string {
 	applyBg := func(s lipgloss.Style) lipgloss.Style {
 		if selected {
 			return s.Background(ui.ColorSelected).Bold(true)
@@ -371,7 +359,7 @@ func (m ListModel) renderStatusBar() string {
 	return line1 + "\n" + line2
 }
 
-func fetchTorrents(c *client.Client, p client.ListParams) tea.Cmd {
+func fetchTorrents(c *torznab.Client, p torznab.ListParams) tea.Cmd {
 	return func() tea.Msg {
 		if c == nil {
 			return ErrMsg{fmt.Errorf("no client configured")}
