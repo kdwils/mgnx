@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -608,5 +610,106 @@ func TestServer_Bootstrap(t *testing.T) {
 		closest := s.Closest(nodeID1, 1)
 		require.Equal(t, 1, len(closest))
 		assert.Equal(t, nodeID1, closest[0].ID)
+	})
+}
+
+func TestServer_Persistence(t *testing.T) {
+	t.Run("save and restore same node id", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		tmpDir, err := os.MkdirTemp("", "mgnx-dht-test-*")
+		require.NoError(t, err)
+		defer os.RemoveAll(tmpDir)
+
+		nodesPath := filepath.Join(tmpDir, "table.json")
+		cfg := config.DHT{
+			NodesPath:           nodesPath,
+			BucketSize:          8,
+			BadFailureThreshold: 2,
+		}
+
+		rec := recorder.NewNoOp()
+		conn := mockconn.NewMockConn(ctrl)
+		conn.EXPECT().LocalAddr().Return(&net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}).AnyTimes()
+
+		s1, err := NewServer(cfg, net.ParseIP("127.0.0.1"), conn, rec, nil, nil)
+		require.NoError(t, err)
+
+		ctx := context.Background()
+		nodeID1 := table.NodeID{0x01}
+		node1 := &table.Node{
+			ID:       nodeID1,
+			Addr:     &net.UDPAddr{IP: net.ParseIP("1.1.1.1"), Port: 1111},
+			LastSeen: time.Unix(1000, 0),
+		}
+		s1.InsertNode(ctx, node1)
+
+		conn.EXPECT().Close().Return(nil)
+		err = s1.Stop(ctx)
+		require.NoError(t, err)
+
+		s2, err := NewServer(cfg, net.ParseIP("127.0.0.1"), conn, rec, nil, nil)
+		require.NoError(t, err)
+
+		err = s2.loadRoutingTable(ctx)
+		require.NoError(t, err)
+
+		got := s2.table.Closest(table.NodeID{}, 1)
+		want := []*table.Node{node1}
+		assert.Equal(t, want, got)
+	})
+
+	t.Run("restore with node id change fallback", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		tmpDir, err := os.MkdirTemp("", "mgnx-dht-test-*")
+		require.NoError(t, err)
+		defer os.RemoveAll(tmpDir)
+
+		nodesPath := filepath.Join(tmpDir, "table.json")
+
+		cfg1 := config.DHT{
+			NodeID:              "0102030405060708091011121314151617181920",
+			NodesPath:           nodesPath,
+			BucketSize:          8,
+			BadFailureThreshold: 2,
+		}
+
+		rec := recorder.NewNoOp()
+		conn := mockconn.NewMockConn(ctrl)
+		conn.EXPECT().LocalAddr().Return(&net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}).AnyTimes()
+
+		s1, err := NewServer(cfg1, nil, conn, rec, nil, nil)
+		require.NoError(t, err)
+
+		ctx := context.Background()
+		node1 := &table.Node{
+			ID:       table.NodeID{0xFF},
+			Addr:     &net.UDPAddr{IP: net.ParseIP("1.1.1.1"), Port: 1111},
+			LastSeen: time.Unix(1000, 0),
+		}
+		s1.InsertNode(ctx, node1)
+
+		conn.EXPECT().Close().Return(nil)
+		s1.Stop(ctx)
+
+		cfg2 := config.DHT{
+			NodeID:              "ffffffffffffffffffffffffffffffffffffffff",
+			NodesPath:           nodesPath,
+			BucketSize:          8,
+			BadFailureThreshold: 2,
+		}
+
+		s2, err := NewServer(cfg2, nil, conn, rec, nil, nil)
+		require.NoError(t, err)
+
+		err = s2.loadRoutingTable(ctx)
+		require.NoError(t, err)
+
+		got := s2.table.Closest(table.NodeID{}, 1)
+		want := []*table.Node{node1}
+		assert.Equal(t, want, got)
 	})
 }

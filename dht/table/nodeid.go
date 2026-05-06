@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/crc32"
@@ -16,6 +17,23 @@ import (
 type NodeID [20]byte
 
 func (id NodeID) String() string { return hex.EncodeToString(id[:]) }
+
+func (id NodeID) MarshalJSON() ([]byte, error) {
+	return json.Marshal(id.String())
+}
+
+func (id *NodeID) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	parsed, err := ParseNodeIDHex(s)
+	if err != nil {
+		return err
+	}
+	copy(id[:], parsed[:])
+	return nil
+}
 
 // XOR returns the XOR distance between two node IDs.
 func (id NodeID) XOR(other NodeID) NodeID {

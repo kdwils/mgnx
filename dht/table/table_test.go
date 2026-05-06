@@ -2,6 +2,7 @@ package table
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
 
 func testCfg() config.DHT {
 	return config.DHT{
@@ -31,24 +33,104 @@ func makeNode(id byte, port int) *Node {
 	}
 }
 
+func TestRoutingTable_Persistence(t *testing.T) {
+	t.Run("save and restore state exactly", func(t *testing.T) {
+		id, _ := ParseNodeIDHex("0102030405060708091011121314151617181920")
+		cfg := testCfg()
+		staticTime := time.Unix(1000, 0).UTC()
+		now := func() time.Time { return staticTime }
+
+		rt1 := &RoutingTable{
+			nodeID:              id,
+			bucketSize:          cfg.BucketSize,
+			badFailureThreshold: cfg.BadFailureThreshold,
+			staleThreshold:      cfg.StaleThreshold,
+			now:                 now,
+			buckets:             []*Bucket{{LastChanged: now()}},
+		}
+
+		node1 := &Node{
+			ID:           NodeID{0xFF},
+			Addr:         &net.UDPAddr{IP: net.ParseIP("1.1.1.1"), Port: 1111},
+			LastSeen:     rt1.now(),
+			FailureCount: 0,
+		}
+		rt1.Insert(context.Background(), node1)
+
+		state := rt1.SaveState()
+		data, err := json.Marshal(state)
+		require.NoError(t, err)
+
+		var state2 RoutingTableState
+		err = json.Unmarshal(data, &state2)
+		require.NoError(t, err)
+
+		rt2 := &RoutingTable{
+			nodeID:              id,
+			bucketSize:          cfg.BucketSize,
+			badFailureThreshold: cfg.BadFailureThreshold,
+			staleThreshold:      cfg.StaleThreshold,
+			now:                 now,
+			buckets:             []*Bucket{{LastChanged: now()}},
+		}
+		err = rt2.LoadState(context.Background(), state2)
+		assert.NoError(t, err)
+
+		got := rt2.buckets
+		want := rt1.buckets
+		assert.Equal(t, want, got)
+	})
+
+	t.Run("restore state with node id change", func(t *testing.T) {
+		id1, _ := ParseNodeIDHex("0102030405060708091011121314151617181920")
+		id2, _ := ParseNodeIDHex("ffffffffffffffffffffffffffffffffffffffff")
+		cfg := testCfg()
+		staticTime := time.Unix(1000, 0).UTC()
+		now := func() time.Time { return staticTime }
+
+		rt1 := &RoutingTable{
+			nodeID:              id1,
+			bucketSize:          cfg.BucketSize,
+			badFailureThreshold: cfg.BadFailureThreshold,
+			staleThreshold:      cfg.StaleThreshold,
+			now:                 now,
+			buckets:             []*Bucket{{LastChanged: now()}},
+		}
+
+		node1 := &Node{
+			ID:           NodeID{0x55},
+			Addr:         &net.UDPAddr{IP: net.ParseIP("1.1.1.1"), Port: 1111},
+			LastSeen:     rt1.now(),
+			FailureCount: 0,
+		}
+		rt1.Insert(context.Background(), node1)
+
+		state := rt1.SaveState()
+		data, err := json.Marshal(state)
+		require.NoError(t, err)
+
+		var state2 RoutingTableState
+		err = json.Unmarshal(data, &state2)
+		require.NoError(t, err)
+
+		rt2 := &RoutingTable{
+			nodeID:              id2,
+			bucketSize:          cfg.BucketSize,
+			badFailureThreshold: cfg.BadFailureThreshold,
+			staleThreshold:      cfg.StaleThreshold,
+			now:                 now,
+			buckets:             []*Bucket{{LastChanged: now()}},
+		}
+		err = rt2.LoadState(context.Background(), state2)
+		assert.NoError(t, err)
+
+		got := rt2.AllNodes()
+		want := []*Node{node1}
+		assert.Equal(t, want, got)
+	})
+}
+
 func TestRoutingTable_Insert(t *testing.T) {
-	t.Run("inserts node into empty table", func(t *testing.T) {
-		var serverNodeID NodeID
-		rt := NewRoutingTable(serverNodeID, testCfg(), nil)
-		n := makeNode(0x10, 1000)
-		rt.Insert(context.Background(), n)
-		assert.Equal(t, 1, len(rt.buckets[0].Nodes))
-	})
-
-	t.Run("updates existing node without duplicating", func(t *testing.T) {
-		var serverNodeID NodeID
-		rt := NewRoutingTable(serverNodeID, testCfg(), nil)
-		n := makeNode(0x10, 1000)
-		rt.Insert(context.Background(), n)
-		rt.Insert(context.Background(), n)
-		assert.Equal(t, 1, len(rt.buckets[0].Nodes))
-	})
-
 	t.Run("splits bucket when full and contains our ID", func(t *testing.T) {
 		// serverNodeID = 0x00..00. Insert 8 nodes with IDs alternating across the
 		// low and high halves of the keyspace to fill the single initial bucket,

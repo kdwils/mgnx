@@ -1,16 +1,49 @@
 package table
 
 import (
+	"encoding/json"
 	"net"
 	"time"
 )
 
 // Node represents a single DHT node.
 type Node struct {
-	ID           NodeID
-	Addr         *net.UDPAddr
-	LastSeen     time.Time
-	FailureCount int
+	ID           NodeID       `json:"id"`
+	Addr         *net.UDPAddr `json:"addr"`
+	LastSeen     time.Time    `json:"last_seen"`
+	FailureCount int          `json:"failure_count"`
+}
+
+type nodeJSON struct {
+	ID           NodeID    `json:"id"`
+	Addr         string    `json:"addr"`
+	LastSeen     time.Time `json:"last_seen"`
+	FailureCount int       `json:"failure_count"`
+}
+
+func (n *Node) MarshalJSON() ([]byte, error) {
+	return json.Marshal(nodeJSON{
+		ID:           n.ID,
+		Addr:         n.Addr.String(),
+		LastSeen:     n.LastSeen,
+		FailureCount: n.FailureCount,
+	})
+}
+
+func (n *Node) UnmarshalJSON(data []byte) error {
+	var nj nodeJSON
+	if err := json.Unmarshal(data, &nj); err != nil {
+		return err
+	}
+	addr, err := net.ResolveUDPAddr("udp", nj.Addr)
+	if err != nil {
+		return err
+	}
+	n.ID = nj.ID
+	n.Addr = addr
+	n.LastSeen = nj.LastSeen
+	n.FailureCount = nj.FailureCount
+	return nil
 }
 
 // IsGood reports whether the node is considered good per BEP-05:

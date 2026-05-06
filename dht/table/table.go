@@ -33,21 +33,22 @@ type RoutingTable struct {
 	badFailureThreshold int
 	staleThreshold      time.Duration
 	pinger              Pinger
+	now                 func() time.Time
 }
 
-// NewRoutingTable creates a routing table with a single bucket covering the
-// full keyspace [0, 2^160). pinger may be nil; ping-before-evict is skipped
-// until the server is wired up.
 func NewRoutingTable(nodeID NodeID, cfg config.DHT, pinger Pinger) *RoutingTable {
-	return &RoutingTable{
-		buckets:             []*Bucket{{LastChanged: time.Now()}}, // Min=Max={} sentinel = full keyspace
+	rt := &RoutingTable{
 		nodeID:              nodeID,
 		bucketSize:          cfg.BucketSize,
 		badFailureThreshold: cfg.BadFailureThreshold,
 		staleThreshold:      cfg.StaleThreshold,
 		pinger:              pinger,
+		now:                 time.Now,
 	}
+	rt.buckets = []*Bucket{{LastChanged: rt.now()}}
+	return rt
 }
+
 
 // NodeInsertResult describes the outcome of a routing table Insert call.
 const (
@@ -83,7 +84,7 @@ func (rt *RoutingTable) insert(ctx context.Context, node *Node) string {
 
 		if !b.IsFull(rt.bucketSize) {
 			b.Nodes = append(b.Nodes, node)
-			b.LastChanged = time.Now()
+			b.LastChanged = rt.now()
 			return NodeInsertInserted
 		}
 
@@ -165,7 +166,7 @@ func (rt *RoutingTable) MarkSuccess(id NodeID) {
 		if n.ID != id {
 			continue
 		}
-		n.LastSeen = time.Now()
+		n.LastSeen = rt.now()
 		n.FailureCount = 0
 		return
 	}
@@ -191,7 +192,7 @@ func (rt *RoutingTable) MarkFailure(id NodeID) {
 		replacement := b.ReplacementCache[0]
 		b.ReplacementCache = b.ReplacementCache[1:]
 		b.Nodes = append(b.Nodes, replacement)
-		b.LastChanged = time.Now()
+		b.LastChanged = rt.now()
 		return
 	}
 
@@ -236,8 +237,79 @@ func (rt *RoutingTable) StaleBuckets() []*Bucket {
 	return stale
 }
 
-// bucketFor returns the index of the bucket containing id.
-// Must be called with rt.mu held.
+type RoutingTableState struct {
+	NodeID  NodeID    `json:"node_id"`
+	Buckets []*Bucket `json:"buckets"`
+}
+
+func (rt *RoutingTable) SaveState() RoutingTableState {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+
+	buckets := make([]*Bucket, len(rt.buckets))
+	for i, b := range rt.buckets {
+		buckets[i] = &Bucket{
+			Min:              b.Min,
+			Max:              b.Max,
+			Depth:            b.Depth,
+			Nodes:            append([]*Node(nil), b.Nodes...),
+			ReplacementCache: append([]*Node(nil), b.ReplacementCache...),
+			LastChanged:      b.LastChanged,
+		}
+	}
+
+	return RoutingTableState{
+		NodeID:  rt.nodeID,
+		Buckets: buckets,
+	}
+}
+
+func (rt *RoutingTable) LoadState(ctx context.Context, state RoutingTableState) error {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	if len(state.Buckets) == 0 {
+		return fmt.Errorf("no buckets in state")
+	}
+
+	if state.NodeID == rt.nodeID {
+		rt.buckets = state.Buckets
+		return nil
+	}
+
+	inserted := 0
+	for _, b := range state.Buckets {
+		for _, n := range b.Nodes {
+			rt.insert(ctx, n)
+			inserted++
+		}
+		for _, n := range b.ReplacementCache {
+			rt.insert(ctx, n)
+			inserted++
+		}
+	}
+
+	if inserted == 0 {
+		return fmt.Errorf("no nodes found in state")
+	}
+
+	return nil
+}
+
+// AllNodes returns every node in the routing table, including active nodes
+// and replacement cache nodes.
+func (rt *RoutingTable) AllNodes() []*Node {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+
+	var nodes []*Node
+	for _, b := range rt.buckets {
+		nodes = append(nodes, b.Nodes...)
+		nodes = append(nodes, b.ReplacementCache...)
+	}
+	return nodes
+}
+
 func (rt *RoutingTable) bucketFor(id NodeID) int {
 	idx := sort.Search(len(rt.buckets), func(i int) bool {
 		return bytes.Compare(rt.buckets[i].Min[:], id[:]) > 0
@@ -269,7 +341,7 @@ func (rt *RoutingTable) splitBucket(idx int) (*Bucket, *Bucket) {
 		mid[j] = 0
 	}
 
-	now := time.Now()
+	now := rt.now()
 	left := &Bucket{Min: b.Min, Max: mid, Depth: d + 1, LastChanged: now}
 	right := &Bucket{Min: mid, Max: b.Max, Depth: d + 1, LastChanged: now}
 
