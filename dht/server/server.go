@@ -742,7 +742,7 @@ func (s *Server) send(ctx context.Context, addr *net.UDPAddr, nodeID table.NodeI
 	select {
 	case resp, ok := <-txn.Response:
 		if !ok {
-			return nil, fmt.Errorf("response channel closed")
+			return nil, fmt.Errorf("transaction timeout")
 		}
 
 		return resp, nil
