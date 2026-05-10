@@ -5,7 +5,7 @@ import (
 	"log"
 	"net"
 
-	"github.com/kdwils/mgnx/dht"
+	"github.com/kdwils/mgnx/dht/table"
 	"github.com/spf13/cobra"
 )
 
@@ -18,7 +18,7 @@ var generateNodeIDCmd = &cobra.Command{
 	Short: "Generate a BEP-42 compliant node id",
 	Long:  `Generate a BEP-42 compliant node id from an external IP address`,
 	Run: func(cmd *cobra.Command, args []string) {
-		id, err := dht.DeriveNodeIDFromIP(net.ParseIP(externalIP))
+		id, err := table.DeriveNodeIDFromIP(net.ParseIP(externalIP))
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -37,12 +37,12 @@ var validateNodeIDCmd = &cobra.Command{
 			log.Fatalf("invalid IP address: %s", externalIP)
 		}
 
-		parsedID, err := dht.ParseNodeIDHex(nodeID)
+		parsedID, err := table.ParseNodeIDHex(nodeID)
 		if err != nil {
 			log.Fatalf("invalid node ID: %v", err)
 		}
 
-		if err := dht.ValidateNodeIDForIP(parsedIP, parsedID); err != nil {
+		if err := table.ValidateNodeIDForIP(parsedIP, parsedID); err != nil {
 			log.Fatalf("INVALID: %v", err)
 		}
 

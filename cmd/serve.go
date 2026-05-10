@@ -15,6 +15,7 @@ import (
 	"github.com/kdwils/mgnx/db"
 	"github.com/kdwils/mgnx/db/gen"
 	"github.com/kdwils/mgnx/dht"
+	"github.com/kdwils/mgnx/dht/table"
 	"github.com/kdwils/mgnx/gluetun"
 	"github.com/kdwils/mgnx/health"
 	"github.com/kdwils/mgnx/indexer"
@@ -41,6 +42,7 @@ var serveCmd = &cobra.Command{
 
 		l := logger.New(cfg.Server.LogLevel)
 		ctx, cancel := context.WithCancel(logger.WithContext(cmd.Context(), l))
+		defer cancel()
 
 		g, ctx := errgroup.WithContext(ctx)
 
@@ -55,7 +57,7 @@ var serveCmd = &cobra.Command{
 				return err
 			}
 
-			nodeID, err := dht.DeriveNodeIDFromIP(ip)
+			nodeID, err := table.DeriveNodeIDFromIP(ip)
 			if err != nil {
 				return fmt.Errorf("failed to derive node ID from ip address: %w", err)
 			}
@@ -89,15 +91,23 @@ var serveCmd = &cobra.Command{
 			return fmt.Errorf("create recorder: %w", err)
 		}
 
-		var crawler indexer.Crawler
+		var dhtSystem *dht.System
 		if cfg.Crawler.Enabled {
-			crawler, err = dht.NewCrawler(ctx, cfg.Crawler, cfg.DHT, rec)
+			udpAddr, err := net.ResolveUDPAddr("udp4", fmt.Sprintf("0.0.0.0:%d", cfg.DHT.Port))
 			if err != nil {
-				return fmt.Errorf("dht crawler: %w", err)
+				return fmt.Errorf("resolve udp addr: %w", err)
+			}
+			conn, err := net.ListenUDP("udp4", udpAddr)
+			if err != nil {
+				return fmt.Errorf("listen udp: %w", err)
+			}
+			dhtSystem, err = dht.NewSystem(cfg, settledIP, conn, rec)
+			if err != nil {
+				return fmt.Errorf("new dht system: %w", err)
 			}
 		}
 
-		hs := health.New(cfg.Server.HealthPort, pool, crawler, cfg.Crawler.Enabled)
+		hs := health.New(cfg.Server.HealthPort, pool, dhtSystem, cfg.Crawler.Enabled)
 		g.Go(func() error {
 			return hs.Start(ctx)
 		})
@@ -140,14 +150,15 @@ var serveCmd = &cobra.Command{
 			scrapeWorker := scrape.New(queries, scrapeClient, cfg.Scrape, rec)
 
 			g.Go(func() error {
-				if err := crawler.Start(ctx); err != nil && err != context.Canceled {
-					logger.FromContext(ctx).Error("crawler start error", "error", err)
+				if err := dhtSystem.Start(ctx); err != nil && err != context.Canceled {
+					logger.FromContext(ctx).Error("dht system start error", "error", err)
 					return err
 				}
+
 				<-ctx.Done()
-				return crawler.Stop(ctx)
+				return dhtSystem.Stop(ctx)
 			})
-			idxWorker := indexer.New(crawler, metaClient, queries, cfg.Indexer, rec)
+			idxWorker := indexer.New(dhtSystem.Discovered(), metaClient, queries, cfg.Indexer, rec)
 			g.Go(func() error {
 				idxWorker.Run(ctx)
 				return nil
@@ -179,6 +190,9 @@ var serveCmd = &cobra.Command{
 
 		l.Info("all services started")
 		err = g.Wait()
+		if err != nil {
+			logger.FromContext(ctx).Error("waitgroup error", "error", err)
+		}
 		signal.Stop(signalChan)
 		l.Info("all services stopped")
 		return nil

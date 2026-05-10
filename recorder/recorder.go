@@ -25,7 +25,7 @@ var fetchBuckets = prometheus.ExponentialBuckets(0.05, 2, 9)
 var peerCountBuckets = []float64{0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233}
 
 type Metrics struct {
-	DHTDiscoveryQueueDepth prometheus.Gauge
+	DHTDiscoveryQueueDepth        prometheus.Gauge
 	DHTQueueCapacity              prometheus.Gauge
 	DHTDiscoveryQueueDroppedTotal prometheus.Counter
 	DiscoveryWorkItemsTotal       *prometheus.CounterVec
@@ -85,7 +85,7 @@ type Metrics struct {
 	MetadataFetchFailedTotal     *prometheus.CounterVec
 	MetadataFetchDurationSeconds prometheus.Histogram
 
-	TorrentsTotal        *prometheus.GaugeVec
+	TorrentsTotal         *prometheus.GaugeVec
 	TorrentsRejectedTotal *prometheus.CounterVec
 	IndexerDBErrorsTotal  *prometheus.CounterVec
 
@@ -474,7 +474,7 @@ func (r *Recorder) SetCrawlerCooldownsActive(worker int, v float64) {
 	r.m.CrawlerCooldownsActive.WithLabelValues(fmt.Sprintf("%d", worker)).Set(v)
 }
 
-func (r *Recorder) IncDHTMessagesInTotal(msgType string) {
+func (r *Recorder) IncMessagesInTotal(msgType string) {
 	if r.m == nil {
 		return
 	}
@@ -488,21 +488,21 @@ func (r *Recorder) IncDHTPacketsInTotal() {
 	r.m.DHTPacketsInTotal.Inc()
 }
 
-func (r *Recorder) IncDHTPacketsOutTotal() {
+func (r *Recorder) IncPacketsOutTotal() {
 	if r.m == nil {
 		return
 	}
 	r.m.DHTPacketsOutTotal.Inc()
 }
 
-func (r *Recorder) SetDHTRoutingTableSize(v float64) {
+func (r *Recorder) SetRoutingTableSize(v float64) {
 	if r.m == nil {
 		return
 	}
 	r.m.DHTRoutingTableSize.Set(v)
 }
 
-func (r *Recorder) IncDHTNodesDiscoveredTotal(result string) {
+func (r *Recorder) IncNodesDiscoveredTotal(result string) {
 	if r.m == nil {
 		return
 	}

@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/kdwils/mgnx/pkg/client"
+	"github.com/kdwils/mgnx/pkg/torznab"
 	"github.com/kdwils/mgnx/tui/ui"
 )
 
@@ -118,8 +118,8 @@ func (m ConfigModel) View() string {
 
 func connectCmd(host string) tea.Cmd {
 	return func() tea.Msg {
-		c := client.New(host, nil)
-		_, err := c.ListTorrents(context.Background(), client.ListParams{Limit: 1})
+		c := torznab.New(host, nil)
+		_, err := c.ListTorrents(context.Background(), torznab.ListParams{Limit: 1})
 		if err != nil {
 			return HealthCheckMsg{Ok: false, Reasons: []string{fmt.Sprintf("cannot reach %s: %v", host, err)}}
 		}

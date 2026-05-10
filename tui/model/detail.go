@@ -8,22 +8,22 @@ import (
 	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/kdwils/mgnx/pkg/client"
+	"github.com/kdwils/mgnx/pkg/torznab"
 	"github.com/kdwils/mgnx/tui/ui"
 )
 
 type DetailModel struct {
-	torrent      *client.Torrent
+	torrent      *torznab.Torrent
 	loading      bool
 	err          string
 	pickerOpen   bool
 	pickerCursor int
-	client       *client.Client
+	client       *torznab.Client
 	width        int
 	height       int
 }
 
-func NewDetailModel(c *client.Client) DetailModel {
+func NewDetailModel(c *torznab.Client) DetailModel {
 	return DetailModel{client: c}
 }
 
@@ -48,7 +48,7 @@ func (m DetailModel) Update(msg tea.Msg) (DetailModel, tea.Cmd) {
 		m.torrent = &t
 		m.loading = false
 		m.err = ""
-		for i, s := range client.ValidStates {
+		for i, s := range torznab.ValidStates {
 			if s == t.State {
 				m.pickerCursor = i
 				break
@@ -84,7 +84,7 @@ func (m DetailModel) updatePicker(msg tea.KeyMsg) (DetailModel, tea.Cmd) {
 			m.pickerCursor--
 		}
 	case "down", "j":
-		if m.pickerCursor < len(client.ValidStates)-1 {
+		if m.pickerCursor < len(torznab.ValidStates)-1 {
 			m.pickerCursor++
 		}
 	case "enter":
@@ -92,7 +92,7 @@ func (m DetailModel) updatePicker(msg tea.KeyMsg) (DetailModel, tea.Cmd) {
 			m.pickerOpen = false
 			return m, nil
 		}
-		newState := client.ValidStates[m.pickerCursor]
+		newState := torznab.ValidStates[m.pickerCursor]
 		infohash := m.torrent.Infohash
 		return m, updateStateCmd(m.client, infohash, newState)
 	case "esc":
@@ -188,7 +188,7 @@ func (m DetailModel) renderStateRow() string {
 	}
 
 	var pickerLines []string
-	for i, s := range client.ValidStates {
+	for i, s := range torznab.ValidStates {
 		cursor := "  "
 		if i == m.pickerCursor {
 			cursor = "> "
@@ -208,7 +208,7 @@ func (m DetailModel) renderStateRow() string {
 	return label + "\n" + picker
 }
 
-func updateStateCmd(c *client.Client, infohash, state string) tea.Cmd {
+func updateStateCmd(c *torznab.Client, infohash, state string) tea.Cmd {
 	return func() tea.Msg {
 		if err := c.UpdateTorrentState(context.Background(), infohash, state); err != nil {
 			return ErrMsg{err}
