@@ -38,6 +38,11 @@ type DHT interface {
 	InsertNode(ctx context.Context, node *table.Node)
 }
 
+type supportEntry struct {
+	capable  bool
+	lastSeen time.Time
+}
+
 // Crawler is a single BEP-51 active traversal worker. Multiple instances run
 // concurrently; each is independent and maintains its own heap and seen map.
 type Crawler struct {
@@ -50,13 +55,15 @@ type Crawler struct {
 	seen               map[table.NodeID]time.Time
 	ready              traversalHeap
 	cooldown           cooldownHeap
-	nodeSampleSupport  *pkgcache.Cache[table.NodeID, bool]
+	nodeSampleSupport  *pkgcache.Cache[table.NodeID, supportEntry]
 	droppedDiscoveries atomic.Int64
+	now                func() time.Time
 }
 
 // NewCrawler constructs a Crawler. queue is the write side of the shared
 // DiscoveryWork channel. dedup is obtained from server.Dedup().
 func NewCrawler(id int, dht DHT, queue chan<- DiscoveryWork, dedup *filter.BloomFilter, cfg config.Crawler, rec *recorder.Recorder) *Crawler {
+	interval := cfg.NodeCacheCleanup
 	return &Crawler{
 		id:       id,
 		dht:      dht,
@@ -69,10 +76,13 @@ func NewCrawler(id int, dht DHT, queue chan<- DiscoveryWork, dedup *filter.Bloom
 		cooldown: make(cooldownHeap, 0),
 		nodeSampleSupport: pkgcache.New(
 			pkgcache.WithCleanup(
-				cfg.NodeCacheCleanup,
-				func(_ table.NodeID, _ bool) bool { return true },
+				interval,
+				func(_ table.NodeID, val supportEntry) bool {
+					return time.Since(val.lastSeen) > interval
+				},
 			),
 		),
+		now: time.Now,
 	}
 }
 
@@ -110,7 +120,7 @@ func (c *Crawler) queryForSamples(ctx context.Context, item *traversalItem) (res
 	log := logger.FromContext(ctx).With("service", "crawler", "node", item.node.Addr.String(), "target", hex.EncodeToString(item.target[:]))
 
 	capable, known := c.nodeSampleSupport.Get(item.node.ID)
-	if known && !capable {
+	if known && !capable.capable {
 		return nil, false, nil
 	}
 
@@ -121,11 +131,11 @@ func (c *Crawler) queryForSamples(ctx context.Context, item *traversalItem) (res
 		return resp, false, err
 	}
 	if !krpc.IsMethodUnknown(resp) {
-		c.nodeSampleSupport.Set(item.node.ID, true)
+		c.nodeSampleSupport.Set(item.node.ID, supportEntry{capable: true, lastSeen: c.now()})
 		return resp, true, nil
 	}
 
-	c.nodeSampleSupport.Set(item.node.ID, false)
+	c.nodeSampleSupport.Set(item.node.ID, supportEntry{capable: false, lastSeen: c.now()})
 	return nil, false, nil
 }
 

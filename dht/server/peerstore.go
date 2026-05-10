@@ -54,14 +54,11 @@ func (ps *PeerStore) Add(ih [20]byte, ip net.IP, port int) {
 		return
 	}
 
-	updated := make([]peerEntry, len(existing)+1)
-	copy(updated, existing)
-	updated[len(existing)] = peerEntry{
+	ps.entries[ih] = append(existing, peerEntry{
 		IP:     append(net.IP(nil), ip...),
 		Port:   port,
 		SeenAt: ps.now(),
-	}
-	ps.entries[ih] = updated
+	})
 }
 
 // getOrPrepare returns existing entries and whether to stop. Handles new infohash setup and duplicate refresh.

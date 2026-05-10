@@ -63,7 +63,6 @@ type Server struct {
 	rate                   *rate.Limiter
 	ipLimiter              *ipLimiter
 	handlers               chan inMsg
-	bufPool                sync.Pool
 	Resolver               Resolver
 	workers                int
 	transactionTimeout     time.Duration
@@ -74,6 +73,7 @@ type Server struct {
 	bootstrapNodes         []string
 	warmBootstrapThreshold int
 	nodesPath              string
+	wg                     sync.WaitGroup
 }
 
 // NewServer initialises all subsystems. conn must be a bound UDP socket;
@@ -106,10 +106,7 @@ func NewServer(cfg config.DHT, ip net.IP, conn Conn, rec *recorder.Recorder, dis
 		bootstrapNodes:         cfg.BootstrapNodes,
 		warmBootstrapThreshold: cfg.WarmBootstrapThreshold,
 		nodesPath:              cfg.NodesPath,
-		bufPool: sync.Pool{
-			New: func() any { return make([]byte, 2048) },
-		},
-		Resolver: net.DefaultResolver,
+		Resolver:               net.DefaultResolver,
 	}
 
 	s.table = table.NewRoutingTable(nodeID, cfg, s)
@@ -135,13 +132,13 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}
 
-	go s.peerStore.startCleanup(ctx)
-	go s.readLoop(ctx)
-	go s.writeLoop(ctx)
+	s.wg.Go(func() { s.peerStore.startCleanup(ctx) })
+	s.wg.Go(func() { s.readLoop(ctx) })
+	s.wg.Go(func() { s.writeLoop(ctx) })
 	for i := 0; i < s.workers; i++ {
-		go s.queryHandlerLoop(ctx)
+		s.wg.Go(func() { s.queryHandlerLoop(ctx) })
 	}
-	go s.bucketRefreshLoop(ctx)
+	s.wg.Go(func() { s.bucketRefreshLoop(ctx) })
 
 	logger.FromContext(ctx).Info("server started",
 		"service", "dht",
@@ -203,7 +200,7 @@ func getServerNodeID(cfg config.DHT, externalIP net.IP) (table.NodeID, error) {
 func (s *Server) Stop(ctx context.Context) error {
 	logger := logger.FromContext(ctx)
 	if s.nodesPath != "" {
-		if err := s.saveRoutingTable(ctx); err != nil {
+		if err := s.saveRoutingTable(); err != nil {
 			logger.Error("failed to save routing table", "error", err, "path", s.nodesPath)
 		}
 	}
@@ -242,7 +239,7 @@ func (s *Server) loadRoutingTable(ctx context.Context) error {
 }
 
 
-func (s *Server) saveRoutingTable(ctx context.Context) error {
+func (s *Server) saveRoutingTable() error {
 	state := s.table.SaveState()
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -328,24 +325,19 @@ func (s *Server) pingNodes(ctx context.Context, nodes []*table.Node) int {
 // readLoop reads datagrams from the socket and routes them.
 func (s *Server) readLoop(ctx context.Context) {
 	for {
-		buf := s.bufPool.Get().([]byte)
+		buf := make([]byte, 2048)
 		n, addr, err := s.conn.ReadFromUDP(buf)
 		if err != nil {
-			s.bufPool.Put(buf)
 			if ctx.Err() != nil {
 				return
 			}
 			return
 		}
 
-		// Copy before returning the pooled buffer.
-		data := make([]byte, n)
-		copy(data, buf[:n])
-		s.bufPool.Put(buf)
 		s.rec.IncDHTPacketsInTotal()
 
 		var msg krpc.Msg
-		if err := bencode.Unmarshal(data, &msg); err != nil {
+		if err := bencode.Unmarshal(buf[:n], &msg); err != nil {
 			continue
 		}
 		s.routeMessage(ctx, addr, &msg)
@@ -385,7 +377,6 @@ func (s *Server) updateTableFromResponse(ctx context.Context, addr *net.UDPAddr,
 	node := &table.Node{ID: id, Addr: addr, LastSeen: time.Now()}
 	result := s.table.Insert(ctx, node)
 	s.rec.IncNodesDiscoveredTotal(result)
-	s.table.MarkSuccess(id)
 	s.rec.SetRoutingTableSize(float64(s.table.NodeCount()))
 }
 

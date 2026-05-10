@@ -178,29 +178,33 @@ func (s *Server) convergeTable(ctx context.Context, bn *bootstrapNodes) error {
 
 		round++
 
+		g, gctx := errgroup.WithContext(ctx)
 		for _, e := range toQuery {
-			resp, err := s.FindNode(ctx, e.node.Addr, e.node.ID, s.nodeID)
-			e.queried = true
-			if err != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
+			g.Go(func() error {
+				resp, err := s.FindNode(gctx, e.node.Addr, e.node.ID, s.nodeID)
+				e.queried = true
+				if err != nil {
+					log.Debug("iterative find_node failed", "addr", e.node.Addr.String(), "err", err)
+					return nil
 				}
-				log.Debug("iterative find_node failed", "addr", e.node.Addr.String(), "err", err)
-				continue
-			}
-			if resp.R == nil {
-				continue
-			}
-			nodes, err := table.DecodeNodes(resp.R.Nodes)
-			if err != nil {
-				continue
-			}
+				if resp.R == nil {
+					return nil
+				}
+				nodes, err := table.DecodeNodes(resp.R.Nodes)
+				if err != nil {
+					return nil
+				}
 
-			for _, n := range nodes {
-				s.table.Insert(ctx, n)
-			}
+				for _, n := range nodes {
+					s.table.Insert(gctx, n)
+				}
 
-			bn.add(nodes, s.nodeID)
+				bn.add(nodes, s.nodeID)
+				return nil
+			})
+		}
+		if err := g.Wait(); err != nil {
+			return err
 		}
 
 		log.Debug("bootstrap convergence round", "round", round, "shortlist", bn.len(), "table_nodes", s.table.NodeCount())
