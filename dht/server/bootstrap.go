@@ -73,14 +73,6 @@ func (bn *bootstrapNodes) len() int {
 	return bn.c.Size()
 }
 
-func (bn *bootstrapNodes) all() []*entry {
-	entries := make([]*entry, 0, bn.c.Size())
-	for _, e := range bn.c.Items() {
-		entries = append(entries, e)
-	}
-	return entries
-}
-
 func (s *Server) Bootstrap(ctx context.Context, addrs []string) error {
 	log := logger.FromContext(ctx).With("service", "dht")
 

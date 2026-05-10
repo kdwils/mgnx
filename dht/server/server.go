@@ -571,9 +571,14 @@ func (s *Server) handleSampleInfohashes(ctx context.Context, addr *net.UDPAddr, 
 	}
 
 	closest := s.table.Closest(target, s.bucketSize)
+	samples, total := s.peerStore.Sample()
+
 	s.respond(addr, msg.T, &krpc.Return{
-		ID:    string(s.nodeID[:]),
-		Nodes: table.EncodeNodes(closest),
+		ID:       string(s.nodeID[:]),
+		Nodes:    table.EncodeNodes(closest),
+		Samples:  samples,
+		Num:      total,
+		Interval: 300,
 	})
 }
 

@@ -3,6 +3,7 @@ package server
 import (
 	"container/list"
 	"context"
+	"math/rand"
 	"net"
 	"sync"
 	"time"
@@ -14,8 +15,12 @@ type peerEntry struct {
 	SeenAt time.Time
 }
 
-// PeerStore is a bounded, TTL-aware store mapping infohash to peer entries.
-// insertOrder is a FIFO list for eviction; orderIndex provides O(1) removal.
+type SampleData struct {
+	Samples string
+	Num     int
+	LastAt  time.Time
+}
+
 type PeerStore struct {
 	mu              sync.Mutex
 	entries         map[[20]byte][]peerEntry
@@ -25,6 +30,7 @@ type PeerStore struct {
 	maxPeersPerHash int
 	ttl             time.Duration
 	now             func() time.Time
+	cache           SampleData
 }
 
 func newPeerStore(maxHashes, maxPeersPerHash int, ttl time.Duration) *PeerStore {
@@ -39,8 +45,6 @@ func newPeerStore(maxHashes, maxPeersPerHash int, ttl time.Duration) *PeerStore 
 	}
 }
 
-// Add records a peer for the given infohash. When a new infohash would exceed
-// maxHashes, the oldest infohash is evicted first (FIFO).
 func (ps *PeerStore) Add(ih [20]byte, ip net.IP, port int) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -61,7 +65,6 @@ func (ps *PeerStore) Add(ih [20]byte, ip net.IP, port int) {
 	})
 }
 
-// getOrPrepare returns existing entries and whether to stop. Handles new infohash setup and duplicate refresh.
 func (ps *PeerStore) getOrPrepare(ih [20]byte, ip net.IP, port int) ([]peerEntry, bool) {
 	existing, exists := ps.entries[ih]
 
@@ -89,7 +92,6 @@ func (ps *PeerStore) prepareNewInfohash(ih [20]byte) {
 	ps.orderIndex[ih] = el
 }
 
-// Get returns all live (non-expired) peers for ih, pruning expired entries in place.
 func (ps *PeerStore) Get(ih [20]byte) []peerEntry {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -108,8 +110,6 @@ func (ps *PeerStore) Get(ih [20]byte) []peerEntry {
 	return live
 }
 
-// startCleanup runs a periodic sweep that evicts fully-expired infohashes and
-// prunes stale peer entries.
 func (ps *PeerStore) startCleanup(ctx context.Context) {
 	ticker := time.NewTicker(ps.ttl / 2)
 	defer ticker.Stop()
@@ -150,8 +150,6 @@ func (ps *PeerStore) pruneExpired() {
 	}
 }
 
-// evictOldest removes the oldest live infohash. Skips ghost entries that were
-// already evicted by a prior pruneExpired pass.
 func (ps *PeerStore) evictOldest() {
 	for ps.insertOrder.Len() > 0 {
 		front := ps.insertOrder.Front()
@@ -183,4 +181,45 @@ func (ps *PeerStore) filterLivePeers(entries []peerEntry) []peerEntry {
 		}
 	}
 	return live
+}
+
+func (ps *PeerStore) Sample() (string, int) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	total := len(ps.entries)
+	if total == 0 {
+		return "", 0
+	}
+
+	if ps.now().Sub(ps.cache.LastAt) < 5*time.Minute && ps.cache.Samples != "" {
+		return ps.cache.Samples, ps.cache.Num
+	}
+
+	keys := make([][20]byte, 0, total)
+	for ih := range ps.entries {
+		keys = append(keys, ih)
+	}
+
+	rand.Shuffle(len(keys), func(i, j int) {
+		keys[i], keys[j] = keys[j], keys[i]
+	})
+
+	limit := 500
+	if limit > total {
+		limit = total
+	}
+
+	res := make([]byte, limit*20)
+	for i := 0; i < limit; i++ {
+		copy(res[i*20:], keys[i][:])
+	}
+
+	ps.cache = SampleData{
+		Samples: string(res),
+		Num:     total,
+		LastAt:  ps.now(),
+	}
+
+	return ps.cache.Samples, ps.cache.Num
 }

@@ -412,8 +412,9 @@ func TestServer_handleSampleInfohashes(t *testing.T) {
 					T: "aa",
 					Y: "r",
 					R: &krpc.Return{
-						ID:    string(s.nodeID[:]),
-						Nodes: table.EncodeNodes(closest),
+						ID:       string(s.nodeID[:]),
+						Nodes:    table.EncodeNodes(closest),
+						Interval: 300,
 					},
 				},
 			}

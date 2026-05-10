@@ -226,3 +226,57 @@ func TestPeerStore_pruneExpired(t *testing.T) {
 		}
 	})
 }
+
+func TestPeerStore_Sample(t *testing.T) {
+	t.Run("returns samples and total count", func(t *testing.T) {
+		ps := newPeerStore(100, 50, time.Minute)
+		for i := byte(0); i < 10; i++ {
+			var ih [20]byte
+			ih[0] = i
+			ps.Add(ih, net.ParseIP("1.2.3.4"), 6881)
+		}
+
+		samples, total := ps.Sample()
+		assert.Equal(t, 10, total)
+		assert.Len(t, samples, 10*20)
+	})
+
+	t.Run("returns cached samples if within 5 minutes", func(t *testing.T) {
+		now := time.Now()
+		ps := &PeerStore{
+			entries: make(map[[20]byte][]peerEntry),
+			now:     func() time.Time { return now },
+			cache: SampleData{
+				Samples: "cached",
+				Num:     5,
+				LastAt:  now.Add(-1 * time.Minute),
+			},
+		}
+		var ih [20]byte
+		ps.entries[ih] = []peerEntry{{IP: net.ParseIP("1.2.3.4"), Port: 6881}}
+
+		samples, total := ps.Sample()
+		assert.Equal(t, "cached", samples)
+		assert.Equal(t, 5, total)
+	})
+
+	t.Run("refreshes cache after 5 minutes", func(t *testing.T) {
+		now := time.Now()
+		ps := &PeerStore{
+			entries: make(map[[20]byte][]peerEntry),
+			now:     func() time.Time { return now },
+			cache: SampleData{
+				Samples: "cached",
+				Num:     5,
+				LastAt:  now.Add(-6 * time.Minute),
+			},
+		}
+		var ih [20]byte
+		ps.entries[ih] = []peerEntry{{IP: net.ParseIP("1.2.3.4"), Port: 6881}}
+
+		samples, total := ps.Sample()
+		assert.NotEqual(t, "cached", samples)
+		assert.Equal(t, 1, total)
+		assert.Len(t, samples, 20)
+	})
+}
