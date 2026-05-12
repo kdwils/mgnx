@@ -185,13 +185,16 @@ func (rt *RoutingTable) MarkFailure(id NodeID) {
 			continue
 		}
 		n.FailureCount++
-		if !n.IsBad(rt.badFailureThreshold) || len(b.ReplacementCache) == 0 {
+		if !n.IsBad(rt.badFailureThreshold) {
 			return
 		}
+
 		b.Nodes = append(b.Nodes[:i], b.Nodes[i+1:]...)
-		replacement := b.ReplacementCache[0]
-		b.ReplacementCache = b.ReplacementCache[1:]
-		b.Nodes = append(b.Nodes, replacement)
+		if len(b.ReplacementCache) > 0 {
+			replacement := b.ReplacementCache[0]
+			b.ReplacementCache = b.ReplacementCache[1:]
+			b.Nodes = append(b.Nodes, replacement)
+		}
 		b.LastChanged = rt.now()
 		return
 	}

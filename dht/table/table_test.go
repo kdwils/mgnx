@@ -439,6 +439,29 @@ func TestRoutingTable_MarkFailure(t *testing.T) {
 		assert.Equal(t, 1, len(b.ReplacementCache), "bad cache node should be pruned")
 		assert.Equal(t, good.ID, b.ReplacementCache[0].ID, "good cache node should remain")
 	})
+
+	t.Run("evicts bad node even with empty replacement cache", func(t *testing.T) {
+		cfg := testCfg()
+		cfg.BucketSize = 2
+		var serverNodeID NodeID
+		rt := NewRoutingTable(serverNodeID, cfg, nil)
+
+		n1 := makeNode(0x01, 1000)
+		n2 := makeNode(0x02, 1001)
+		rt.Insert(context.Background(), n1)
+		rt.Insert(context.Background(), n2)
+
+		assert.Equal(t, 2, rt.NodeCount())
+
+		// Mark n1 as bad.
+		rt.MarkFailure(n1.ID)
+		rt.MarkFailure(n1.ID)
+
+		assert.Equal(t, 1, rt.NodeCount(), "node should be evicted even if replacement cache is empty")
+		closest := rt.Closest(serverNodeID, 2)
+		require.Len(t, closest, 1)
+		assert.Equal(t, n2.ID, closest[0].ID)
+	})
 }
 
 func TestRoutingTable_StaleBuckets(t *testing.T) {
