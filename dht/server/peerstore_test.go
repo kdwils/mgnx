@@ -230,7 +230,7 @@ func TestPeerStore_pruneExpired(t *testing.T) {
 func TestPeerStore_Sample(t *testing.T) {
 	t.Run("returns samples and total count", func(t *testing.T) {
 		ps := newPeerStore(100, 50, time.Minute)
-		for i := byte(0); i < 10; i++ {
+		for i := range byte(10) {
 			var ih [20]byte
 			ih[0] = i
 			ps.Add(ih, net.ParseIP("1.2.3.4"), 6881)

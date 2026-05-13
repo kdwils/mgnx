@@ -205,13 +205,10 @@ func (ps *PeerStore) Sample() (string, int) {
 		keys[i], keys[j] = keys[j], keys[i]
 	})
 
-	limit := 500
-	if limit > total {
-		limit = total
-	}
+	limit := min(500, total)
 
 	res := make([]byte, limit*20)
-	for i := 0; i < limit; i++ {
+	for i := range limit {
 		copy(res[i*20:], keys[i][:])
 	}
 
