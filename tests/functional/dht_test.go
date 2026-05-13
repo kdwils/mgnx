@@ -23,8 +23,7 @@ import (
 )
 
 func TestDHTBEPProtocol(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	srv, mockNode := setupDHTServer(t, testDHTConfig(t))
 	require.NoError(t, srv.Start(ctx))
@@ -180,7 +179,7 @@ func TestDHTBEPProtocol(t *testing.T) {
 
 		addr := srv2.Addr()
 
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			resp := mockNode2.sendQuery(ctx, addr, &krpc.Msg{
 				T: fmt.Sprintf("%02d", i),
 				Y: "q",
@@ -203,6 +202,7 @@ func TestDHTBEPProtocol(t *testing.T) {
 		invalidID := table.NodeID{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
 		mockNode := newMockNodeWithID(invalidID)
 
+		before := srv.NodeCount()
 		resp := mockNode.sendQuery(ctx, serverAddr, &krpc.Msg{
 			T: "aa",
 			Y: "q",
@@ -212,7 +212,7 @@ func TestDHTBEPProtocol(t *testing.T) {
 
 		require.NotNil(t, resp)
 		require.Equal(t, "r", resp.Y, "should still respond but not add invalid node to routing table")
-		assert.Equal(t, 0, srv.NodeCount(), "invalid node should not be in routing table")
+		assert.Equal(t, before, srv.NodeCount(), "invalid node should not be added to routing table")
 	})
 
 	t.Run("BEP-42 invalid node ID in find_node response is rejected", func(t *testing.T) {
@@ -460,8 +460,6 @@ type mockNode struct {
 
 func newMockNode() *mockNode {
 	id, _ := table.DeriveNodeIDFromIP(net.ParseIP("127.0.0.1"))
-	// Make it slightly different
-	id[19]++
 	return &mockNode{id: id}
 }
 
@@ -496,7 +494,7 @@ func (m *mockNode) sendQuery(ctx context.Context, addr *net.UDPAddr, query *krpc
 		return nil
 	}
 
-	var respRaw map[string]interface{}
+	var respRaw map[string]any
 	if err := bencode.Unmarshal(buf[:n], &respRaw); err != nil {
 		return nil
 	}
@@ -511,7 +509,7 @@ func (m *mockNode) sendQuery(ctx context.Context, addr *net.UDPAddr, query *krpc
 			T: respRaw["t"].(string),
 			Y: y,
 		}
-		if e, ok := respRaw["e"].([]interface{}); ok {
+		if e, ok := respRaw["e"].([]any); ok {
 			resp.E = e
 		}
 		return resp
