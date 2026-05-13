@@ -240,7 +240,6 @@ func (s *Server) loadRoutingTable(ctx context.Context) error {
 	return nil
 }
 
-
 func (s *Server) saveRoutingTable() error {
 	state := s.table.SaveState()
 	data, err := json.MarshalIndent(state, "", "  ")
@@ -378,16 +377,15 @@ func (s *Server) updateTableFromResponse(ctx context.Context, addr *net.UDPAddr,
 	if err != nil {
 		return
 	}
-	if err := table.ValidateNodeIDForIP(addr.IP, id); err != nil {
+	node := &table.Node{ID: id, Addr: addr, LastSeen: time.Now()}
+	result := s.table.InsertValidNode(ctx, node)
+	if result == table.NodeInsertDropped {
 		logger.FromContext(ctx).Debug("rejecting node with invalid ID for IP",
 			"service", "dht",
 			"from", addr.String(),
-			"err", err,
 		)
 		return
 	}
-	node := &table.Node{ID: id, Addr: addr, LastSeen: time.Now()}
-	result := s.table.Insert(ctx, node)
 	s.rec.IncNodesDiscoveredTotal(result)
 	s.rec.SetRoutingTableSize(float64(s.table.NodeCount()))
 }
@@ -416,14 +414,12 @@ func (s *Server) processQuery(ctx context.Context, in inMsg) {
 
 	if in.msg.A != nil {
 		if id, err := table.ParseNodeID(in.msg.A.ID); err == nil {
-			if err := table.ValidateNodeIDForIP(in.addr.IP, id); err != nil {
-				log.Debug("rejecting node with invalid ID for IP",
-					"from", in.addr.String(),
-					"err", err,
-				)
-			} else {
-				node := &table.Node{ID: id, Addr: in.addr, LastSeen: time.Now()}
-				result := s.table.Insert(ctx, node)
+			node := &table.Node{ID: id, Addr: in.addr, LastSeen: time.Now()}
+			result := s.table.InsertValidNode(ctx, node)
+			switch result {
+			case table.NodeInsertDropped:
+				log.Debug("rejecting node with invalid ID for IP", "from", in.addr.String())
+			default:
 				s.rec.IncNodesDiscoveredTotal(result)
 			}
 		}
@@ -655,16 +651,15 @@ func (s *Server) insertNodesFromFindNode(ctx context.Context, resp *krpc.Msg, fr
 		return
 	}
 	for _, node := range nodes {
-		if err := table.ValidateNodeIDForIP(node.Addr.IP, node.ID); err != nil {
+		result := s.table.InsertValidNode(ctx, node)
+		if result == table.NodeInsertDropped {
 			logger.FromContext(ctx).Debug(logKey+" rejected node with invalid ID for IP",
 				"service", "dht",
 				"from", from.String(),
 				"node_addr", node.Addr.String(),
-				"err", err,
 			)
 			continue
 		}
-		result := s.table.Insert(ctx, node)
 		s.rec.IncNodesDiscoveredTotal(result)
 	}
 

@@ -147,15 +147,12 @@ func (s *Server) querySeeds(ctx context.Context, addrs []*net.UDPAddr, bn *boots
 		}
 		contacted++
 		for _, n := range r.nodes {
-			if err := table.ValidateNodeIDForIP(n.Addr.IP, n.ID); err != nil {
+			if s.table.InsertValidNode(ctx, n) == table.NodeInsertDropped {
 				log.Debug("bootstrap node rejected with invalid ID for IP",
 					"service", "dht",
 					"node_addr", n.Addr.String(),
-					"err", err,
 				)
-				continue
 			}
-			s.table.Insert(ctx, n)
 		}
 		bn.add(r.nodes, s.nodeID)
 		log.Debug("bootstrap node responded", "addr", r.addr.String(), "nodes_returned", len(r.nodes))
@@ -196,15 +193,12 @@ func (s *Server) convergeTable(ctx context.Context, bn *bootstrapNodes) error {
 				}
 
 				for _, n := range nodes {
-					if err := table.ValidateNodeIDForIP(n.Addr.IP, n.ID); err != nil {
+					if s.table.InsertValidNode(gctx, n) == table.NodeInsertDropped {
 						log.Debug("bootstrap convergence rejected node with invalid ID for IP",
 							"service", "dht",
 							"node_addr", n.Addr.String(),
-							"err", err,
 						)
-						continue
 					}
-					s.table.Insert(gctx, n)
 				}
 
 				bn.add(nodes, s.nodeID)
