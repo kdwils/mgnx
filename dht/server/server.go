@@ -378,15 +378,14 @@ func (s *Server) updateTableFromResponse(ctx context.Context, addr *net.UDPAddr,
 		return
 	}
 	node := &table.Node{ID: id, Addr: addr, LastSeen: time.Now()}
-	result := s.table.InsertValidNode(ctx, node)
-	if result == table.NodeInsertDropped {
+	if !s.table.InsertValidNode(ctx, node) {
 		logger.FromContext(ctx).Debug("rejecting node with invalid ID for IP",
 			"service", "dht",
 			"from", addr.String(),
 		)
 		return
 	}
-	s.rec.IncNodesDiscoveredTotal(result)
+	s.rec.IncNodesDiscoveredTotal(string(table.NodeInsertInserted))
 	s.rec.SetRoutingTableSize(float64(s.table.NodeCount()))
 }
 
@@ -415,12 +414,10 @@ func (s *Server) processQuery(ctx context.Context, in inMsg) {
 	if in.msg.A != nil {
 		if id, err := table.ParseNodeID(in.msg.A.ID); err == nil {
 			node := &table.Node{ID: id, Addr: in.addr, LastSeen: time.Now()}
-			result := s.table.InsertValidNode(ctx, node)
-			switch result {
-			case table.NodeInsertDropped:
+			if !s.table.InsertValidNode(ctx, node) {
 				log.Debug("rejecting node with invalid ID for IP", "from", in.addr.String())
-			default:
-				s.rec.IncNodesDiscoveredTotal(result)
+			} else {
+				s.rec.IncNodesDiscoveredTotal(string(table.NodeInsertInserted))
 			}
 		}
 	}
@@ -651,8 +648,7 @@ func (s *Server) insertNodesFromFindNode(ctx context.Context, resp *krpc.Msg, fr
 		return
 	}
 	for _, node := range nodes {
-		result := s.table.InsertValidNode(ctx, node)
-		if result == table.NodeInsertDropped {
+		if !s.table.InsertValidNode(ctx, node) {
 			logger.FromContext(ctx).Debug(logKey+" rejected node with invalid ID for IP",
 				"service", "dht",
 				"from", from.String(),
@@ -660,7 +656,7 @@ func (s *Server) insertNodesFromFindNode(ctx context.Context, resp *krpc.Msg, fr
 			)
 			continue
 		}
-		s.rec.IncNodesDiscoveredTotal(result)
+		s.rec.IncNodesDiscoveredTotal(string(table.NodeInsertInserted))
 	}
 
 	s.rec.SetRoutingTableSize(float64(s.table.NodeCount()))
