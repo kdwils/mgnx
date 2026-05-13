@@ -70,6 +70,7 @@ type Server struct {
 	maxNodesPerResponse    int
 	maxPeersPerResponse    int
 	bucketRefreshInterval  time.Duration
+	sampleInterval         time.Duration
 	bootstrapNodes         []string
 	warmBootstrapThreshold int
 	nodesPath              string
@@ -103,6 +104,7 @@ func NewServer(cfg config.DHT, ip net.IP, conn Conn, rec *recorder.Recorder, dis
 		maxPeersPerResponse:    cfg.MaxPeersPerResponse,
 		bucketSize:             cfg.BucketSize,
 		bucketRefreshInterval:  cfg.BucketRefreshInterval,
+		sampleInterval:         cfg.SampleInterval,
 		bootstrapNodes:         cfg.BootstrapNodes,
 		warmBootstrapThreshold: cfg.WarmBootstrapThreshold,
 		nodesPath:              cfg.NodesPath,
@@ -362,6 +364,7 @@ func (s *Server) routeMessage(ctx context.Context, addr *net.UDPAddr, msg *krpc.
 		select {
 		case s.handlers <- inMsg{addr: addr, msg: msg}:
 		default:
+			s.rec.IncPacketsInDroppedTotal()
 		}
 	default:
 		return
@@ -369,9 +372,18 @@ func (s *Server) routeMessage(ctx context.Context, addr *net.UDPAddr, msg *krpc.
 }
 
 // updateTableFromResponse inserts/refreshes the responding node in the table.
+// Nodes whose ID does not match their IP per BEP-42 are rejected.
 func (s *Server) updateTableFromResponse(ctx context.Context, addr *net.UDPAddr, msg *krpc.Msg) {
 	id, err := table.ParseNodeID(msg.R.ID)
 	if err != nil {
+		return
+	}
+	if err := table.ValidateNodeIDForIP(addr.IP, id); err != nil {
+		logger.FromContext(ctx).Debug("rejecting node with invalid ID for IP",
+			"service", "dht",
+			"from", addr.String(),
+			"err", err,
+		)
 		return
 	}
 	node := &table.Node{ID: id, Addr: addr, LastSeen: time.Now()}
@@ -404,9 +416,16 @@ func (s *Server) processQuery(ctx context.Context, in inMsg) {
 
 	if in.msg.A != nil {
 		if id, err := table.ParseNodeID(in.msg.A.ID); err == nil {
-			node := &table.Node{ID: id, Addr: in.addr, LastSeen: time.Now()}
-			result := s.table.Insert(ctx, node)
-			s.rec.IncNodesDiscoveredTotal(result)
+			if err := table.ValidateNodeIDForIP(in.addr.IP, id); err != nil {
+				log.Debug("rejecting node with invalid ID for IP",
+					"from", in.addr.String(),
+					"err", err,
+				)
+			} else {
+				node := &table.Node{ID: id, Addr: in.addr, LastSeen: time.Now()}
+				result := s.table.Insert(ctx, node)
+				s.rec.IncNodesDiscoveredTotal(result)
+			}
 		}
 	}
 
@@ -573,12 +592,17 @@ func (s *Server) handleSampleInfohashes(ctx context.Context, addr *net.UDPAddr, 
 	closest := s.table.Closest(target, s.bucketSize)
 	samples, total := s.peerStore.Sample()
 
+	interval := s.sampleInterval
+	if interval <= 0 {
+		interval = 300
+	}
+
 	s.respond(addr, msg.T, &krpc.Return{
 		ID:       string(s.nodeID[:]),
 		Nodes:    table.EncodeNodes(closest),
 		Samples:  samples,
 		Num:      total,
-		Interval: 300,
+		Interval: int(interval.Seconds()),
 	})
 }
 
@@ -586,6 +610,7 @@ func (s *Server) respond(addr *net.UDPAddr, t string, r *krpc.Return) {
 	select {
 	case s.outbound <- &outMsg{addr: addr, msg: &krpc.Msg{T: t, Y: "r", R: r}}:
 	default:
+		s.rec.IncPacketsOutDroppedTotal()
 	}
 }
 
@@ -593,6 +618,7 @@ func (s *Server) respondError(addr *net.UDPAddr, t string, code int, msg string)
 	select {
 	case s.outbound <- &outMsg{addr: addr, msg: &krpc.Msg{T: t, Y: "e", E: []any{int64(code), msg}}}:
 	default:
+		s.rec.IncPacketsOutDroppedTotal()
 	}
 }
 
@@ -629,6 +655,15 @@ func (s *Server) insertNodesFromFindNode(ctx context.Context, resp *krpc.Msg, fr
 		return
 	}
 	for _, node := range nodes {
+		if err := table.ValidateNodeIDForIP(node.Addr.IP, node.ID); err != nil {
+			logger.FromContext(ctx).Debug(logKey+" rejected node with invalid ID for IP",
+				"service", "dht",
+				"from", from.String(),
+				"node_addr", node.Addr.String(),
+				"err", err,
+			)
+			continue
+		}
 		result := s.table.Insert(ctx, node)
 		s.rec.IncNodesDiscoveredTotal(result)
 	}

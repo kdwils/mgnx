@@ -37,11 +37,11 @@ func testCrawlerCfg() config.Crawler {
 }
 
 func makeTestNode(id byte, port int) *table.Node {
-	var nodeID table.NodeID
-	nodeID[0] = id
+	ip := net.IP{127, 0, 0, id + 1}
+	nodeID, _ := table.DeriveNodeIDFromIP(ip)
 	return &table.Node{
 		ID:   nodeID,
-		Addr: &net.UDPAddr{IP: net.IP{127, 0, 0, 1}, Port: port},
+		Addr: &net.UDPAddr{IP: ip, Port: port},
 	}
 }
 
@@ -195,4 +195,63 @@ func TestCrawler_Start(t *testing.T) {
 			t.Fatal("Start did not return after context cancellation")
 		}
 	})
+}
+
+func TestCrawler_computeInterval(t *testing.T) {
+	defaultInterval := 10 * time.Second
+	maxInterval := 60 * time.Second
+
+	tests := []struct {
+		name      string
+		resp      *krpc.Msg
+		want      time.Duration
+	}{
+		{
+			name:      "nil response returns default",
+			resp:      nil,
+			want:      defaultInterval,
+		},
+		{
+			name:      "nil R returns default",
+			resp:      &krpc.Msg{Y: "r"},
+			want:      defaultInterval,
+		},
+		{
+			name:      "zero interval returns default",
+			resp:      &krpc.Msg{Y: "r", R: &krpc.Return{Interval: 0}},
+			want:      defaultInterval,
+		},
+		{
+			name:      "negative interval returns default",
+			resp:      &krpc.Msg{Y: "r", R: &krpc.Return{Interval: -1}},
+			want:      defaultInterval,
+		},
+		{
+			name:      "interval below default is clamped up",
+			resp:      &krpc.Msg{Y: "r", R: &krpc.Return{Interval: 2}},
+			want:      defaultInterval,
+		},
+		{
+			name:      "interval within bounds is kept",
+			resp:      &krpc.Msg{Y: "r", R: &krpc.Return{Interval: 30}},
+			want:      30 * time.Second,
+		},
+		{
+			name:      "interval above max is clamped down",
+			resp:      &krpc.Msg{Y: "r", R: &krpc.Return{Interval: 300}},
+			want:      maxInterval,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testCrawlerCfg()
+			cfg.DefaultInterval = defaultInterval
+			cfg.MaxInterval = maxInterval
+			c := crawler.NewCrawler(0, nil, nil, nil, cfg, recorder.NewNoOp())
+
+			got := c.ComputeInterval(tt.resp)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }

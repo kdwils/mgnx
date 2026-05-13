@@ -35,10 +35,12 @@ type Metrics struct {
 	CrawlerTraversalQueueSize *prometheus.GaugeVec
 	CrawlerCooldownsActive    *prometheus.GaugeVec
 
-	DHTMessagesInTotal  *prometheus.CounterVec
-	DHTPacketsInTotal   prometheus.Counter
-	DHTPacketsOutTotal  prometheus.Counter
-	DHTRoutingTableSize prometheus.Gauge
+	DHTMessagesInTotal        *prometheus.CounterVec
+	DHTPacketsInTotal         prometheus.Counter
+	DHTPacketsOutTotal        prometheus.Counter
+	DHTPacketsOutDroppedTotal prometheus.Counter
+	DHTPacketsInDroppedTotal  prometheus.Counter
+	DHTRoutingTableSize       prometheus.Gauge
 	// DHTNodesDiscoveredTotal counts routing table insert outcomes by result:
 	// inserted (new active slot), updated (refresh), cached (replacement cache), dropped (both full).
 	DHTNodesDiscoveredTotal *prometheus.CounterVec
@@ -172,6 +174,16 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Namespace: namespace,
 			Name:      "dht_packets_out_total",
 			Help:      "UDP packets sent.",
+		}),
+		DHTPacketsOutDroppedTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "dht_packets_out_dropped_total",
+			Help:      "UDP packets dropped due to full outbound channel.",
+		}),
+		DHTPacketsInDroppedTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "dht_packets_in_dropped_total",
+			Help:      "UDP packets dropped due to full handlers channel.",
 		}),
 		DHTRoutingTableSize: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
@@ -356,6 +368,8 @@ func newMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.DHTMessagesInTotal,
 		m.DHTPacketsInTotal,
 		m.DHTPacketsOutTotal,
+		m.DHTPacketsOutDroppedTotal,
+		m.DHTPacketsInDroppedTotal,
 		m.DHTRoutingTableSize,
 		m.DHTNodesDiscoveredTotal,
 		m.IndexerWorkersActive,
@@ -493,6 +507,20 @@ func (r *Recorder) IncPacketsOutTotal() {
 		return
 	}
 	r.m.DHTPacketsOutTotal.Inc()
+}
+
+func (r *Recorder) IncPacketsOutDroppedTotal() {
+	if r.m == nil {
+		return
+	}
+	r.m.DHTPacketsOutDroppedTotal.Inc()
+}
+
+func (r *Recorder) IncPacketsInDroppedTotal() {
+	if r.m == nil {
+		return
+	}
+	r.m.DHTPacketsInDroppedTotal.Inc()
 }
 
 func (r *Recorder) SetRoutingTableSize(v float64) {
