@@ -430,7 +430,7 @@ func TestCrawler_promoteReady(t *testing.T) {
 		heap.Init(&c.cooldown)
 
 		target := makeTestNodeID(0x20)
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			nodeID := makeTestNodeID(byte(0x10 + i))
 			node := makeTestNodeWithID(nodeID, 2000+i)
 			item := &traversalItem{node: node, target: target, dist: target.XOR(nodeID)}
@@ -533,7 +533,7 @@ func TestCrawler_seedQueue(t *testing.T) {
 
 		target := makeTestNodeID(0x80)
 		var nodes []*table.Node
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			nodeID := makeTestNodeID(byte(0x10 + i))
 			nodes = append(nodes, makeTestNodeWithID(nodeID, 2000+i))
 		}
@@ -721,7 +721,7 @@ func TestCrawler_trimReadyToK(t *testing.T) {
 		heap.Init(&c.ready)
 
 		target := makeTestNodeID(0x80)
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			nodeID := makeTestNodeID(byte(0x10 + i))
 			node := makeTestNodeWithID(nodeID, 2000+i)
 			c.pushToReady(node, target)
@@ -740,7 +740,7 @@ func TestCrawler_trimReadyToK(t *testing.T) {
 		heap.Init(&c.ready)
 
 		target := makeTestNodeID(0x80)
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			nodeID := makeTestNodeID(byte(0x10 + i))
 			node := makeTestNodeWithID(nodeID, 2000+i)
 			c.pushToReady(node, target)
@@ -927,7 +927,7 @@ func TestCrawler_processSamples(t *testing.T) {
 		queue <- DiscoveryWork{}
 
 		var samples []byte
-		for i := 0; i < 150; i++ {
+		for i := range 150 {
 			var h [20]byte
 			h[0] = byte(i)
 			h[1] = 0xCD
