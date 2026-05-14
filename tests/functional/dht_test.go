@@ -23,8 +23,7 @@ import (
 )
 
 func TestDHTBEPProtocol(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	srv, mockNode := setupDHTServer(t, testDHTConfig(t))
 	require.NoError(t, srv.Start(ctx))
@@ -180,7 +179,7 @@ func TestDHTBEPProtocol(t *testing.T) {
 
 		addr := srv2.Addr()
 
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			resp := mockNode2.sendQuery(ctx, addr, &krpc.Msg{
 				T: fmt.Sprintf("%02d", i),
 				Y: "q",
@@ -199,10 +198,11 @@ func TestDHTBEPProtocol(t *testing.T) {
 		require.Nil(t, resp, "third request should be rate limited")
 	})
 
-	t.Run("BEP-42 invalid node ID is rejected", func(t *testing.T) {
+	t.Run("BEP-42 invalid node ID is rejected from routing table", func(t *testing.T) {
 		invalidID := table.NodeID{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
 		mockNode := newMockNodeWithID(invalidID)
 
+		before := srv.NodeCount()
 		resp := mockNode.sendQuery(ctx, serverAddr, &krpc.Msg{
 			T: "aa",
 			Y: "q",
@@ -212,6 +212,59 @@ func TestDHTBEPProtocol(t *testing.T) {
 
 		require.NotNil(t, resp)
 		require.Equal(t, "r", resp.Y, "should still respond but not add invalid node to routing table")
+		assert.Equal(t, before, srv.NodeCount(), "invalid node should not be added to routing table")
+	})
+
+	t.Run("BEP-42 invalid node ID in find_node response is rejected", func(t *testing.T) {
+		// Start server B that will return an invalid node in its find_node response.
+		// We do this by pre-populating B's table with a node that has an invalid ID for its IP.
+		cfgB := testDHTConfig(t)
+		srvB, _ := setupDHTServer(t, cfgB)
+		require.NoError(t, srvB.Start(ctx))
+		t.Cleanup(func() { srvB.Stop(ctx) })
+
+		// Insert a node with a clearly invalid ID into B's routing table directly.
+		invalidID := table.NodeID{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+		fakeAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.2"), Port: 12345}
+		srvB.InsertNode(ctx, &table.Node{ID: invalidID, Addr: fakeAddr, LastSeen: time.Now()})
+
+		// Now have serverA query serverB via find_node.
+		cfgA := testDHTConfig(t)
+		discoveredA := make(chan types.DiscoveredPeers, cfgA.DiscoveryBuffer)
+		defer close(discoveredA)
+		dedupA := filter.NewBloomFilter(cfgA.BloomN, cfgA.BloomP, cfgA.BloomRotation)
+		udpAddrA, err := net.ResolveUDPAddr("udp4", "127.0.0.1:0")
+		require.NoError(t, err)
+		connA, err := net.ListenUDP("udp4", udpAddrA)
+		require.NoError(t, err)
+		defer connA.Close()
+
+		srvA, err := server.NewServer(cfgA, nil, connA, recorder.NewNoOp(), discoveredA, dedupA)
+		require.NoError(t, err)
+		require.NoError(t, srvA.Start(ctx))
+		t.Cleanup(func() { srvA.Stop(ctx) })
+
+		bAddr := srvB.Addr()
+		var target table.NodeID
+		resp, err := srvA.FindNode(ctx, bAddr, srvB.NodeID(), target)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.NotNil(t, resp.R)
+
+		// Any nodes returned from B that have invalid IDs should not end up in A's table.
+		// Since the invalid node was inserted manually, A should not have added it.
+		nodes, decodeErr := table.DecodeNodes(resp.R.Nodes)
+		if decodeErr == nil {
+			for _, n := range nodes {
+				if table.ValidateNodeIDForIP(n.Addr.IP, n.ID) != nil {
+					// This node is invalid for its IP; it should NOT be in A's routing table.
+					closest := srvA.Closest(n.ID, 1)
+					for _, c := range closest {
+						assert.NotEqual(t, n.ID, c.ID, "invalid node should not be in routing table")
+					}
+				}
+			}
+		}
 	})
 
 	t.Run("announce_peer validates port range", func(t *testing.T) {
@@ -376,7 +429,7 @@ func TestDHTRefreshStaleBuckets_insertsNodesFromResponse(t *testing.T) {
 		// A starts with only B in its table; all buckets are stale (threshold=0).
 		cfg := testDHTConfig(t)
 		cfg.StaleThreshold = 0
-		
+
 		discovered := make(chan types.DiscoveredPeers, cfg.DiscoveryBuffer)
 		dedup := filter.NewBloomFilter(cfg.BloomN, cfg.BloomP, cfg.BloomRotation)
 		udpAddr, err := net.ResolveUDPAddr("udp4", "127.0.0.1:0")
@@ -407,8 +460,6 @@ type mockNode struct {
 
 func newMockNode() *mockNode {
 	id, _ := table.DeriveNodeIDFromIP(net.ParseIP("127.0.0.1"))
-	// Make it slightly different
-	id[19]++
 	return &mockNode{id: id}
 }
 
@@ -443,7 +494,7 @@ func (m *mockNode) sendQuery(ctx context.Context, addr *net.UDPAddr, query *krpc
 		return nil
 	}
 
-	var respRaw map[string]interface{}
+	var respRaw map[string]any
 	if err := bencode.Unmarshal(buf[:n], &respRaw); err != nil {
 		return nil
 	}
@@ -458,7 +509,7 @@ func (m *mockNode) sendQuery(ctx context.Context, addr *net.UDPAddr, query *krpc
 			T: respRaw["t"].(string),
 			Y: y,
 		}
-		if e, ok := respRaw["e"].([]interface{}); ok {
+		if e, ok := respRaw["e"].([]any); ok {
 			resp.E = e
 		}
 		return resp

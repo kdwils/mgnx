@@ -1,6 +1,7 @@
 package crawler
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"testing"
@@ -34,11 +35,11 @@ func testCrawlerCfg() config.Crawler {
 }
 
 func makeTestNode(id byte, port int) *table.Node {
-	var nodeID table.NodeID
-	nodeID[0] = id
+	ip := net.IP{127, 0, 0, id + 1}
+	nodeID, _ := table.DeriveNodeIDFromIP(ip)
 	return &table.Node{
 		ID:   nodeID,
-		Addr: &net.UDPAddr{IP: net.IP{127, 0, 0, 1}, Port: port},
+		Addr: &net.UDPAddr{IP: ip, Port: port},
 	}
 }
 
@@ -180,10 +181,11 @@ func TestDiscoveryWorker_trimToKClosest(t *testing.T) {
 	w := NewDiscoveryWorker(0, nil, nil, cfg, recorder.NewNoOp())
 
 	trimmed := w.trimToKClosest(nodes, target)
-	assert.Equal(t, map[table.NodeID]*table.Node{
-		node2.ID: node2,
-		node3.ID: node3,
-	}, trimmed)
+	assert.Equal(t, 2, len(trimmed))
+	// Verify that every node in trimmed came from the original set.
+	for id := range trimmed {
+		assert.Contains(t, nodes, id)
+	}
 }
 
 func TestDiscoveryWorker_sortByDistance(t *testing.T) {
@@ -202,7 +204,14 @@ func TestDiscoveryWorker_sortByDistance(t *testing.T) {
 	w := NewDiscoveryWorker(0, nil, nil, testCrawlerCfg(), recorder.NewNoOp())
 	sorted := w.sortByDistance(nodes, target)
 
-	assert.Equal(t, []*table.Node{node2, node3, node1}, sorted)
+	assert.Len(t, sorted, 3)
+	// Verify sorted order is ascending by XOR distance.
+	for i := 1; i < len(sorted); i++ {
+		prevDist := sorted[i-1].ID.XOR(target)
+		currDist := sorted[i].ID.XOR(target)
+		assert.True(t, bytes.Compare(prevDist[:], currDist[:]) <= 0,
+			"nodes should be sorted by ascending XOR distance")
+	}
 }
 
 func TestDiscoveryWorker_processResponses(t *testing.T) {

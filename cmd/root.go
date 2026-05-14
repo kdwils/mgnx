@@ -95,6 +95,7 @@ func initConfig() {
 	viper.SetDefault("dht.bloom_p", 0.001)
 	viper.SetDefault("dht.bloom_rotation", 30*time.Minute)
 
+	viper.SetDefault("dht.sample_interval", 5*time.Minute)
 	viper.SetDefault("dht.file_wait_timeout", 5*time.Minute)
 	viper.SetDefault("dht.file_settle_time", 30*time.Second)
 
@@ -118,6 +119,7 @@ func initConfig() {
 	viper.SetDefault("crawler.inflight_cache_cleanup", 5*time.Minute)
 	viper.SetDefault("crawler.seen_cache_cleanup", 1*time.Hour)
 	viper.SetDefault("crawler.max_samples_per_node", 50)
+	viper.SetDefault("crawler.max_interval", 10*time.Minute)
 	viper.SetDefault("crawler.target_rotation_strategy", "prefix_rotate")
 
 	viper.SetDefault("server.health_port", 8081)

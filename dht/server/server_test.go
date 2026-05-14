@@ -41,6 +41,7 @@ func setupServer(t *testing.T, ctrl *gomock.Controller) (*Server, *mockconn.Mock
 		DiscoveryBuffer:          100,
 		TransactionTimeout:       1 * time.Second,
 		BucketRefreshInterval:    1 * time.Hour,
+		SampleInterval:           5 * time.Minute,
 		WarmBootstrapThreshold:   1,
 		BloomN:                   1000,
 		BloomP:                   0.01,
@@ -432,11 +433,11 @@ func TestServer_processQuery(t *testing.T) {
 	t.Run("ping query", func(t *testing.T) {
 		s, _ := setupServer(t, ctrl)
 		addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}
-		id := table.NodeID{10}
+		validID, _ := table.DeriveNodeIDFromIP(addr.IP)
 		msg := &krpc.Msg{
 			T: "aa",
 			Q: "ping",
-			A: &krpc.MsgArgs{ID: string(id[:])},
+			A: &krpc.MsgArgs{ID: string(validID[:])},
 		}
 
 		s.processQuery(context.Background(), inMsg{addr: addr, msg: msg})
@@ -495,20 +496,20 @@ func TestServer_updateTableFromResponse(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		s, _ := setupServer(t, ctrl)
-		addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}
-		nodeID := table.NodeID{1}
+		addr := &net.UDPAddr{IP: net.ParseIP("1.2.3.4"), Port: 1234}
+		validID, _ := table.DeriveNodeIDFromIP(addr.IP)
 
 		msg := &krpc.Msg{
 			Y: "r",
-			R: &krpc.Return{ID: string(nodeID[:])},
+			R: &krpc.Return{ID: string(validID[:])},
 		}
 		s.updateTableFromResponse(context.Background(), addr, msg)
 
 		assert.Equal(t, 1, s.NodeCount())
 
-		closest := s.Closest(nodeID, 1)
+		closest := s.Closest(validID, 1)
 		require.Equal(t, 1, len(closest))
-		assert.Equal(t, nodeID, closest[0].ID)
+		assert.Equal(t, validID, closest[0].ID)
 	})
 }
 
@@ -567,7 +568,7 @@ func TestServer_Bootstrap(t *testing.T) {
 
 		mockResolver.EXPECT().LookupHost(gomock.Any(), "router.bittorrent.com").Return([]string{bootstrapIP}, nil)
 
-		nodeID1 := table.NodeID{1}
+		nodeID1, _ := table.DeriveNodeIDFromIP(net.ParseIP("1.1.1.1"))
 		node1 := &table.Node{ID: nodeID1, Addr: &net.UDPAddr{IP: net.ParseIP("1.1.1.1"), Port: 1111}}
 
 		go func() {

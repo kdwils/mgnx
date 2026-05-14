@@ -147,8 +147,8 @@ func jitter(max time.Duration) time.Duration {
 	return time.Duration(mrand.Int63n(int64(max)))
 }
 
-// computeInterval returns the re-query interval for a node based on its BEP-51 response.
-func (c *Crawler) computeInterval(resp *krpc.Msg) time.Duration {
+// ComputeInterval returns the re-query interval for a node based on its BEP-51 response.
+func (c *Crawler) ComputeInterval(resp *krpc.Msg) time.Duration {
 	if resp == nil || resp.R == nil || resp.R.Interval <= 0 {
 		return c.cfg.DefaultInterval
 	}
@@ -218,7 +218,7 @@ func (c *Crawler) crawl(ctx context.Context) {
 			)
 		}
 
-		now := time.Now()
+		now := c.now()
 		var batch []*traversalItem
 		for len(batch) < c.cfg.Alpha {
 			item := c.nextEligible(now)
@@ -284,7 +284,7 @@ func (c *Crawler) crawl(ctx context.Context) {
 					delete(c.seen, r.item.node.ID)
 					continue
 				}
-				next := time.Now().Add(c.cfg.DefaultCooldown + jitter(c.cfg.MaxJitter))
+				next := c.now().Add(c.cfg.DefaultCooldown + jitter(c.cfg.MaxJitter))
 				c.seen[r.item.node.ID] = next
 				heap.Push(&c.cooldown, &cooldownItem{item: r.item, nextAllowed: next})
 				continue
@@ -298,7 +298,7 @@ func (c *Crawler) crawl(ctx context.Context) {
 
 			c.dht.MarkSuccess(r.item.node.ID)
 			r.item.failures = 0
-			next := time.Now().Add(c.computeInterval(r.resp) + jitter(c.cfg.MaxJitter))
+			next := c.now().Add(c.ComputeInterval(r.resp) + jitter(c.cfg.MaxJitter))
 			c.seen[r.item.node.ID] = next
 			heap.Push(&c.cooldown, &cooldownItem{item: r.item, nextAllowed: next})
 
@@ -336,7 +336,7 @@ func (c *Crawler) crawl(ctx context.Context) {
 // pruneStaleInFlight removes entries from the seen map whose timestamps are
 // older than 2× the transaction timeout and enforces a 4× traversalWidth cap.
 func (c *Crawler) pruneStaleInFlight() {
-	cutoff := time.Now().Add(-2 * c.cfg.TransactionTimeout)
+	cutoff := c.now().Add(-2 * c.cfg.TransactionTimeout)
 	for id, t := range c.seen {
 		if t.Before(cutoff) {
 			delete(c.seen, id)
@@ -347,7 +347,8 @@ func (c *Crawler) pruneStaleInFlight() {
 	if len(c.seen) <= maxSize {
 		return
 	}
-	now := time.Now()
+
+	now := c.now()
 	for id, t := range c.seen {
 		if len(c.seen) <= maxSize {
 			break
@@ -444,6 +445,14 @@ func (c *Crawler) processNodes(ctx context.Context, encoded string, target table
 	}
 	inserted, queued := 0, 0
 	for _, n := range nodes {
+		if err := table.ValidateNodeIDForIP(n.Addr.IP, n.ID); err != nil {
+			logger.FromContext(ctx).Debug("rejecting node with invalid ID for IP",
+				"service", "crawler",
+				"node_addr", n.Addr.String(),
+				"err", err,
+			)
+			continue
+		}
 		c.dht.InsertNode(ctx, n)
 		inserted++
 		if _, inCooldown := c.seen[n.ID]; inCooldown {

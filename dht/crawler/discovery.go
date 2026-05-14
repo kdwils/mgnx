@@ -261,6 +261,14 @@ func (w *DiscoveryWorker) extractNodes(ctx context.Context, resp *krpc.Msg) map[
 
 	result := make(map[table.NodeID]*table.Node)
 	for _, n := range nodes {
+		if err := table.ValidateNodeIDForIP(n.Addr.IP, n.ID); err != nil {
+			logger.FromContext(ctx).Debug("rejecting node with invalid ID for IP",
+				"service", "discovery",
+				"node_addr", n.Addr.String(),
+				"err", err,
+			)
+			continue
+		}
 		result[n.ID] = n
 		w.dht.InsertNode(ctx, n)
 	}

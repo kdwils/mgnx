@@ -38,6 +38,7 @@ type DHT struct {
 	PeerStoreMaxEntries      int           `mapstructure:"peer_store_max_entries"`
 	PeerStoreMaxPeersPerHash int           `mapstructure:"peer_store_max_peers_per_hash"`
 	BucketRefreshInterval    time.Duration `mapstructure:"bucket_refresh_interval"`
+	SampleInterval           time.Duration `mapstructure:"sample_interval"`
 	MaxMessageSize           int           `mapstructure:"max_message_size"`
 	MaxMetadataSize          int           `mapstructure:"max_metadata_size"`
 	IPLimiterMaxSize         int           `mapstructure:"ip_limiter_max_size"`
