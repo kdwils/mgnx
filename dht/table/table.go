@@ -67,15 +67,13 @@ func (rt *RoutingTable) Insert(ctx context.Context, node *Node) string {
 }
 
 // InsertValidNode validates the node's ID against its IP per BEP-42, then
-// inserts it into the routing table. It returns true if the node is valid
-// and was inserted (or updated/cached), or false if the node ID is invalid
-// for its IP.
-func (rt *RoutingTable) InsertValidNode(ctx context.Context, node *Node) bool {
+// inserts it into the routing table. It returns one of the NodeInsert*
+// constants, or NodeInsertDropped if the node ID is invalid for its IP.
+func (rt *RoutingTable) InsertValidNode(ctx context.Context, node *Node) string {
 	if err := ValidateNodeIDForIP(node.Addr.IP, node.ID); err != nil {
-		return false
+		return NodeInsertDropped
 	}
-	rt.Insert(ctx, node)
-	return true
+	return rt.Insert(ctx, node)
 }
 
 // insert is the lock-free inner implementation; callers must hold rt.mu.
