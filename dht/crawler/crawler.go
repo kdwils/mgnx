@@ -380,10 +380,19 @@ func (c *Crawler) crawl(ctx context.Context) {
 // pruneStaleInFlight removes entries from the seen map whose timestamps are
 // older than 2× the transaction timeout and enforces a 4× traversalWidth cap.
 func (c *Crawler) pruneStaleInFlight() {
-	cutoff := c.now().Add(-2 * c.TransactionTimeout)
+	now := c.now()
+	cutoff := now.Add(-2 * c.TransactionTimeout)
+
+	// Keep track of nodes currently in cooldown to avoid pruning them
+	inCooldown := make(map[table.NodeID]bool)
+	for _, item := range c.cooldown {
+		inCooldown[item.item.node.ID] = true
+	}
+
 	for id, t := range c.seen {
-		if t.Before(cutoff) {
+		if t.Before(cutoff) && !inCooldown[id] {
 			delete(c.seen, id)
+			delete(c.nodeSamples, id)
 		}
 	}
 
@@ -392,14 +401,23 @@ func (c *Crawler) pruneStaleInFlight() {
 		return
 	}
 
-	now := c.now()
-	for id, t := range c.seen {
-		if len(c.seen) <= maxSize {
-			break
+	// If still over capacity, prune oldest entries that are NOT in cooldown.
+	// We collect keys and sort them by their timestamp in c.seen.
+	var keys []table.NodeID
+	for id := range c.seen {
+		if !inCooldown[id] {
+			keys = append(keys, id)
 		}
-		if !t.After(now) {
-			delete(c.seen, id)
-		}
+	}
+
+	sort.Slice(keys, func(i, j int) bool {
+		return c.seen[keys[i]].Before(c.seen[keys[j]])
+	})
+
+	toPrune := len(c.seen) - maxSize
+	for i := 0; i < toPrune && i < len(keys); i++ {
+		delete(c.seen, keys[i])
+		delete(c.nodeSamples, keys[i])
 	}
 }
 
