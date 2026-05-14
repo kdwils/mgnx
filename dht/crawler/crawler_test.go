@@ -202,44 +202,44 @@ func TestCrawler_computeInterval(t *testing.T) {
 	maxInterval := 60 * time.Second
 
 	tests := []struct {
-		name      string
-		resp      *krpc.Msg
-		want      time.Duration
+		name string
+		resp *krpc.Msg
+		want time.Duration
 	}{
 		{
-			name:      "nil response returns default",
-			resp:      nil,
-			want:      defaultInterval,
+			name: "nil response returns default",
+			resp: nil,
+			want: defaultInterval,
 		},
 		{
-			name:      "nil R returns default",
-			resp:      &krpc.Msg{Y: "r"},
-			want:      defaultInterval,
+			name: "nil R returns default",
+			resp: &krpc.Msg{Y: "r"},
+			want: defaultInterval,
 		},
 		{
-			name:      "zero interval returns default",
-			resp:      &krpc.Msg{Y: "r", R: &krpc.Return{Interval: 0}},
-			want:      defaultInterval,
+			name: "zero interval returns default",
+			resp: &krpc.Msg{Y: "r", R: &krpc.Return{Interval: 0}},
+			want: defaultInterval,
 		},
 		{
-			name:      "negative interval returns default",
-			resp:      &krpc.Msg{Y: "r", R: &krpc.Return{Interval: -1}},
-			want:      defaultInterval,
+			name: "negative interval returns default",
+			resp: &krpc.Msg{Y: "r", R: &krpc.Return{Interval: -1}},
+			want: defaultInterval,
 		},
 		{
-			name:      "interval below default is clamped up",
-			resp:      &krpc.Msg{Y: "r", R: &krpc.Return{Interval: 2}},
-			want:      defaultInterval,
+			name: "interval below default is clamped up",
+			resp: &krpc.Msg{Y: "r", R: &krpc.Return{Interval: 2}},
+			want: defaultInterval,
 		},
 		{
-			name:      "interval within bounds is kept",
-			resp:      &krpc.Msg{Y: "r", R: &krpc.Return{Interval: 30}},
-			want:      30 * time.Second,
+			name: "interval within bounds is kept",
+			resp: &krpc.Msg{Y: "r", R: &krpc.Return{Interval: 30}},
+			want: 30 * time.Second,
 		},
 		{
-			name:      "interval above max is clamped down",
-			resp:      &krpc.Msg{Y: "r", R: &krpc.Return{Interval: 300}},
-			want:      maxInterval,
+			name: "interval above max is clamped down",
+			resp: &krpc.Msg{Y: "r", R: &krpc.Return{Interval: 300}},
+			want: maxInterval,
 		},
 	}
 

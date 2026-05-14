@@ -1266,11 +1266,11 @@ func TestClassify(t *testing.T) {
 			files:     video(1, 2*gb),
 			totalSize: 2 * gb,
 			want: classify.Result{
-				State:       gen.TorrentStateRejected,
-				ContentType: gen.ContentTypeUnknown,
+				State:           gen.TorrentStateRejected,
+				ContentType:     gen.ContentTypeUnknown,
 				RejectionReason: "unknown_type",
-				Title:       "[ FreeCourseWeb com ] Udemy - NoSQL - Neo4j and Cypher (Part - 2-Intermediate) zip",
-				SceneName:   "[ FreeCourseWeb.com ] Udemy - NoSQL - Neo4j and Cypher (Part - 2-Intermediate).zip",
+				Title:           "[ FreeCourseWeb com ] Udemy - NoSQL - Neo4j and Cypher (Part - 2-Intermediate) zip",
+				SceneName:       "[ FreeCourseWeb.com ] Udemy - NoSQL - Neo4j and Cypher (Part - 2-Intermediate).zip",
 			},
 		},
 		{

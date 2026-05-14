@@ -49,7 +49,6 @@ func NewRoutingTable(nodeID NodeID, cfg config.DHT, pinger Pinger) *RoutingTable
 	return rt
 }
 
-
 // NodeInsertResult describes the outcome of a routing table Insert call.
 const (
 	NodeInsertUpdated  = "updated"  // node already present; address/liveness refreshed

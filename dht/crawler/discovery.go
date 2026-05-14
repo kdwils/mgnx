@@ -28,11 +28,14 @@ type DiscoveryWork struct {
 // shared DiscoveryWork channel.
 func NewDiscoveryWorker(id int, dht DHT, queue <-chan DiscoveryWork, cfg config.Crawler, rec *recorder.Recorder) *DiscoveryWorker {
 	return &DiscoveryWorker{
-		id:    id,
-		dht:   dht,
-		queue: queue,
-		rec:   rec,
-		cfg:   cfg,
+		id:                  id,
+		dht:                 dht,
+		queue:               queue,
+		rec:                 rec,
+		Alpha:               cfg.Alpha,
+		MaxIterations:       cfg.MaxIterations,
+		TraversalWidth:      cfg.TraversalWidth,
+		DiscoveryMaxIterations: cfg.DiscoveryMaxIterations,
 	}
 }
 
@@ -73,13 +76,16 @@ func (w *DiscoveryWorker) discoverPeers(ctx context.Context, h [20]byte, initial
 	if initialNode != nil {
 		shortlist[initialNode.ID] = initialNode
 	}
+	for _, n := range w.dht.Closest(target, w.TraversalWidth) {
+		shortlist[n.ID] = n
+	}
 
 	queried := make(map[table.NodeID]bool)
 
 	var collectedPeers []types.PeerAddr
 	result := "max_iterations"
 
-	for iter := 0; iter < w.cfg.DiscoveryMaxIterations; iter++ {
+	for iter := 0; iter < w.DiscoveryMaxIterations; iter++ {
 		entries := w.sortByDistance(shortlist, target)
 		if len(entries) == 0 {
 			result = "empty_shortlist"
@@ -97,7 +103,7 @@ func (w *DiscoveryWorker) discoverPeers(ctx context.Context, h [20]byte, initial
 			break
 		}
 
-		dispatched := toQuery[:min(len(toQuery), w.cfg.Alpha)]
+		dispatched := toQuery[:min(len(toQuery), w.Alpha)]
 		for _, n := range dispatched {
 			queried[n.ID] = true
 		}
@@ -130,12 +136,12 @@ func (w *DiscoveryWorker) discoverPeers(ctx context.Context, h [20]byte, initial
 
 // trimToKClosest returns a new map containing only the k nodes closest to target.
 func (w *DiscoveryWorker) trimToKClosest(nodes map[table.NodeID]*table.Node, target table.NodeID) map[table.NodeID]*table.Node {
-	if len(nodes) <= w.cfg.TraversalWidth {
+	if len(nodes) <= w.TraversalWidth {
 		return nodes
 	}
 	sorted := w.sortByDistance(nodes, target)
-	result := make(map[table.NodeID]*table.Node, w.cfg.TraversalWidth)
-	for _, n := range sorted[:w.cfg.TraversalWidth] {
+	result := make(map[table.NodeID]*table.Node, w.TraversalWidth)
+	for _, n := range sorted[:w.TraversalWidth] {
 		result[n.ID] = n
 	}
 	return result
@@ -158,7 +164,7 @@ func (w *DiscoveryWorker) sortByDistance(nodes map[table.NodeID]*table.Node, tar
 
 // queryParallel sends BEP-05 get_peers queries to up to Alpha nodes concurrently.
 func (w *DiscoveryWorker) queryParallel(ctx context.Context, nodes []*table.Node, h [20]byte) []*krpc.Msg {
-	alpha := min(len(nodes), w.cfg.Alpha)
+	alpha := min(len(nodes), w.Alpha)
 
 	respCh := make(chan *krpc.Msg, alpha)
 	var wg sync.WaitGroup

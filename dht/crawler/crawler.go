@@ -51,13 +51,26 @@ type Crawler struct {
 	queue              chan<- DiscoveryWork
 	dedup              *filter.BloomFilter
 	rec                *recorder.Recorder
-	cfg                config.Crawler
 	seen               map[table.NodeID]time.Time
 	ready              traversalHeap
 	cooldown           cooldownHeap
 	nodeSampleSupport  *pkgcache.Cache[table.NodeID, supportEntry]
+	nodeSamples        map[table.NodeID]int
 	droppedDiscoveries atomic.Int64
 	now                func() time.Time
+
+	Alpha                  int
+	MaxIterations          int
+	TraversalWidth         int
+	DefaultCooldown        time.Duration
+	DefaultInterval        time.Duration
+	MaxNodeFailures        int
+	MaxJitter              time.Duration
+	EmptySpinWait          time.Duration
+	SampleEnqueueTimeout   time.Duration
+	NodeCacheCleanup       time.Duration
+	TransactionTimeout     time.Duration
+	MaxInterval            time.Duration
 }
 
 // NewCrawler constructs a Crawler. queue is the write side of the shared
@@ -65,15 +78,27 @@ type Crawler struct {
 func NewCrawler(id int, dht DHT, queue chan<- DiscoveryWork, dedup *filter.BloomFilter, cfg config.Crawler, rec *recorder.Recorder) *Crawler {
 	interval := cfg.NodeCacheCleanup
 	return &Crawler{
-		id:       id,
-		dht:      dht,
-		queue:    queue,
-		dedup:    dedup,
-		rec:      rec,
-		cfg:      cfg,
-		seen:     make(map[table.NodeID]time.Time),
-		ready:    make(traversalHeap, 0),
-		cooldown: make(cooldownHeap, 0),
+		id:                  id,
+		dht:                 dht,
+		queue:               queue,
+		dedup:               dedup,
+		rec:                 rec,
+		seen:                make(map[table.NodeID]time.Time),
+		ready:               make(traversalHeap, 0),
+		cooldown:            make(cooldownHeap, 0),
+		nodeSamples:         make(map[table.NodeID]int),
+		Alpha:               cfg.Alpha,
+		MaxIterations:       cfg.MaxIterations,
+		TraversalWidth:      cfg.TraversalWidth,
+		DefaultCooldown:     cfg.DefaultCooldown,
+		DefaultInterval:     cfg.DefaultInterval,
+		MaxNodeFailures:     cfg.MaxNodeFailures,
+		MaxJitter:           cfg.MaxJitter,
+		EmptySpinWait:       cfg.EmptySpinWait,
+		SampleEnqueueTimeout: cfg.SampleEnqueueTimeout,
+		NodeCacheCleanup:    cfg.NodeCacheCleanup,
+		TransactionTimeout:  cfg.TransactionTimeout,
+		MaxInterval:         cfg.MaxInterval,
 		nodeSampleSupport: pkgcache.New(
 			pkgcache.WithCleanup(
 				interval,
@@ -97,20 +122,25 @@ func (c *Crawler) Start(ctx context.Context) {
 // DiscoveryWorker consumes DiscoveryWork items from the queue and performs
 // iterative BEP-05 get_peers lookups to find actual swarm peers.
 type DiscoveryWorker struct {
-	id    int
-	dht   DHT
-	queue <-chan DiscoveryWork
-	rec   *recorder.Recorder
-	cfg   config.Crawler
+	id                  int
+	dht                 DHT
+	queue               <-chan DiscoveryWork
+	rec                 *recorder.Recorder
+
+	Alpha                  int
+	MaxIterations          int
+	TraversalWidth         int
+	DiscoveryMaxIterations int
 }
 
 // traversalItem is an element of the traversal heap.
 type traversalItem struct {
-	node     *table.Node
-	target   table.NodeID
-	dist     table.NodeID
-	index    int
-	failures int
+	node        *table.Node
+	target      table.NodeID
+	dist        table.NodeID
+	index       int
+	failures    int
+	yieldFactor float64
 }
 
 // queryForSamples tries sample_infohashes (BEP-51) against the node first.
@@ -150,14 +180,14 @@ func jitter(max time.Duration) time.Duration {
 // ComputeInterval returns the re-query interval for a node based on its BEP-51 response.
 func (c *Crawler) ComputeInterval(resp *krpc.Msg) time.Duration {
 	if resp == nil || resp.R == nil || resp.R.Interval <= 0 {
-		return c.cfg.DefaultInterval
+		return c.DefaultInterval
 	}
 	d := time.Duration(resp.R.Interval) * time.Second
-	if d < c.cfg.DefaultInterval {
-		return c.cfg.DefaultInterval
+	if d < c.DefaultInterval {
+		return c.DefaultInterval
 	}
-	if c.cfg.MaxInterval > 0 && d > c.cfg.MaxInterval {
-		return c.cfg.MaxInterval
+	if c.MaxInterval > 0 && d > c.MaxInterval {
+		return c.MaxInterval
 	}
 	return d
 }
@@ -199,7 +229,7 @@ func (c *Crawler) crawl(ctx context.Context) {
 		c.rec.SetCrawlerTraversalQueueSize(c.id, float64(c.ready.Len()))
 		c.rec.SetCrawlerCooldownsActive(c.id, float64(c.cooldown.Len()))
 
-		if c.ready.Len() < c.cfg.Alpha {
+		if c.ready.Len() < c.Alpha {
 			rand.Read(target[:])
 			c.seedQueue(target)
 
@@ -220,7 +250,7 @@ func (c *Crawler) crawl(ctx context.Context) {
 
 		now := c.now()
 		var batch []*traversalItem
-		for len(batch) < c.cfg.Alpha {
+		for len(batch) < c.Alpha {
 			item := c.nextEligible(now)
 			if item == nil {
 				break
@@ -247,7 +277,7 @@ func (c *Crawler) crawl(ctx context.Context) {
 
 			if c.ready.Len() == 0 {
 				select {
-				case <-time.After(c.cfg.EmptySpinWait):
+				case <-time.After(c.EmptySpinWait):
 				case <-ctx.Done():
 					return
 				}
@@ -280,11 +310,11 @@ func (c *Crawler) crawl(ctx context.Context) {
 			if r.err != nil {
 				c.dht.MarkFailure(r.item.node.ID)
 				r.item.failures++
-				if r.item.failures >= c.cfg.MaxNodeFailures {
+				if r.item.failures >= c.MaxNodeFailures {
 					delete(c.seen, r.item.node.ID)
 					continue
 				}
-				next := c.now().Add(c.cfg.DefaultCooldown + jitter(c.cfg.MaxJitter))
+				next := c.now().Add(c.DefaultCooldown + jitter(c.MaxJitter))
 				c.seen[r.item.node.ID] = next
 				heap.Push(&c.cooldown, &cooldownItem{item: r.item, nextAllowed: next})
 				continue
@@ -298,7 +328,7 @@ func (c *Crawler) crawl(ctx context.Context) {
 
 			c.dht.MarkSuccess(r.item.node.ID)
 			r.item.failures = 0
-			next := c.now().Add(c.ComputeInterval(r.resp) + jitter(c.cfg.MaxJitter))
+			next := c.now().Add(c.ComputeInterval(r.resp) + jitter(c.MaxJitter))
 			c.seen[r.item.node.ID] = next
 			heap.Push(&c.cooldown, &cooldownItem{item: r.item, nextAllowed: next})
 
@@ -319,7 +349,7 @@ func (c *Crawler) crawl(ctx context.Context) {
 		if iteration%50 == 0 {
 			c.pruneStaleInFlight()
 		}
-		if iteration%c.cfg.MaxIterations == 0 {
+		if iteration%c.MaxIterations == 0 {
 			rand.Read(target[:])
 			c.ready = traversalHeap{}
 			heap.Init(&c.ready)
@@ -336,14 +366,14 @@ func (c *Crawler) crawl(ctx context.Context) {
 // pruneStaleInFlight removes entries from the seen map whose timestamps are
 // older than 2× the transaction timeout and enforces a 4× traversalWidth cap.
 func (c *Crawler) pruneStaleInFlight() {
-	cutoff := c.now().Add(-2 * c.cfg.TransactionTimeout)
+	cutoff := c.now().Add(-2 * c.TransactionTimeout)
 	for id, t := range c.seen {
 		if t.Before(cutoff) {
 			delete(c.seen, id)
 		}
 	}
 
-	maxSize := 4 * c.cfg.TraversalWidth
+	maxSize := 4 * c.TraversalWidth
 	if len(c.seen) <= maxSize {
 		return
 	}
@@ -361,14 +391,15 @@ func (c *Crawler) pruneStaleInFlight() {
 
 // seedQueue pushes the k closest routing-table nodes to the ready heap.
 func (c *Crawler) seedQueue(target table.NodeID) {
-	for _, n := range c.dht.Closest(target, c.cfg.TraversalWidth) {
+	for _, n := range c.dht.Closest(target, c.TraversalWidth) {
 		if _, inCooldown := c.seen[n.ID]; inCooldown {
 			continue
 		}
 		heap.Push(&c.ready, &traversalItem{
-			node:   n,
-			target: target,
-			dist:   target.XOR(n.ID),
+			node:        n,
+			target:      target,
+			dist:        target.XOR(n.ID),
+			yieldFactor: float64(c.nodeSamples[n.ID]),
 		})
 	}
 }
@@ -402,11 +433,26 @@ func (c *Crawler) processSamples(ctx context.Context, samples string, item *trav
 		new++
 		select {
 		case c.queue <- DiscoveryWork{Infohash: h, Source: item.node}:
-		case <-time.After(c.cfg.SampleEnqueueTimeout):
+		case <-time.After(c.SampleEnqueueTimeout):
+			// Adaptive backpressure: if queue is persistently full,
+			// switch to non-blocking and log a warning.
+			if c.droppedDiscoveries.Add(1); c.droppedDiscoveries.Load() > 100 {
+				select {
+				case c.queue <- DiscoveryWork{Infohash: h, Source: item.node}:
+				default:
+					c.rec.AddCrawlerSamplesTotal("dropped", 1)
+				}
+				continue
+			}
 			dropped++
-			c.droppedDiscoveries.Add(1)
 		}
 	}
+
+	if new > 0 {
+		c.nodeSamples[item.node.ID] += new
+		item.yieldFactor = float64(c.nodeSamples[item.node.ID])
+	}
+
 	if c.rec != nil {
 		c.rec.SetDHTQueueCapacity(float64(cap(c.queue)))
 		duplicate := total - new - dropped
@@ -428,11 +474,11 @@ func (c *Crawler) processSamples(ctx context.Context, samples string, item *trav
 // trimReadyToK sorts the ready heap by XOR distance and discards all items
 // beyond traversalWidth.
 func (c *Crawler) trimReadyToK() {
-	if c.ready.Len() <= c.cfg.TraversalWidth {
+	if c.ready.Len() <= c.TraversalWidth {
 		return
 	}
 	sort.Sort(&c.ready)
-	c.ready = c.ready[:c.cfg.TraversalWidth]
+	c.ready = c.ready[:c.TraversalWidth]
 	heap.Init(&c.ready)
 }
 
@@ -459,9 +505,10 @@ func (c *Crawler) processNodes(ctx context.Context, encoded string, target table
 			continue
 		}
 		heap.Push(&c.ready, &traversalItem{
-			node:   n,
-			target: target,
-			dist:   target.XOR(n.ID),
+			node:        n,
+			target:      target,
+			dist:        target.XOR(n.ID),
+			yieldFactor: float64(c.nodeSamples[n.ID]),
 		})
 		queued++
 	}

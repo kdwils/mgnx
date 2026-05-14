@@ -385,8 +385,10 @@ func detectTV(normalized string) tvInfo {
 // detectAnime returns true when the torrent name looks like an anime release.
 // Signal A: EP-format absolute episode (EP590) — reliable without bracket context.
 // Signal B: 3-digit bare numbers / "- NN" spacers / bracket episode tags — only
-//           trusted when the name has a bracket prefix (fansub style), since these
-//           patterns produce false positives for Western episode titles with numbers.
+//
+//	trusted when the name has a bracket prefix (fansub style), since these
+//	patterns produce false positives for Western episode titles with numbers.
+//
 // Signal C: known fansub group at the start combined with any TV episode marker.
 // Signal D: known anime streaming service tag combined with SxxExx TV detection.
 func detectAnime(name, normalized string, tv tvInfo) bool {

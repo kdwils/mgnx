@@ -54,6 +54,7 @@ func TestDiscoveryWorker_Start(t *testing.T) {
 		var infoHashID table.NodeID
 		copy(infoHashID[:], h[:])
 
+		m.EXPECT().Closest(gomock.Any(), gomock.Any()).Return([]*table.Node{}).AnyTimes()
 		m.EXPECT().GetPeers(gomock.Any(), node.Addr, node.ID, infoHashID).
 			Return(&krpc.Msg{Y: "r", R: &krpc.Return{ID: string(node.ID[:])}}, nil)
 
@@ -105,6 +106,8 @@ func TestDiscoveryWorker_discoverPeers(t *testing.T) {
 		copy(infoHashID[:], h[:])
 
 		m.EXPECT().
+			Closest(gomock.Any(), gomock.Any()).Return([]*table.Node{}).AnyTimes()
+		m.EXPECT().
 			GetPeers(gomock.Any(), node.Addr, node.ID, infoHashID).
 			Return(&krpc.Msg{Y: "r", R: &krpc.Return{
 				ID:     string(node.ID[:]),
@@ -136,6 +139,8 @@ func TestDiscoveryWorker_discoverPeers(t *testing.T) {
 		var infoHashID table.NodeID
 		copy(infoHashID[:], h[:])
 
+		m.EXPECT().
+			Closest(gomock.Any(), gomock.Any()).Return([]*table.Node{}).AnyTimes()
 		m.EXPECT().
 			GetPeers(gomock.Any(), node1.Addr, node1.ID, infoHashID).
 			Return(&krpc.Msg{Y: "r", R: &krpc.Return{

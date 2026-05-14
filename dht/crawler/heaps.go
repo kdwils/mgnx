@@ -1,8 +1,9 @@
 package crawler
 
 import (
-	"bytes"
 	"time"
+
+	"github.com/kdwils/mgnx/dht/table"
 )
 
 // cooldownItem holds a traversalItem waiting for its cooldown to expire.
@@ -31,7 +32,44 @@ type traversalHeap []*traversalItem
 
 func (pq traversalHeap) Len() int { return len(pq) }
 func (pq traversalHeap) Less(i, j int) bool {
-	return bytes.Compare(pq[i].dist[:], pq[j].dist[:]) < 0
+	di, dj := pq[i].dist, pq[j].dist
+
+	// Apply yield-based discount: nodes with higher sample yield get
+	// a distance reduction, biasing the crawler toward productive regions.
+	if pq[i].yieldFactor > 0 {
+		discount := pq[i].yieldFactor / (pq[i].yieldFactor + 1.0)
+		di = scaleDist(di, discount)
+	}
+	if pq[j].yieldFactor > 0 {
+		discount := pq[j].yieldFactor / (pq[j].yieldFactor + 1.0)
+		dj = scaleDist(dj, discount)
+	}
+
+	return cmpDist(di, dj) < 0
+}
+
+// scaleDist multiplies a 20-byte XOR distance by a discount factor (0 < f < 1).
+func scaleDist(dist table.NodeID, factor float64) table.NodeID {
+	var result table.NodeID
+	carry := 0.0
+	for k := len(dist) - 1; k >= 0; k-- {
+		v := float64(dist[k])*factor + carry
+		result[k] = byte(v)
+		carry = v - float64(result[k])
+	}
+	return result
+}
+
+func cmpDist(a, b table.NodeID) int {
+	for k := range a {
+		if a[k] < b[k] {
+			return -1
+		}
+		if a[k] > b[k] {
+			return 1
+		}
+	}
+	return 0
 }
 
 func (pq traversalHeap) Swap(i, j int) {
