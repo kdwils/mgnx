@@ -52,7 +52,7 @@ func (pq traversalHeap) Less(i, j int) bool {
 func scaleDist(dist table.NodeID, factor float64) table.NodeID {
 	var result table.NodeID
 	remainder := 0.0
-	for k := 0; k < len(dist); k++ {
+	for k := range len(dist) {
 		val := float64(dist[k])*factor + remainder
 		result[k] = byte(val)
 		remainder = (val - float64(result[k])) * 256.0
