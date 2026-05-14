@@ -51,11 +51,11 @@ type Crawler struct {
 	queue                chan<- DiscoveryWork
 	dedup                *filter.BloomFilter
 	rec                  *recorder.Recorder
-	seen                 map[table.NodeID]time.Time
+	seen                 *pkgcache.Cache[table.NodeID, time.Time]
 	ready                traversalHeap
 	cooldown             cooldownHeap
 	nodeSampleSupport    *pkgcache.Cache[table.NodeID, supportEntry]
-	nodeSamples          map[table.NodeID]int
+	nodeSamples          *pkgcache.Cache[table.NodeID, int]
 	droppedDiscoveries   atomic.Int64
 	now                  func() time.Time
 	Alpha                int
@@ -82,10 +82,9 @@ func NewCrawler(id int, dht DHT, queue chan<- DiscoveryWork, dedup *filter.Bloom
 		queue:                queue,
 		dedup:                dedup,
 		rec:                  rec,
-		seen:                 make(map[table.NodeID]time.Time),
+		seen:                 pkgcache.New[table.NodeID, time.Time](),
 		ready:                make(traversalHeap, 0),
 		cooldown:             make(cooldownHeap, 0),
-		nodeSamples:          make(map[table.NodeID]int),
 		Alpha:                cfg.Alpha,
 		MaxIterations:        cfg.MaxIterations,
 		TraversalWidth:       cfg.TraversalWidth,
@@ -106,7 +105,8 @@ func NewCrawler(id int, dht DHT, queue chan<- DiscoveryWork, dedup *filter.Bloom
 				},
 			),
 		),
-		now: time.Now,
+		nodeSamples: pkgcache.New[table.NodeID, int](),
+		now:         time.Now,
 	}
 }
 
@@ -253,7 +253,7 @@ func (c *Crawler) crawl(ctx context.Context) {
 			if item == nil {
 				break
 			}
-			c.seen[item.node.ID] = now
+			c.seen.Set(item.node.ID, now)
 			batch = append(batch, item)
 		}
 
@@ -317,11 +317,11 @@ func (c *Crawler) crawl(ctx context.Context) {
 				c.dht.MarkFailure(r.item.node.ID)
 				r.item.failures++
 				if r.item.failures >= c.MaxNodeFailures {
-					delete(c.seen, r.item.node.ID)
+					c.seen.Delete(r.item.node.ID)
 					continue
 				}
 				next := c.now().Add(c.DefaultCooldown + jitter(c.MaxJitter))
-				c.seen[r.item.node.ID] = next
+				c.seen.Set(r.item.node.ID, next)
 				heap.Push(&c.cooldown, &cooldownItem{item: r.item, nextAllowed: next})
 				continue
 			}
@@ -343,7 +343,7 @@ func (c *Crawler) crawl(ctx context.Context) {
 			}
 
 			next := c.now().Add(interval + jitter(c.MaxJitter))
-			c.seen[r.item.node.ID] = next
+			c.seen.Set(r.item.node.ID, next)
 			heap.Push(&c.cooldown, &cooldownItem{item: r.item, nextAllowed: next})
 
 			nodesReturned := 0
@@ -389,50 +389,61 @@ func (c *Crawler) pruneStaleInFlight() {
 		inCooldown[item.item.node.ID] = true
 	}
 
-	for id, t := range c.seen {
+	seenItems := c.seen.Items()
+	for id, t := range seenItems {
 		if t.Before(cutoff) && !inCooldown[id] {
-			delete(c.seen, id)
-			delete(c.nodeSamples, id)
+			c.seen.Delete(id)
+			c.nodeSamples.Delete(id)
 		}
 	}
 
 	maxSize := 4 * c.TraversalWidth
-	if len(c.seen) <= maxSize {
+	if c.seen.Size() <= maxSize {
 		return
 	}
 
 	// If still over capacity, prune oldest entries that are NOT in cooldown.
 	// We collect keys and sort them by their timestamp in c.seen.
 	var keys []table.NodeID
-	for id := range c.seen {
+	for id := range seenItems {
 		if !inCooldown[id] {
 			keys = append(keys, id)
 		}
 	}
 
 	sort.Slice(keys, func(i, j int) bool {
-		return c.seen[keys[i]].Before(c.seen[keys[j]])
+		ti, _ := c.seen.Get(keys[i])
+		tj, _ := c.seen.Get(keys[j])
+		return ti.Before(tj)
 	})
 
-	toPrune := len(c.seen) - maxSize
+	toPrune := c.seen.Size() - maxSize
 	for i := 0; i < toPrune && i < len(keys); i++ {
-		delete(c.seen, keys[i])
-		delete(c.nodeSamples, keys[i])
+		c.seen.Delete(keys[i])
+		c.nodeSamples.Delete(keys[i])
 	}
+}
+
+// pushToReady creates a traversalItem for a node and pushes it onto the ready
+// heap. Returns true if the node was enqueued, false if it was already seen.
+func (c *Crawler) pushToReady(n *table.Node, target table.NodeID) bool {
+	if _, found := c.seen.Get(n.ID); found {
+		return false
+	}
+	samples, _ := c.nodeSamples.Get(n.ID)
+	heap.Push(&c.ready, &traversalItem{
+		node:        n,
+		target:      target,
+		dist:        target.XOR(n.ID),
+		yieldFactor: float64(samples),
+	})
+	return true
 }
 
 // seedQueue pushes the k closest routing-table nodes to the ready heap.
 func (c *Crawler) seedQueue(target table.NodeID) {
 	for _, n := range c.dht.Closest(target, c.TraversalWidth) {
-		if _, inCooldown := c.seen[n.ID]; inCooldown {
-			continue
-		}
-		heap.Push(&c.ready, &traversalItem{
-			node:        n,
-			target:      target,
-			dist:        target.XOR(n.ID),
-			yieldFactor: float64(c.nodeSamples[n.ID]),
-		})
+		c.pushToReady(n, target)
 	}
 }
 
@@ -481,8 +492,10 @@ func (c *Crawler) processSamples(ctx context.Context, samples string, item *trav
 	}
 
 	if new > 0 {
-		c.nodeSamples[item.node.ID] += new
-		item.yieldFactor = float64(c.nodeSamples[item.node.ID])
+		current, _ := c.nodeSamples.Get(item.node.ID)
+		current += new
+		c.nodeSamples.Set(item.node.ID, current)
+		item.yieldFactor = float64(current)
 	}
 
 	if c.rec != nil {
@@ -533,16 +546,9 @@ func (c *Crawler) processNodes(ctx context.Context, encoded string, target table
 		}
 		c.dht.InsertNode(ctx, n)
 		inserted++
-		if _, inCooldown := c.seen[n.ID]; inCooldown {
-			continue
+		if c.pushToReady(n, target) {
+			queued++
 		}
-		heap.Push(&c.ready, &traversalItem{
-			node:        n,
-			target:      target,
-			dist:        target.XOR(n.ID),
-			yieldFactor: float64(c.nodeSamples[n.ID]),
-		})
-		queued++
 	}
 	c.trimReadyToK()
 	logger.FromContext(ctx).Debug("process nodes",
