@@ -28,13 +28,13 @@ type DiscoveryWork struct {
 // shared DiscoveryWork channel.
 func NewDiscoveryWorker(id int, dht DHT, queue <-chan DiscoveryWork, cfg config.Crawler, rec *recorder.Recorder) *DiscoveryWorker {
 	return &DiscoveryWorker{
-		id:                  id,
-		dht:                 dht,
-		queue:               queue,
-		rec:                 rec,
-		Alpha:               cfg.Alpha,
-		MaxIterations:       cfg.MaxIterations,
-		TraversalWidth:      cfg.TraversalWidth,
+		id:                     id,
+		dht:                    dht,
+		queue:                  queue,
+		rec:                    rec,
+		Alpha:                  cfg.Alpha,
+		MaxIterations:          cfg.MaxIterations,
+		TraversalWidth:         cfg.TraversalWidth,
 		DiscoveryMaxIterations: cfg.DiscoveryMaxIterations,
 	}
 }
