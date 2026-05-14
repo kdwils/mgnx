@@ -51,11 +51,11 @@ func (pq traversalHeap) Less(i, j int) bool {
 // scaleDist multiplies a 20-byte XOR distance by a discount factor (0 < f < 1).
 func scaleDist(dist table.NodeID, factor float64) table.NodeID {
 	var result table.NodeID
-	carry := 0.0
-	for k := len(dist) - 1; k >= 0; k-- {
-		v := float64(dist[k])*factor + carry
-		result[k] = byte(v)
-		carry = v - float64(result[k])
+	remainder := 0.0
+	for k := 0; k < len(dist); k++ {
+		val := float64(dist[k])*factor + remainder
+		result[k] = byte(val)
+		remainder = (val - float64(result[k])) * 256.0
 	}
 	return result
 }

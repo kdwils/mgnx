@@ -227,6 +227,10 @@ func (c *Crawler) crawl(ctx context.Context) {
 			return
 		}
 
+		// Reset backpressure counter each iteration so adaptive drop mode
+		// is bounded to a single cycle rather than persisting indefinitely.
+		c.droppedDiscoveries.Store(0)
+
 		c.rec.SetCrawlerTraversalQueueSize(c.id, float64(c.ready.Len()))
 		c.rec.SetCrawlerCooldownsActive(c.id, float64(c.cooldown.Len()))
 
@@ -234,13 +238,6 @@ func (c *Crawler) crawl(ctx context.Context) {
 			rand.Read(target[:])
 			c.seedQueue(target)
 
-			if dropped := c.droppedDiscoveries.Swap(0); dropped > 0 {
-				log.Warn("discovery queue backpressure",
-					"dropped", dropped,
-					"queue_len", len(c.queue),
-					"queue_cap", cap(c.queue),
-				)
-			}
 			log.Debug("retargeting",
 				"ready_size", c.ready.Len(),
 				"cooldown_size", c.cooldown.Len(),
