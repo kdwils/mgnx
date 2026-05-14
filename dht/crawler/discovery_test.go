@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kdwils/mgnx/config"
 	dhtMocks "github.com/kdwils/mgnx/dht/crawler/mocks"
 	"github.com/kdwils/mgnx/dht/krpc"
 	"github.com/kdwils/mgnx/dht/table"
@@ -16,32 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 )
-
-func testCrawlerCfg() config.Crawler {
-	return config.Crawler{
-		Alpha:                  3,
-		MaxIterations:          100,
-		DiscoveryMaxIterations: 4,
-		TraversalWidth:         8,
-		DefaultCooldown:        10 * time.Millisecond,
-		DefaultInterval:        10 * time.Millisecond,
-		MaxNodeFailures:        3,
-		MaxJitter:              0,
-		EmptySpinWait:          10 * time.Millisecond,
-		SampleEnqueueTimeout:   50 * time.Millisecond,
-		NodeCacheCleanup:       1 * time.Hour,
-		TransactionTimeout:     200 * time.Millisecond,
-	}
-}
-
-func makeTestNode(id byte, port int) *table.Node {
-	ip := net.IP{127, 0, 0, id + 1}
-	nodeID, _ := table.DeriveNodeIDFromIP(ip)
-	return &table.Node{
-		ID:   nodeID,
-		Addr: &net.UDPAddr{IP: ip, Port: port},
-	}
-}
 
 func TestDiscoveryWorker_Start(t *testing.T) {
 	t.Run("consumes from queue and performs discovery", func(t *testing.T) {
@@ -54,6 +27,7 @@ func TestDiscoveryWorker_Start(t *testing.T) {
 		var infoHashID table.NodeID
 		copy(infoHashID[:], h[:])
 
+		m.EXPECT().Closest(gomock.Any(), gomock.Any()).Return([]*table.Node{}).AnyTimes()
 		m.EXPECT().GetPeers(gomock.Any(), node.Addr, node.ID, infoHashID).
 			Return(&krpc.Msg{Y: "r", R: &krpc.Return{ID: string(node.ID[:])}}, nil)
 
@@ -105,6 +79,8 @@ func TestDiscoveryWorker_discoverPeers(t *testing.T) {
 		copy(infoHashID[:], h[:])
 
 		m.EXPECT().
+			Closest(gomock.Any(), gomock.Any()).Return([]*table.Node{}).AnyTimes()
+		m.EXPECT().
 			GetPeers(gomock.Any(), node.Addr, node.ID, infoHashID).
 			Return(&krpc.Msg{Y: "r", R: &krpc.Return{
 				ID:     string(node.ID[:]),
@@ -136,6 +112,8 @@ func TestDiscoveryWorker_discoverPeers(t *testing.T) {
 		var infoHashID table.NodeID
 		copy(infoHashID[:], h[:])
 
+		m.EXPECT().
+			Closest(gomock.Any(), gomock.Any()).Return([]*table.Node{}).AnyTimes()
 		m.EXPECT().
 			GetPeers(gomock.Any(), node1.Addr, node1.ID, infoHashID).
 			Return(&krpc.Msg{Y: "r", R: &krpc.Return{
@@ -182,7 +160,6 @@ func TestDiscoveryWorker_trimToKClosest(t *testing.T) {
 
 	trimmed := w.trimToKClosest(nodes, target)
 	assert.Equal(t, 2, len(trimmed))
-	// Verify that every node in trimmed came from the original set.
 	for id := range trimmed {
 		assert.Contains(t, nodes, id)
 	}
@@ -205,7 +182,6 @@ func TestDiscoveryWorker_sortByDistance(t *testing.T) {
 	sorted := w.sortByDistance(nodes, target)
 
 	assert.Len(t, sorted, 3)
-	// Verify sorted order is ascending by XOR distance.
 	for i := 1; i < len(sorted); i++ {
 		prevDist := sorted[i-1].ID.XOR(target)
 		currDist := sorted[i].ID.XOR(target)

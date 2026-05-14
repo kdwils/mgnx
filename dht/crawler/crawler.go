@@ -46,18 +46,30 @@ type supportEntry struct {
 // Crawler is a single BEP-51 active traversal worker. Multiple instances run
 // concurrently; each is independent and maintains its own heap and seen map.
 type Crawler struct {
-	id                 int
-	dht                DHT
-	queue              chan<- DiscoveryWork
-	dedup              *filter.BloomFilter
-	rec                *recorder.Recorder
-	cfg                config.Crawler
-	seen               map[table.NodeID]time.Time
-	ready              traversalHeap
-	cooldown           cooldownHeap
-	nodeSampleSupport  *pkgcache.Cache[table.NodeID, supportEntry]
-	droppedDiscoveries atomic.Int64
-	now                func() time.Time
+	id                   int
+	dht                  DHT
+	queue                chan<- DiscoveryWork
+	dedup                *filter.BloomFilter
+	rec                  *recorder.Recorder
+	seen                 *pkgcache.Cache[table.NodeID, time.Time]
+	ready                traversalHeap
+	cooldown             cooldownHeap
+	nodeSampleSupport    *pkgcache.Cache[table.NodeID, supportEntry]
+	nodeSamples          *pkgcache.Cache[table.NodeID, int]
+	droppedDiscoveries   atomic.Int64
+	now                  func() time.Time
+	alpha                int
+	maxIterations        int
+	traversalWidth       int
+	defaultCooldown      time.Duration
+	defaultInterval      time.Duration
+	maxNodeFailures      int
+	maxJitter            time.Duration
+	emptySpinWait        time.Duration
+	sampleEnqueueTimeout time.Duration
+	nodeCacheCleanup     time.Duration
+	transactionTimeout   time.Duration
+	maxInterval          time.Duration
 }
 
 // NewCrawler constructs a Crawler. queue is the write side of the shared
@@ -65,15 +77,26 @@ type Crawler struct {
 func NewCrawler(id int, dht DHT, queue chan<- DiscoveryWork, dedup *filter.BloomFilter, cfg config.Crawler, rec *recorder.Recorder) *Crawler {
 	interval := cfg.NodeCacheCleanup
 	return &Crawler{
-		id:       id,
-		dht:      dht,
-		queue:    queue,
-		dedup:    dedup,
-		rec:      rec,
-		cfg:      cfg,
-		seen:     make(map[table.NodeID]time.Time),
-		ready:    make(traversalHeap, 0),
-		cooldown: make(cooldownHeap, 0),
+		id:                   id,
+		dht:                  dht,
+		queue:                queue,
+		dedup:                dedup,
+		rec:                  rec,
+		seen:                 pkgcache.New[table.NodeID, time.Time](),
+		ready:                make(traversalHeap, 0),
+		cooldown:             make(cooldownHeap, 0),
+		alpha:                cfg.Alpha,
+		maxIterations:        cfg.MaxIterations,
+		traversalWidth:       cfg.TraversalWidth,
+		defaultCooldown:      cfg.DefaultCooldown,
+		defaultInterval:      cfg.DefaultInterval,
+		maxNodeFailures:      cfg.MaxNodeFailures,
+		maxJitter:            cfg.MaxJitter,
+		emptySpinWait:        cfg.EmptySpinWait,
+		sampleEnqueueTimeout: cfg.SampleEnqueueTimeout,
+		nodeCacheCleanup:     cfg.NodeCacheCleanup,
+		transactionTimeout:   cfg.TransactionTimeout,
+		maxInterval:          cfg.MaxInterval,
 		nodeSampleSupport: pkgcache.New(
 			pkgcache.WithCleanup(
 				interval,
@@ -82,7 +105,8 @@ func NewCrawler(id int, dht DHT, queue chan<- DiscoveryWork, dedup *filter.Bloom
 				},
 			),
 		),
-		now: time.Now,
+		nodeSamples: pkgcache.New[table.NodeID, int](),
+		now:         time.Now,
 	}
 }
 
@@ -97,20 +121,24 @@ func (c *Crawler) Start(ctx context.Context) {
 // DiscoveryWorker consumes DiscoveryWork items from the queue and performs
 // iterative BEP-05 get_peers lookups to find actual swarm peers.
 type DiscoveryWorker struct {
-	id    int
-	dht   DHT
-	queue <-chan DiscoveryWork
-	rec   *recorder.Recorder
-	cfg   config.Crawler
+	id                     int
+	dht                    DHT
+	queue                  <-chan DiscoveryWork
+	rec                    *recorder.Recorder
+	alpha                  int
+	maxIterations          int
+	traversalWidth         int
+	discoveryMaxIterations int
 }
 
 // traversalItem is an element of the traversal heap.
 type traversalItem struct {
-	node     *table.Node
-	target   table.NodeID
-	dist     table.NodeID
-	index    int
-	failures int
+	node        *table.Node
+	target      table.NodeID
+	dist        table.NodeID
+	index       int
+	failures    int
+	yieldFactor float64
 }
 
 // queryForSamples tries sample_infohashes (BEP-51) against the node first.
@@ -148,16 +176,16 @@ func jitter(max time.Duration) time.Duration {
 }
 
 // ComputeInterval returns the re-query interval for a node based on its BEP-51 response.
-func (c *Crawler) ComputeInterval(resp *krpc.Msg) time.Duration {
-	if resp == nil || resp.R == nil || resp.R.Interval <= 0 {
-		return c.cfg.DefaultInterval
+func (c *Crawler) ComputeInterval(interval int) time.Duration {
+	if interval <= 0 {
+		return c.defaultInterval
 	}
-	d := time.Duration(resp.R.Interval) * time.Second
-	if d < c.cfg.DefaultInterval {
-		return c.cfg.DefaultInterval
+	d := time.Duration(interval) * time.Second
+	if d < c.defaultInterval {
+		return c.defaultInterval
 	}
-	if c.cfg.MaxInterval > 0 && d > c.cfg.MaxInterval {
-		return c.cfg.MaxInterval
+	if c.maxInterval > 0 && d > c.maxInterval {
+		return c.maxInterval
 	}
 	return d
 }
@@ -175,6 +203,15 @@ func (c *Crawler) promoteReady(now time.Time) {
 	}
 }
 
+type queryResult struct {
+	item            *traversalItem
+	resp            *krpc.Msg
+	err             error
+	sampleInterval  int
+	sampleNum       int
+	samplesReturned int
+}
+
 // crawl implements the BEP-51 active traversal loop.
 func (c *Crawler) crawl(ctx context.Context) {
 	log := logger.FromContext(ctx).With("service", "crawler")
@@ -184,32 +221,23 @@ func (c *Crawler) crawl(ctx context.Context) {
 
 	c.seedQueue(target)
 
-	type queryResult struct {
-		item *traversalItem
-		resp *krpc.Msg
-		err  error
-	}
-
 	var iteration int
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 
+		// Reset backpressure counter each iteration so adaptive drop mode
+		// is bounded to a single cycle rather than persisting indefinitely.
+		c.droppedDiscoveries.Store(0)
+
 		c.rec.SetCrawlerTraversalQueueSize(c.id, float64(c.ready.Len()))
 		c.rec.SetCrawlerCooldownsActive(c.id, float64(c.cooldown.Len()))
 
-		if c.ready.Len() < c.cfg.Alpha {
+		if c.ready.Len() < c.alpha {
 			rand.Read(target[:])
 			c.seedQueue(target)
 
-			if dropped := c.droppedDiscoveries.Swap(0); dropped > 0 {
-				log.Warn("discovery queue backpressure",
-					"dropped", dropped,
-					"queue_len", len(c.queue),
-					"queue_cap", cap(c.queue),
-				)
-			}
 			log.Debug("retargeting",
 				"ready_size", c.ready.Len(),
 				"cooldown_size", c.cooldown.Len(),
@@ -220,12 +248,12 @@ func (c *Crawler) crawl(ctx context.Context) {
 
 		now := c.now()
 		var batch []*traversalItem
-		for len(batch) < c.cfg.Alpha {
+		for len(batch) < c.alpha {
 			item := c.nextEligible(now)
 			if item == nil {
 				break
 			}
-			c.seen[item.node.ID] = now
+			c.seen.Set(item.node.ID, now)
 			batch = append(batch, item)
 		}
 
@@ -247,7 +275,7 @@ func (c *Crawler) crawl(ctx context.Context) {
 
 			if c.ready.Len() == 0 {
 				select {
-				case <-time.After(c.cfg.EmptySpinWait):
+				case <-time.After(c.emptySpinWait):
 				case <-ctx.Done():
 					return
 				}
@@ -267,11 +295,19 @@ func (c *Crawler) crawl(ctx context.Context) {
 				c.rec.IncCrawlerQueriesTotal("get_peers", "crawling", c.id)
 
 				sResp, supported, sErr := c.queryForSamples(ctx, item)
-				if sErr == nil && supported && sResp != nil && sResp.R != nil && len(sResp.R.Samples) > 0 {
-					c.processSamples(ctx, sResp.R.Samples, item)
+				var sampleInterval int
+				var sampleNum int
+				var samplesReturned int
+				if sErr == nil && supported && sResp != nil && sResp.R != nil {
+					sampleInterval = sResp.R.Interval
+					sampleNum = sResp.R.Num
+					samplesReturned = len(sResp.R.Samples) / 20
+					if samplesReturned > 0 {
+						c.processSamples(ctx, sResp.R.Samples, item)
+					}
 				}
 
-				results[i] = queryResult{item, resp, err}
+				results[i] = queryResult{item, resp, err, sampleInterval, sampleNum, samplesReturned}
 			}()
 		}
 		wg.Wait()
@@ -280,12 +316,12 @@ func (c *Crawler) crawl(ctx context.Context) {
 			if r.err != nil {
 				c.dht.MarkFailure(r.item.node.ID)
 				r.item.failures++
-				if r.item.failures >= c.cfg.MaxNodeFailures {
-					delete(c.seen, r.item.node.ID)
+				if r.item.failures >= c.maxNodeFailures {
+					c.seen.Delete(r.item.node.ID)
 					continue
 				}
-				next := c.now().Add(c.cfg.DefaultCooldown + jitter(c.cfg.MaxJitter))
-				c.seen[r.item.node.ID] = next
+				next := c.now().Add(c.defaultCooldown + jitter(c.maxJitter))
+				c.seen.Set(r.item.node.ID, next)
 				heap.Push(&c.cooldown, &cooldownItem{item: r.item, nextAllowed: next})
 				continue
 			}
@@ -298,8 +334,16 @@ func (c *Crawler) crawl(ctx context.Context) {
 
 			c.dht.MarkSuccess(r.item.node.ID)
 			r.item.failures = 0
-			next := c.now().Add(c.ComputeInterval(r.resp) + jitter(c.cfg.MaxJitter))
-			c.seen[r.item.node.ID] = next
+
+			interval := c.ComputeInterval(r.sampleInterval)
+			if r.sampleNum > r.samplesReturned && r.sampleNum > 0 {
+				if interval > c.defaultInterval*2 {
+					interval = c.defaultInterval * 2
+				}
+			}
+
+			next := c.now().Add(interval + jitter(c.maxJitter))
+			c.seen.Set(r.item.node.ID, next)
 			heap.Push(&c.cooldown, &cooldownItem{item: r.item, nextAllowed: next})
 
 			nodesReturned := 0
@@ -319,7 +363,7 @@ func (c *Crawler) crawl(ctx context.Context) {
 		if iteration%50 == 0 {
 			c.pruneStaleInFlight()
 		}
-		if iteration%c.cfg.MaxIterations == 0 {
+		if iteration%c.maxIterations == 0 {
 			rand.Read(target[:])
 			c.ready = traversalHeap{}
 			heap.Init(&c.ready)
@@ -336,40 +380,70 @@ func (c *Crawler) crawl(ctx context.Context) {
 // pruneStaleInFlight removes entries from the seen map whose timestamps are
 // older than 2× the transaction timeout and enforces a 4× traversalWidth cap.
 func (c *Crawler) pruneStaleInFlight() {
-	cutoff := c.now().Add(-2 * c.cfg.TransactionTimeout)
-	for id, t := range c.seen {
-		if t.Before(cutoff) {
-			delete(c.seen, id)
+	now := c.now()
+	cutoff := now.Add(-2 * c.transactionTimeout)
+
+	// Keep track of nodes currently in cooldown to avoid pruning them
+	inCooldown := make(map[table.NodeID]bool)
+	for _, item := range c.cooldown {
+		inCooldown[item.item.node.ID] = true
+	}
+
+	seenItems := c.seen.Items()
+	for id, t := range seenItems {
+		if t.Before(cutoff) && !inCooldown[id] {
+			c.seen.Delete(id)
+			c.nodeSamples.Delete(id)
 		}
 	}
 
-	maxSize := 4 * c.cfg.TraversalWidth
-	if len(c.seen) <= maxSize {
+	maxSize := 4 * c.traversalWidth
+	if c.seen.Size() <= maxSize {
 		return
 	}
 
-	now := c.now()
-	for id, t := range c.seen {
-		if len(c.seen) <= maxSize {
-			break
-		}
-		if !t.After(now) {
-			delete(c.seen, id)
+	// If still over capacity, prune oldest entries that are NOT in cooldown.
+	// We collect keys and sort them by their timestamp in c.seen.
+	var keys []table.NodeID
+	for id := range seenItems {
+		if !inCooldown[id] {
+			keys = append(keys, id)
 		}
 	}
+
+	sort.Slice(keys, func(i, j int) bool {
+		ti, _ := c.seen.Get(keys[i])
+		tj, _ := c.seen.Get(keys[j])
+		return ti.Before(tj)
+	})
+
+	toPrune := c.seen.Size() - maxSize
+	for i := 0; i < toPrune && i < len(keys); i++ {
+		c.seen.Delete(keys[i])
+		c.nodeSamples.Delete(keys[i])
+	}
+}
+
+// pushToReady creates a traversalItem for a node and pushes it onto the ready
+// heap. Returns true if the node was enqueued, false if it was already seen.
+func (c *Crawler) pushToReady(n *table.Node, target table.NodeID) bool {
+	if _, found := c.seen.Get(n.ID); found {
+		return false
+	}
+	samples, _ := c.nodeSamples.Get(n.ID)
+	heap.Push(&c.ready, &traversalItem{
+		node:        n,
+		target:      target,
+		dist:        target.XOR(n.ID),
+		yieldFactor: float64(samples),
+	})
+	return true
 }
 
 // seedQueue pushes the k closest routing-table nodes to the ready heap.
 func (c *Crawler) seedQueue(target table.NodeID) {
-	for _, n := range c.dht.Closest(target, c.cfg.TraversalWidth) {
-		if _, inCooldown := c.seen[n.ID]; inCooldown {
-			continue
-		}
-		heap.Push(&c.ready, &traversalItem{
-			node:   n,
-			target: target,
-			dist:   target.XOR(n.ID),
-		})
+	for _, n := range c.dht.Closest(target, c.traversalWidth) {
+		c.pushToReady(n, target)
 	}
 }
 
@@ -402,11 +476,28 @@ func (c *Crawler) processSamples(ctx context.Context, samples string, item *trav
 		new++
 		select {
 		case c.queue <- DiscoveryWork{Infohash: h, Source: item.node}:
-		case <-time.After(c.cfg.SampleEnqueueTimeout):
+		case <-time.After(c.sampleEnqueueTimeout):
+			// Adaptive backpressure: if queue is persistently full,
+			// switch to non-blocking and log a warning.
+			if c.droppedDiscoveries.Add(1); c.droppedDiscoveries.Load() > 100 {
+				select {
+				case c.queue <- DiscoveryWork{Infohash: h, Source: item.node}:
+				default:
+					c.rec.AddCrawlerSamplesTotal("dropped", 1)
+				}
+				continue
+			}
 			dropped++
-			c.droppedDiscoveries.Add(1)
 		}
 	}
+
+	if new > 0 {
+		current, _ := c.nodeSamples.Get(item.node.ID)
+		current += new
+		c.nodeSamples.Set(item.node.ID, current)
+		item.yieldFactor = float64(current)
+	}
+
 	if c.rec != nil {
 		c.rec.SetDHTQueueCapacity(float64(cap(c.queue)))
 		duplicate := total - new - dropped
@@ -428,11 +519,11 @@ func (c *Crawler) processSamples(ctx context.Context, samples string, item *trav
 // trimReadyToK sorts the ready heap by XOR distance and discards all items
 // beyond traversalWidth.
 func (c *Crawler) trimReadyToK() {
-	if c.ready.Len() <= c.cfg.TraversalWidth {
+	if c.ready.Len() <= c.traversalWidth {
 		return
 	}
 	sort.Sort(&c.ready)
-	c.ready = c.ready[:c.cfg.TraversalWidth]
+	c.ready = c.ready[:c.traversalWidth]
 	heap.Init(&c.ready)
 }
 
@@ -455,15 +546,9 @@ func (c *Crawler) processNodes(ctx context.Context, encoded string, target table
 		}
 		c.dht.InsertNode(ctx, n)
 		inserted++
-		if _, inCooldown := c.seen[n.ID]; inCooldown {
-			continue
+		if c.pushToReady(n, target) {
+			queued++
 		}
-		heap.Push(&c.ready, &traversalItem{
-			node:   n,
-			target: target,
-			dist:   target.XOR(n.ID),
-		})
-		queued++
 	}
 	c.trimReadyToK()
 	logger.FromContext(ctx).Debug("process nodes",

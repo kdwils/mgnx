@@ -402,6 +402,25 @@ func (s *Server) queryHandlerLoop(ctx context.Context) {
 	}
 }
 
+// processNodeSeen validates and records an inbound node from a query's author
+// argument. Returns early on parse failure or drop.
+func (s *Server) processNodeSeen(ctx context.Context, in inMsg) {
+	if in.msg.A == nil {
+		return
+	}
+	id, err := table.ParseNodeID(in.msg.A.ID)
+	if err != nil {
+		return
+	}
+	node := &table.Node{ID: id, Addr: in.addr, LastSeen: time.Now()}
+	result := s.table.InsertValidNode(ctx, node)
+	if result == table.NodeInsertDropped {
+		logger.FromContext(ctx).Debug("rejecting node with invalid ID for IP", "from", in.addr.String())
+		return
+	}
+	s.rec.IncNodesDiscoveredTotal(result)
+}
+
 // processQuery dispatches a single inbound KRPC query to the appropriate handler.
 func (s *Server) processQuery(ctx context.Context, in inMsg) {
 	log := logger.FromContext(ctx).With("service", "dht")
@@ -412,17 +431,7 @@ func (s *Server) processQuery(ctx context.Context, in inMsg) {
 		return
 	}
 
-	if in.msg.A != nil {
-		if id, err := table.ParseNodeID(in.msg.A.ID); err == nil {
-node := &table.Node{ID: id, Addr: in.addr, LastSeen: time.Now()}
-		result := s.table.InsertValidNode(ctx, node)
-		if result == table.NodeInsertDropped {
-			log.Debug("rejecting node with invalid ID for IP", "from", in.addr.String())
-		} else {
-			s.rec.IncNodesDiscoveredTotal(result)
-		}
-		}
-	}
+	s.processNodeSeen(ctx, in)
 
 	switch in.msg.Q {
 	case "ping":

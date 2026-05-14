@@ -14,7 +14,6 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-
 func testCfg() config.DHT {
 	return config.DHT{
 		BucketSize:          8,
