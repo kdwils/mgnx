@@ -68,7 +68,6 @@ func initConfig() {
 	viper.SetDefault("indexer.enable_extension_filter", false)
 	viper.SetDefault("indexer.exclude_adult_content", true)
 
-	viper.SetDefault("dht.nodes_path", "./dht_nodes.dat")
 	viper.SetDefault("dht.node_id", "")
 	viper.SetDefault("dht.port", 6881)
 	viper.SetDefault("dht.workers", 16)

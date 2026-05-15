@@ -249,67 +249,6 @@ func (rt *RoutingTable) StaleBuckets() []*Bucket {
 	return stale
 }
 
-type RoutingTableState struct {
-	NodeID  NodeID    `json:"node_id"`
-	Buckets []*Bucket `json:"buckets"`
-}
-
-func (rt *RoutingTable) SaveState() RoutingTableState {
-	rt.mu.RLock()
-	defer rt.mu.RUnlock()
-
-	buckets := make([]*Bucket, len(rt.buckets))
-	for i, b := range rt.buckets {
-		buckets[i] = &Bucket{
-			Min:              b.Min,
-			Max:              b.Max,
-			Depth:            b.Depth,
-			Nodes:            append([]*Node(nil), b.Nodes...),
-			ReplacementCache: append([]*Node(nil), b.ReplacementCache...),
-			LastChanged:      b.LastChanged,
-		}
-	}
-
-	return RoutingTableState{
-		NodeID:  rt.nodeID,
-		Buckets: buckets,
-	}
-}
-
-func (rt *RoutingTable) LoadState(ctx context.Context, state RoutingTableState) error {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-
-	if len(state.Buckets) == 0 {
-		return fmt.Errorf("no buckets in state")
-	}
-
-	if state.NodeID == rt.nodeID {
-		rt.buckets = state.Buckets
-		return nil
-	}
-
-	inserted := 0
-	for _, b := range state.Buckets {
-		for _, n := range b.Nodes {
-			rt.insert(ctx, n)
-			inserted++
-		}
-		for _, n := range b.ReplacementCache {
-			rt.insert(ctx, n)
-			inserted++
-		}
-	}
-
-	if inserted == 0 {
-		return fmt.Errorf("no nodes found in state")
-	}
-
-	return nil
-}
-
-// AllNodes returns every node in the routing table, including active nodes
-// and replacement cache nodes.
 func (rt *RoutingTable) AllNodes() []*Node {
 	rt.mu.RLock()
 	defer rt.mu.RUnlock()

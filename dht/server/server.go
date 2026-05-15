@@ -4,11 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -73,7 +70,6 @@ type Server struct {
 	sampleInterval         time.Duration
 	bootstrapNodes         []string
 	warmBootstrapThreshold int
-	nodesPath              string
 	wg                     sync.WaitGroup
 }
 
@@ -107,7 +103,6 @@ func NewServer(cfg config.DHT, ip net.IP, conn Conn, rec *recorder.Recorder, dis
 		sampleInterval:         cfg.SampleInterval,
 		bootstrapNodes:         cfg.BootstrapNodes,
 		warmBootstrapThreshold: cfg.WarmBootstrapThreshold,
-		nodesPath:              cfg.NodesPath,
 		Resolver:               net.DefaultResolver,
 	}
 
@@ -127,12 +122,6 @@ func (s *Server) Start(ctx context.Context) error {
 	s.token.Start(ctx)
 	s.ipLimiter.Start(ctx)
 	s.rec.SetRoutingTableSize(float64(s.table.NodeCount()))
-
-	if s.nodesPath != "" {
-		if err := s.loadRoutingTable(ctx); err != nil {
-			logger.FromContext(ctx).Warn("failed to load routing table", "error", err, "path", s.nodesPath)
-		}
-	}
 
 	s.wg.Go(func() { s.peerStore.startCleanup(ctx) })
 	s.wg.Go(func() { s.readLoop(ctx) })
@@ -201,58 +190,11 @@ func getServerNodeID(cfg config.DHT, externalIP net.IP) (table.NodeID, error) {
 
 func (s *Server) Stop(ctx context.Context) error {
 	logger := logger.FromContext(ctx)
-	if s.nodesPath != "" {
-		if err := s.saveRoutingTable(); err != nil {
-			logger.Error("failed to save routing table", "error", err, "path", s.nodesPath)
-		}
-	}
 	err := s.conn.Close()
 	if err != nil {
 		logger.Error("failed to close udp server conn", "error", err)
 	}
 	return nil
-}
-
-func (s *Server) loadRoutingTable(ctx context.Context) error {
-	data, err := os.ReadFile(s.nodesPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-
-	var state table.RoutingTableState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return err
-	}
-
-	if err := s.table.LoadState(ctx, state); err != nil {
-		return err
-	}
-
-	logger.FromContext(ctx).Info("routing table loaded",
-		"path", s.nodesPath,
-		"nodes", s.table.NodeCount(),
-		"exact_buckets", state.NodeID == s.nodeID,
-		"loaded_buckets", len(state.Buckets),
-	)
-	return nil
-}
-
-func (s *Server) saveRoutingTable() error {
-	state := s.table.SaveState()
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	dir := filepath.Dir(s.nodesPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	return os.WriteFile(s.nodesPath, data, 0644)
 }
 
 // InsertNode adds a node to the routing table.

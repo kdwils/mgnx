@@ -23,7 +23,6 @@ type DHT struct {
 	NodeID                   string        `mapstructure:"node_id"`
 	Port                     int           `mapstructure:"port"`
 	DiscoveryBuffer          int           `mapstructure:"discovery_buffer"`
-	NodesPath                string        `mapstructure:"nodes_path"`
 	BadFailureThreshold      int           `mapstructure:"bad_failure_threshold"`
 	BucketSize               int           `mapstructure:"bucket_size"`
 	StaleThreshold           time.Duration `mapstructure:"stale_threshold"`
