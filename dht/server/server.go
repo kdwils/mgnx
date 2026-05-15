@@ -85,7 +85,7 @@ func NewServer(cfg config.DHT, ip net.IP, conn Conn, rec *recorder.Recorder, dis
 	s := &Server{
 		conn:                   conn,
 		nodeID:                 nodeID,
-		outbound:               make(chan *outMsg, 512),
+		outbound:               make(chan *outMsg, cfg.DiscoveryBuffer),
 		discovered:             discovered,
 		token:                  NewTokenManager(cfg.TokenRotation),
 		dedup:                  dedup,
@@ -94,7 +94,7 @@ func NewServer(cfg config.DHT, ip net.IP, conn Conn, rec *recorder.Recorder, dis
 		rate:                   rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateBurst),
 		ipLimiter:              newIPLimiter(cfg.RateLimit, cfg.RateBurst, 5*time.Minute, cfg.IPLimiterMaxSize),
 		workers:                cfg.Workers,
-		handlers:               make(chan inMsg, 512),
+		handlers:               make(chan inMsg, cfg.DiscoveryBuffer),
 		transactionTimeout:     cfg.TransactionTimeout,
 		maxNodesPerResponse:    cfg.MaxNodesPerResponse,
 		maxPeersPerResponse:    cfg.MaxPeersPerResponse,
